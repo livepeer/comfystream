@@ -70,6 +70,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          provenance: mode=max
+          sbom: true
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           file: docker/Dockerfile.base
