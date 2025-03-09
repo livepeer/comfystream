@@ -60,7 +60,7 @@ interface AVDevice {
 
 const DEFAULT_CONFIG: StreamConfig = {
   streamUrl:
-    process.env.NEXT_PUBLIC_DEFAULT_STREAM_URL || "http://127.0.0.1:8889",
+    process.env.NEXT_PUBLIC_DEFAULT_STREAM_URL || "http://213.173.98.12:32564",
   frameRate: 30,
   selectedVideoDeviceId: "",
   selectedAudioDeviceId: "",
@@ -149,11 +149,11 @@ const formSchema = z.object({
   streamUrl: z.string().url(),
   frameRate: z.coerce.number(),
   resolution: z.object({
-    width: z.coerce.number().refine(val => [512, 768, 1024].includes(val), {
-      message: "Width must be 512, 768, or 1024"
+    width: z.coerce.number().refine(val => [256, 512, 768, 1024].includes(val), {
+      message: "Width must be 256, 512, 768, or 1024"
     }),
-    height: z.coerce.number().refine(val => [512, 768, 1024].includes(val), {
-      message: "Height must be 512, 768, or 1024"
+    height: z.coerce.number().refine(val => [256, 512, 768, 1024].includes(val), {
+      message: "Height must be 256, 512, 768, or 1024"
     })
   })
 });
@@ -378,6 +378,7 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
                       {field.value.toString()}
                     </Select.Trigger>
                     <Select.Content>
+                      <Select.Option value="256">256</Select.Option>
                       <Select.Option value="512">512</Select.Option>
                       <Select.Option value="768">768</Select.Option>
                       <Select.Option value="1024">1024</Select.Option>
@@ -404,6 +405,7 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
                       {field.value.toString()}
                     </Select.Trigger>
                     <Select.Content>
+                      <Select.Option value="256">256</Select.Option>
                       <Select.Option value="512">512</Select.Option>
                       <Select.Option value="768">768</Select.Option>
                       <Select.Option value="1024">1024</Select.Option>
