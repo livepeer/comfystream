@@ -22,8 +22,8 @@ class Pipeline:
             **kwargs: Additional arguments to pass to the ComfyStreamClient
         """
         self.client = ComfyStreamClient(**kwargs)
-        self.width = width
-        self.height = height
+        self.width = kwargs.get("width", 512)
+        self.height = kwargs.get("height", 512)
 
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
