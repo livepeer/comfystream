@@ -259,10 +259,7 @@ async def offer(request):
                             )
                             return
                         await pipeline.update_prompts(params["prompts"])
-                        response = {
-                            "type": "prompts_updated",
-                            "success": True
-                        }
+                        response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
                         if "width" not in params or "height" not in params:
