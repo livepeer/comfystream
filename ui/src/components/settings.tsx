@@ -250,11 +250,11 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
     return () => {
       navigator.mediaDevices.removeEventListener(
         "devicechange",
-        getVideoDevices,
+        getVideoDevices
       );
       navigator.mediaDevices.removeEventListener(
         "devicechange",
-        getAudioDevices,
+        getAudioDevices
       );
     };
   }, [getVideoDevices, getAudioDevices]);
@@ -272,7 +272,7 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
   };
 
   const handlePromptsChange = async (
-    e: React.ChangeEvent<HTMLInputElement>,
+    e: React.ChangeEvent<HTMLInputElement>
   ) => {
     if (!e.target.files?.length) return;
 
@@ -396,7 +396,7 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
                 audioDevices
                   .filter(
                     (device) =>
-                      device.deviceId !== undefined && device.deviceId != "",
+                      device.deviceId !== undefined && device.deviceId != ""
                   )
                   .map((device) => (
                     <Select.Option
