@@ -30,7 +30,6 @@ jobs:
         with:
           languages: typescript,javascript,python
           config-file: ./.github/codeql-config.yaml
-          build-mode: autobuild
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
@@ -79,3 +78,6 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CI_CODECOV_TOKEN }}
+          name: ${{ github.event.repository.name }}
