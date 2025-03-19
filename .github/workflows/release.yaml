@@ -1,0 +1,52 @@
+name: Create ui-kit release artifact
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build project
+        id: build
+        env:
+          "NEXT_PUBLIC_DEV": "false"
+        run: |
+          mkdir -p releases/
+          cur_dir="$(pwd)"
+          cd ui/
+          npm ci
+          npm run build
+          dist_dir="../nodes/web/static/"
+          cd "$dist_dir"
+          dist_file_full="${cur_dir}/releases/comfystream-uikit.zip"
+          zip -DTr9q "${dist_file_full}" ./
+          echo "dist_file=${dist_file_full}" >> $GITHUB_OUTPUT
+          cd -
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: releases/
+
+      - name: Create release
+        if: ${{ github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.build.outputs.dist_file }}
+          make_latest: true
+          generate_release_notes: true
