@@ -58,7 +58,7 @@ interface AVDevice {
   label: string;
 }
 
-const DEFAULT_CONFIG: StreamConfig = {
+export const DEFAULT_CONFIG: StreamConfig = {
   streamUrl:
     process.env.NEXT_PUBLIC_DEFAULT_STREAM_URL || "http://localhost:8889",
   frameRate: 30,
