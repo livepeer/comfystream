@@ -22,7 +22,7 @@ way, we'd really really love your help with this 💖. Look for
 [open documentation issues](https://github.com/livepeer/comfystream/labels/type%3A%20documentation),
 create your own, or submit a PR with the updates you want to see.
 
-If you're interested in updating documentation, please refer to [the relevant documentation on pipelines.livepeer.org](https://pipelines.livepeer.org/docs).
+If you're interested in updating documentation, please refer to the relevant documentation on [pipelines.livepeer.org/docs](https://pipelines.livepeer.org/docs/technical/getting-started/install-comfystream).
 
 #### 💬 Getting involved in issues
 As a starting point, check out the issues that we've labeled as 
