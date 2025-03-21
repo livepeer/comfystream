@@ -39,4 +39,3 @@ jobs:
           name: ui-kit-build
           path: ui-kit/dist/
           retention-days: 7
-```
