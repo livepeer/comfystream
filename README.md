@@ -124,12 +124,6 @@ pytest
 
 ## Run server
 
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
 If you have existing custom nodes in your ComfyUI workspace, you will need to install their requirements in your current environment:
 
 ```bash

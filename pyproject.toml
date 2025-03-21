@@ -15,6 +15,7 @@ dependencies = [
     "toml",
     "twilio",
     "prometheus_client",
+    "librosa"
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,3 @@ Icon = "https://avatars.githubusercontent.com/u/25355022?s=48&v=4" # SVG, PNG, J
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = {find = {where = ["src", "nodes"]}}
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
