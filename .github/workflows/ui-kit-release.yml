@@ -1,0 +1,42 @@
+name: UI Kit Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build from'
+        required: true
+        default: 'main'
+        type: string
+
+jobs:
+  build-ui-kit:
+    name: Build and release UI kit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./ui-kit
+        
+      - name: Build UI kit
+        run: npm run build
+        working-directory: ./ui-kit
+        
+      - name: Create artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ui-kit-build
+          path: ui-kit/dist/
+          retention-days: 7
+```
