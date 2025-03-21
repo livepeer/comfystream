@@ -7,32 +7,16 @@ const app = window.comfyAPI?.app?.app;
 app.registerExtension({
     name: "ComfyStream.Node",
     
-    async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name === "ComfyStreamUIPreview") {
-            // Set default size for the node type
-            nodeType.size = [700, 800];
-            
-            // Make node resizable
-            nodeType.resizable = true;
-            
-            // Save the original onNodeCreated method
-            const onNodeCreated = nodeType.prototype.onNodeCreated;
-            
-            // Override the onNodeCreated method
-            nodeType.prototype.onNodeCreated = function() {
-                // Set node properties before calling original method
+    registerCustomNodes() {
+        // Define our custom node class
+        class ComfyStreamIframeNode extends LGraphNode {
+            constructor() {
+                super();
+                
+                // Set node properties
                 this.title = "ComfyStream UI";
                 this.color = "#4B9CD3"; // Blue color for the node
-                
-                // Set initial size
-                this.size = [700, 800];
-                
-                // Make the node resizable
-                this.resizable = true;
-                this.flags.resizable = true;
-                
-                // Call the original onNodeCreated method if it exists
-                const result = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+
                 
                 // Create iframe element
                 this.iframe = document.createElement("iframe");
@@ -111,47 +95,38 @@ app.registerExtension({
                     });
                 });
                 
-                // Update iframe size
-                this.updateIframeSize();
+                // Set size - make it larger to accommodate the iframe
+                this.size = [700, 800];
                 
-                return result;
-            };
-            
-            // Override the resize method to allow both expanding and shrinking
-            nodeType.prototype.onResize = function(size) {
-                // Update the size
-                this.size[0] = size[0];
-                this.size[1] = size[1];
+                // Make the node resizable
+                this.flags.resizable = true;
                 
-                // Update the iframe size
-                this.updateIframeSize();
-                
-                // Force canvas update
-                this.setDirtyCanvas(true, true);
-            };
-            
-            // Add a helper method to update iframe size
-            nodeType.prototype.updateIframeSize = function() {
-                if (this.iframeWidget) {
-                    this.iframeWidget.width = this.size[0];
-                    this.iframeWidget.height = this.size[1] - 40;
-                    
-                    // Also update the iframe element directly
-                    if (this.iframe) {
-                        this.iframe.style.width = this.size[0] + "px";
-                        this.iframe.style.height = (this.size[1] - 40) + "px";
+                // Handle resize to update iframe size
+                const onResize = this.onResize;
+                this.onResize = (size) => {
+                    if (onResize) {
+                        onResize.call(this, size);
                     }
                     
-                    // Force a canvas update
-                    this.setDirtyCanvas(true, true);
-                }
-            };
+                    // Update iframe size when node is resized
+                    if (this.iframeWidget) {
+                        this.iframeWidget.width = size[0];
+                        this.iframeWidget.height = size[1] - 40;
+                    }
+                };
+            }
             
-            // Override the onExecute method
-            nodeType.prototype.onExecute = function() {
+            // Handle when node is executed
+            onExecute() {
                 // Trigger the output
                 this.triggerSlot(0);
-            };
+            }
         }
+        
+        // Register the node type
+        LiteGraph.registerNodeType("ComfyStreamUIPreview", ComfyStreamIframeNode);
+        
+        // Set the category
+        ComfyStreamIframeNode.category = "ComfyStream";
     }
 }); 

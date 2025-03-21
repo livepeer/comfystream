@@ -4,7 +4,6 @@ from .audio_utils import *
 from .tensor_utils import *
 from .video_stream_utils import *
 from .api import *
-from .web import *
 
 # Collect all NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS from submodules
 NODE_CLASS_MAPPINGS = {}
