@@ -14,11 +14,14 @@ export interface AxisMapping extends ControllerMappingBase {
   maxOverride?: number;
 }
 
+// Button mode type for reuse
+export type ButtonModeType = 'toggle' | 'momentary' | 'series' | 'increment' | 'axis';
+
 // Button mapping for toggles, momentary or cycling through series of values
 export interface ButtonMapping extends ControllerMappingBase {
   type: 'button';
   buttonIndex: number;
-  mode: 'toggle' | 'momentary' | 'series';
+  mode: ButtonModeType;
   valueWhenPressed: string | number;
   valueWhenReleased?: string | number;
   
@@ -26,13 +29,18 @@ export interface ButtonMapping extends ControllerMappingBase {
   nextButtonIndex?: number; // Optional second button for series navigation
   valuesList?: Array<string | number>; // List of values to cycle through
   currentValueIndex?: number; // Current index in the valuesList
+  
+  // For increment mode
+  incrementStep?: number; // Amount to increment/decrement by
+  minOverride?: number; // Minimum value
+  maxOverride?: number; // Maximum value
 }
 
 // Keyboard key mapping
 export interface KeyMapping extends ControllerMappingBase {
   type: 'key';
   keyCode: string; // Key code (e.g., 'KeyA', 'Space', 'ArrowUp')
-  mode: 'toggle' | 'momentary' | 'series';
+  mode: ButtonModeType;
   valueWhenPressed: string | number;
   valueWhenReleased?: string | number;
   
@@ -40,6 +48,11 @@ export interface KeyMapping extends ControllerMappingBase {
   nextKeyCode?: string; // Optional second key for series navigation
   valuesList?: Array<string | number>; // List of values to cycle through
   currentValueIndex?: number; // Current index in the valuesList
+  
+  // For increment mode
+  incrementStep?: number; // Amount to increment/decrement by
+  minOverride?: number; // Minimum value
+  maxOverride?: number; // Maximum value
 }
 
 // Mouse X movement mapping (horizontal movement)
@@ -63,7 +76,7 @@ export interface MouseMapping extends ControllerMappingBase {
   type: 'mouse';
   action: 'wheel' | 'button';
   buttonIndex?: number; // 0 = left, 1 = middle, 2 = right
-  mode: 'toggle' | 'momentary' | 'series' | 'axis';
+  mode: ButtonModeType;
   multiplier?: number; // For wheel
   valueWhenPressed?: string | number;
   valueWhenReleased?: string | number;
@@ -75,6 +88,9 @@ export interface MouseMapping extends ControllerMappingBase {
   nextButtonIndex?: number; // Button index for next action
   valuesList?: Array<string | number>; // List of values to cycle through
   currentValueIndex?: number; // Current index in the valuesList
+  
+  // For increment mode
+  incrementStep?: number; // Amount to increment/decrement by
 }
 
 // Union type for all mapping types

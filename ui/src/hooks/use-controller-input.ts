@@ -249,6 +249,63 @@ export function useControllerInput(
                 onValueChange(newValue);
               }
             }
+          } else if (buttonMapping.mode === 'increment') {
+            // Increment/decrement mode - change the value by increment step when buttons are pressed
+            // Primary button increments, next button decrements
+
+            // Handle increment (primary button)
+            if (isPressed && !wasPressed) {
+              // Get current value or initialize to inputMin (or 0 if not defined)
+              const currentValue = typeof valueRef.current === 'number' 
+                ? valueRef.current 
+                : (buttonMapping.minOverride !== undefined ? buttonMapping.minOverride : 0);
+              
+              // Calculate new value by adding increment step
+              const incrementStep = buttonMapping.incrementStep || 1;
+              let newValue = currentValue + incrementStep;
+              
+              // Apply upper bound if defined
+              if (buttonMapping.maxOverride !== undefined) {
+                newValue = Math.min(newValue, buttonMapping.maxOverride);
+              }
+              
+              console.log(`Button ${buttonIndex} incremented value from ${currentValue} to ${newValue}`);
+              valueRef.current = newValue;
+              onValueChange(newValue);
+            }
+            
+            // Handle decrement (next button)
+            if (buttonMapping.nextButtonIndex !== undefined && 
+                buttonMapping.nextButtonIndex >= 0 &&
+                buttonMapping.nextButtonIndex < freshController.buttons.length) {
+              
+              const nextIsPressed = freshController.buttons[buttonMapping.nextButtonIndex]?.pressed || false;
+              const nextWasPressed = buttonStatesRef.current[buttonMapping.nextButtonIndex] || false;
+              
+              // Update next button state
+              buttonStatesRef.current[buttonMapping.nextButtonIndex] = nextIsPressed;
+              
+              // Handle decrement
+              if (nextIsPressed && !nextWasPressed) {
+                // Get current value or initialize
+                const currentValue = typeof valueRef.current === 'number' 
+                  ? valueRef.current 
+                  : (buttonMapping.maxOverride !== undefined ? buttonMapping.maxOverride : 0);
+                
+                // Calculate new value by subtracting increment step
+                const incrementStep = buttonMapping.incrementStep || 1;
+                let newValue = currentValue - incrementStep;
+                
+                // Apply lower bound if defined
+                if (buttonMapping.minOverride !== undefined) {
+                  newValue = Math.max(newValue, buttonMapping.minOverride);
+                }
+                
+                console.log(`Button ${buttonMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+              }
+            }
           } else {
             // Momentary mode (default) - value follows button state
             const newValue = isPressed 
@@ -340,6 +397,60 @@ export function useControllerInput(
                   (mappingRef.current as KeyMapping).currentValueIndex = currentIndex;
                 }
                 
+                valueRef.current = newValue;
+                onValueChange(newValue);
+              }
+            }
+          } else if (keyMapping.mode === 'increment') {
+            // Increment/decrement mode - change the value by increment step when keys are pressed
+            // Primary key increments, next key decrements
+
+            // Handle increment (primary key)
+            if (isKeyDown && !wasKeyDown) {
+              // Get current value or initialize to inputMin (or 0 if not defined)
+              const currentValue = typeof valueRef.current === 'number' 
+                ? valueRef.current 
+                : (keyMapping.minOverride !== undefined ? keyMapping.minOverride : 0);
+              
+              // Calculate new value by adding increment step
+              const incrementStep = keyMapping.incrementStep || 1;
+              let newValue = currentValue + incrementStep;
+              
+              // Apply upper bound if defined
+              if (keyMapping.maxOverride !== undefined) {
+                newValue = Math.min(newValue, keyMapping.maxOverride);
+              }
+              
+              console.log(`Key ${keyCode} incremented value from ${currentValue} to ${newValue}`);
+              valueRef.current = newValue;
+              onValueChange(newValue);
+            }
+            
+            // Handle decrement (next key)
+            if (keyMapping.nextKeyCode) {
+              const nextIsPressed = isKeyPressed(keyMapping.nextKeyCode);
+              const nextWasPressed = keyStatesRef.current[keyMapping.nextKeyCode] || false;
+              
+              // Update next key state
+              keyStatesRef.current[keyMapping.nextKeyCode] = nextIsPressed;
+              
+              // Handle decrement
+              if (nextIsPressed && !nextWasPressed) {
+                // Get current value or initialize
+                const currentValue = typeof valueRef.current === 'number' 
+                  ? valueRef.current 
+                  : (keyMapping.maxOverride !== undefined ? keyMapping.maxOverride : 0);
+                
+                // Calculate new value by subtracting increment step
+                const incrementStep = keyMapping.incrementStep || 1;
+                let newValue = currentValue - incrementStep;
+                
+                // Apply lower bound if defined
+                if (keyMapping.minOverride !== undefined) {
+                  newValue = Math.max(newValue, keyMapping.minOverride);
+                }
+                
+                console.log(`Key ${keyMapping.nextKeyCode} decremented value from ${currentValue} to ${newValue}`);
                 valueRef.current = newValue;
                 onValueChange(newValue);
               }
@@ -438,6 +549,60 @@ export function useControllerInput(
                       (mappingRef.current as MouseMapping).currentValueIndex = currentIndex;
                     }
                     
+                    valueRef.current = newValue;
+                    onValueChange(newValue);
+                  }
+                }
+              } else if (mouseMapping.mode === 'increment') {
+                // Increment/decrement mode - change the value by increment step when mouse buttons are pressed
+                // Primary button increments, next button decrements
+
+                // Handle increment (primary button)
+                if (isPressed && !wasPressed) {
+                  // Get current value or initialize to inputMin (or 0 if not defined)
+                  const currentValue = typeof valueRef.current === 'number' 
+                    ? valueRef.current 
+                    : (mouseMapping.minOverride !== undefined ? mouseMapping.minOverride : 0);
+                  
+                  // Calculate new value by adding increment step
+                  const incrementStep = mouseMapping.incrementStep || 1;
+                  let newValue = currentValue + incrementStep;
+                  
+                  // Apply upper bound if defined
+                  if (mouseMapping.maxOverride !== undefined) {
+                    newValue = Math.min(newValue, mouseMapping.maxOverride);
+                  }
+                  
+                  console.log(`Mouse button ${mouseMapping.buttonIndex} incremented value from ${currentValue} to ${newValue}`);
+                  valueRef.current = newValue;
+                  onValueChange(newValue);
+                }
+                
+                // Handle decrement (next button)
+                if (mouseMapping.nextButtonIndex !== undefined && mouseMapping.nextAction === 'button') {
+                  const nextIsPressed = isMouseButtonPressed(mouseMapping.nextButtonIndex);
+                  const nextWasPressed = mouseButtonStatesRef.current[mouseMapping.nextButtonIndex] || false;
+                  
+                  // Update next button state
+                  mouseButtonStatesRef.current[mouseMapping.nextButtonIndex] = nextIsPressed;
+                  
+                  // Handle decrement
+                  if (nextIsPressed && !nextWasPressed) {
+                    // Get current value or initialize
+                    const currentValue = typeof valueRef.current === 'number' 
+                      ? valueRef.current 
+                      : (mouseMapping.maxOverride !== undefined ? mouseMapping.maxOverride : 0);
+                    
+                    // Calculate new value by subtracting increment step
+                    const incrementStep = mouseMapping.incrementStep || 1;
+                    let newValue = currentValue - incrementStep;
+                    
+                    // Apply lower bound if defined
+                    if (mouseMapping.minOverride !== undefined) {
+                      newValue = Math.max(newValue, mouseMapping.minOverride);
+                    }
+                    
+                    console.log(`Mouse button ${mouseMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
                     valueRef.current = newValue;
                     onValueChange(newValue);
                   }
