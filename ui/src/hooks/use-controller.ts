@@ -11,6 +11,7 @@ export function useController() {
   const prevAxisValues = useRef<Record<number, Record<number, number>>>({});
   const requestRef = useRef<number | null>(null);
   const frameCount = useRef(0);
+  const lastControllerCount = useRef(0);
   
   // Handler for when a gamepad is connected
   const handleGamepadConnected = useCallback((event: GamepadEvent) => {
@@ -55,16 +56,31 @@ export function useController() {
           activePads.push(pad);
           if (shouldLog) {
             console.log(`Active controller ${i}: ${pad.id}, buttons: ${pad.buttons.length}, axes: ${pad.axes.length}`);
+            
+            // Log the current axes values periodically for debugging
+            if (shouldLog) {
+              console.log(`Controller ${i} axes values:`, Array.from(pad.axes).map(v => v.toFixed(2)));
+            }
           }
         }
       }
 
-      if (shouldLog) {
-        console.log(`Found ${activePads.length} active controllers`);
+      // Only update the state if it actually changed
+      if (activePads.length !== lastControllerCount.current) {
+        if (shouldLog) {
+          console.log(`Controller count changed from ${lastControllerCount.current} to ${activePads.length}`);
+        }
+        
+        setControllers(activePads);
+        setIsControllerConnected(activePads.length > 0);
+        lastControllerCount.current = activePads.length;
+        
+        // Clear previous button and axis states when controllers change
+        if (activePads.length === 0) {
+          prevButtonStates.current = {};
+          prevAxisValues.current = {};
+        }
       }
-      
-      setControllers(activePads);
-      setIsControllerConnected(activePads.length > 0);
     } catch (error) {
       console.error("Error polling gamepads:", error);
     }
@@ -78,12 +94,26 @@ export function useController() {
     const controller = controllers[controllerIndex];
     if (!controller) return false;
     
+    // Get fresh gamepad data to ensure we have the latest state
+    const gamepads = navigator.getGamepads();
+    const freshController = gamepads[controller.index];
+    
+    if (!freshController) {
+      console.warn("Controller lost during button check");
+      return false;
+    }
+    
     // Initialize controller state if needed
     if (!prevButtonStates.current[controllerIndex]) {
       prevButtonStates.current[controllerIndex] = {};
     }
     
-    const buttonState = controller.buttons[buttonIndex]?.pressed || false;
+    // Ensure the button index is valid
+    if (buttonIndex < 0 || buttonIndex >= freshController.buttons.length) {
+      return false;
+    }
+    
+    const buttonState = freshController.buttons[buttonIndex]?.pressed || false;
     const wasPressed = buttonState && !prevButtonStates.current[controllerIndex][buttonIndex];
     
     // Update previous state
@@ -98,12 +128,26 @@ export function useController() {
       const controller = controllers[controllerIndex];
       if (!controller) return false;
       
+      // Get fresh gamepad data to ensure we have the latest state
+      const gamepads = navigator.getGamepads();
+      const freshController = gamepads[controller.index];
+      
+      if (!freshController) {
+        console.warn("Controller lost during axis check");
+        return false;
+      }
+      
       // Initialize controller state if needed
       if (!prevAxisValues.current[controllerIndex]) {
         prevAxisValues.current[controllerIndex] = {};
       }
       
-      const axisValue = controller.axes[axisIndex] || 0;
+      // Ensure the axis index is valid
+      if (axisIndex < 0 || axisIndex >= freshController.axes.length) {
+        return false;
+      }
+      
+      const axisValue = freshController.axes[axisIndex] || 0;
       const prevValue = prevAxisValues.current[controllerIndex][axisIndex] || 0;
       const hasChanged = Math.abs(axisValue - prevValue) > threshold;
       

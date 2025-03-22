@@ -9,10 +9,16 @@ export function useControllerMapping() {
   // Load mappings from localStorage on mount
   useEffect(() => {
     try {
+      console.log('Attempting to load controller mappings from localStorage');
       const savedMappings = localStorage.getItem(STORAGE_KEY);
+      
       if (savedMappings) {
+        console.log('Found saved controller mappings:', savedMappings);
         const parsedMappings = JSON.parse(savedMappings) as MappingStorage;
+        console.log('Parsed mappings:', parsedMappings);
         setMappings(parsedMappings.mappings);
+      } else {
+        console.log('No saved controller mappings found in localStorage');
       }
     } catch (error) {
       console.error('Failed to load controller mappings:', error);
@@ -22,7 +28,12 @@ export function useControllerMapping() {
   // Save mappings to localStorage whenever they change
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ mappings }));
+      // Only save if there are actually mappings
+      if (Object.keys(mappings).length > 0) {
+        console.log('Saving controller mappings to localStorage:', mappings);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ mappings }));
+        console.log('Saved controller mappings successfully');
+      }
     } catch (error) {
       console.error('Failed to save controller mappings:', error);
     }
@@ -30,6 +41,7 @@ export function useControllerMapping() {
   
   // Add or update a mapping
   const saveMapping = useCallback((nodeId: string, fieldName: string, mapping: ControllerMapping) => {
+    console.log(`Saving mapping for ${nodeId}.${fieldName}:`, mapping);
     setMappings(prev => {
       const updated = { ...prev };
       
@@ -47,6 +59,7 @@ export function useControllerMapping() {
   
   // Remove a mapping
   const removeMapping = useCallback((nodeId: string, fieldName: string) => {
+    console.log(`Removing mapping for ${nodeId}.${fieldName}`);
     setMappings(prev => {
       const updated = { ...prev };
       
@@ -68,7 +81,12 @@ export function useControllerMapping() {
   
   // Get a mapping by nodeId and fieldName
   const getMapping = useCallback((nodeId: string, fieldName: string): ControllerMapping | undefined => {
-    return mappings[nodeId]?.[fieldName];
+    const mapping = mappings[nodeId]?.[fieldName];
+    // Only log when we're actually finding a mapping, not for every check
+    if (mapping) {
+      console.log(`Retrieved mapping for ${nodeId}.${fieldName}:`, mapping);
+    }
+    return mapping;
   }, [mappings]);
   
   // Check if a mapping exists
