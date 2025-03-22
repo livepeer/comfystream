@@ -106,20 +106,30 @@ export function ControllerMappingButton({
     console.log(`Using controller: ${controller.id}`);
     console.log(`Buttons: ${controller.buttons.length}, Axes: ${controller.axes.length}`);
     
-    // Store initial button states to detect changes
+    // Store initial button states and axis values for calibration
     const initialButtonStates = Array.from(controller.buttons).map(b => b.pressed);
     const initialAxisValues = Array.from(controller.axes);
     
+    console.log("Initial axis values:", initialAxisValues);
+    
     const detectChanges = () => {
+      // Get fresh gamepad data
+      const gamepads = navigator.getGamepads();
+      const freshController = gamepads[controller.index];
+      
+      if (!freshController) {
+        console.warn("Controller lost during detection");
+        return;
+      }
+      
       // Check for button presses (any button that wasn't pressed initially but is now)
-      controller.buttons.forEach((button, index) => {
+      freshController.buttons.forEach((button, index) => {
         if (button.pressed && !initialButtonStates[index]) {
           console.log(`Button ${index} pressed`);
           setDetectedInput(`Button ${index}`);
           
           if (mappingType === 'button') {
             setButtonIndex(index);
-            // Don't auto-stop so user can see which button was pressed
           } else if (mappingType === 'promptList') {
             // For prompt list, first press sets nextButton, second press sets prevButton
             if (detectedInput === '') {
@@ -131,45 +141,25 @@ export function ControllerMappingButton({
         }
       });
       
-      // Enhanced checks for significant axis movements
-      // Get fresh values every time to detect changes in real-time
-      const freshGamepads = navigator.getGamepads();
-      const freshController = freshGamepads[controller.index];
-      
-      if (freshController && freshController.connected) {
-        let axisDebugMsg = "";
-        
+      // Check for significant axis movements COMPARED TO INITIAL VALUES
+      // This is the key difference - compare to initial values, not just checking absolute values
+      if (mappingType === 'axis') {
         freshController.axes.forEach((axisValue, index) => {
-          const initialValue = initialAxisValues[index] || 0;
+          const initialValue = initialAxisValues[index];
+          const movement = Math.abs(axisValue - initialValue);
           
-          // Log all significant axis values periodically
-          if (Math.abs(axisValue) > 0.2) {
-            axisDebugMsg += `Axis ${index}: ${axisValue.toFixed(2)}, `;
-          }
-          
-          // Less restrictive for axis detection - handle any significant movement
-          if (mappingType === 'axis') {
-            // Check if value has changed significantly from initial
-            const axisChange = Math.abs(axisValue - initialValue);
-            
-            // Detect if axis value is high enough to be significant
-            if (axisChange > 0.3 || Math.abs(axisValue) > 0.7) {
-              console.log(`Axis ${index} active: ${axisValue.toFixed(2)} (change: ${axisChange.toFixed(2)})`);
-              setDetectedInput(`Axis ${index}`);
-              setAxisIndex(index);
-            }
+          // Use movement threshold similar to old branch
+          if (movement > 0.3) {
+            console.log(`Axis ${index} moved: from ${initialValue.toFixed(2)} to ${axisValue.toFixed(2)} (change: ${movement.toFixed(2)})`);
+            setDetectedInput(`Axis ${index}`);
+            setAxisIndex(index);
           }
         });
-        
-        // Log axis values periodically
-        if (axisDebugMsg && Math.random() < 0.05) { // ~5% chance to log
-          console.log("Current axes:", axisDebugMsg);
-        }
       }
     };
     
     // Poll for input changes
-    const intervalId = setInterval(detectChanges, 100);
+    const intervalId = setInterval(detectChanges, 50);
     
     // Cleanup interval on unmount or when listening stops
     return () => {
@@ -177,7 +167,7 @@ export function ControllerMappingButton({
       clearInterval(intervalId);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isListening, controllers.length]); // Only depend on listening state and if controllers are available, not actual values
+  }, [isListening, controllers.length]); // Only depend on listening state and if controllers are available
   
   // Add debug button to manually check controllers
   const checkControllers = () => {
