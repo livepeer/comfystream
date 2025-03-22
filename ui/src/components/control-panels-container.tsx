@@ -77,6 +77,23 @@ export const ControlPanelsContainer = () => {
         <Settings className="h-6 w-6" />
       </Button>
 
+      {/* Hidden container with all control panels to keep them active when drawer is closed */}
+      {!isOpen && (
+        <div 
+          aria-hidden="true"
+          className="absolute opacity-0 pointer-events-none invisible h-0 overflow-hidden"
+          style={{ position: "absolute", left: "-9999px" }}
+        >
+          {panels.map((id) => (
+            <ControlPanel
+              key={`hidden-panel-${id}`}
+              panelState={panelStates[id]}
+              onStateChange={(state) => updatePanelState(id, state)}
+            />
+          ))}
+        </div>
+      )}
+
       <Drawer
         open={isOpen}
         onOpenChange={setIsOpen}
@@ -156,6 +173,7 @@ export const ControlPanelsContainer = () => {
                     </div>
                     <div className="flex-1 overflow-y-auto">
                       <ControlPanel
+                        key={`visible-panel-${id}`}
                         panelState={panelStates[id]}
                         onStateChange={(state) => updatePanelState(id, state)}
                       />
