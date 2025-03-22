@@ -17,8 +17,8 @@ export function MinMaxFields({
   inputMin, 
   inputMax 
 }: { 
-  minValue?: number; 
-  maxValue?: number; 
+  minValue?: number | null; 
+  maxValue?: number | null; 
   setMinValue: (value: number | undefined) => void; 
   setMaxValue: (value: number | undefined) => void; 
   inputMin?: number; 
@@ -31,7 +31,7 @@ export function MinMaxFields({
         <Input 
           id="min-override"
           type="number" 
-          value={minValue !== undefined ? minValue : ''} 
+          value={minValue !== undefined && minValue !== null ? minValue : ''} 
           placeholder={inputMin?.toString() || 'Default'}
           onChange={(e) => setMinValue(e.target.value ? parseFloat(e.target.value) : undefined)} 
         />
@@ -41,7 +41,7 @@ export function MinMaxFields({
         <Input 
           id="max-override"
           type="number" 
-          value={maxValue !== undefined ? maxValue : ''} 
+          value={maxValue !== undefined && maxValue !== null ? maxValue : ''} 
           placeholder={inputMax?.toString() || 'Default'}
           onChange={(e) => setMaxValue(e.target.value ? parseFloat(e.target.value) : undefined)} 
         />

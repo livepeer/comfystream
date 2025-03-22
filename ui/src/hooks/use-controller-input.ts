@@ -2,6 +2,10 @@ import { useEffect, useRef } from 'react';
 import { useController } from './use-controller';
 import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseXMapping, MouseYMapping } from '@/types/controller';
 
+// Constants for button hold & repeat functionality
+const INITIAL_DELAY_MS = 500; // Initial delay before repeating starts
+const REPEAT_INTERVAL_MS = 100; // Interval between repeats after initial delay
+
 // Hook for processing controller input according to a mapping
 export function useControllerInput(
   mapping: ControllerMapping | undefined,
@@ -42,6 +46,13 @@ export function useControllerInput(
   // For mouse position based mappings, we need to track accumulated values
   const mouseAccumulatedXRef = useRef<number>(0);
   const mouseAccumulatedYRef = useRef<number>(0);
+  
+  // Button hold timer state for increment/decrement functionality
+  const incrementTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const decrementTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const buttonHoldStartTimeRef = useRef<Record<number, number>>({});
+  const keyHoldStartTimeRef = useRef<Record<string, number>>({});
+  const mouseButtonHoldStartTimeRef = useRef<Record<number, number>>({});
   
   // Update the mapping ref when the mapping changes
   useEffect(() => {
@@ -253,8 +264,8 @@ export function useControllerInput(
             // Increment/decrement mode - change the value by increment step when buttons are pressed
             // Primary button increments, next button decrements
 
-            // Handle increment (primary button)
-            if (isPressed && !wasPressed) {
+            // Handle button press and release with repeat functionality
+            const handleIncrementRepeat = () => {
               // Get current value or initialize to inputMin (or 0 if not defined)
               const currentValue = typeof valueRef.current === 'number' 
                 ? valueRef.current 
@@ -269,9 +280,75 @@ export function useControllerInput(
                 newValue = Math.min(newValue, buttonMapping.maxOverride);
               }
               
-              console.log(`Button ${buttonIndex} incremented value from ${currentValue} to ${newValue}`);
-              valueRef.current = newValue;
-              onValueChange(newValue);
+              // Only update if value changed (avoid repeating at limits)
+              if (newValue !== currentValue) {
+                console.log(`Button ${buttonIndex} incremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+                
+                // Schedule next repeat
+                incrementTimerRef.current = setTimeout(handleIncrementRepeat, REPEAT_INTERVAL_MS);
+              }
+            };
+            
+            const handleDecrementRepeat = () => {
+              // Get current value or initialize
+              const currentValue = typeof valueRef.current === 'number' 
+                ? valueRef.current 
+                : (buttonMapping.maxOverride !== undefined ? buttonMapping.maxOverride : 0);
+              
+              // Calculate new value by subtracting increment step
+              const incrementStep = buttonMapping.incrementStep || 1;
+              let newValue = currentValue - incrementStep;
+              
+              // Apply lower bound if defined
+              if (buttonMapping.minOverride !== undefined) {
+                newValue = Math.max(newValue, buttonMapping.minOverride);
+              }
+              
+              // Only update if value changed (avoid repeating at limits)
+              if (newValue !== currentValue) {
+                console.log(`Button ${buttonMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+                
+                // Schedule next repeat
+                decrementTimerRef.current = setTimeout(handleDecrementRepeat, REPEAT_INTERVAL_MS);
+              }
+            };
+            
+            // Handle increment (primary button)
+            if (isPressed) {
+              if (!wasPressed) {
+                // Button was just pressed, start the hold timer after initial press
+                const currentValue = typeof valueRef.current === 'number' 
+                  ? valueRef.current 
+                  : (buttonMapping.minOverride !== undefined ? buttonMapping.minOverride : 0);
+                
+                // Calculate new value by adding increment step
+                const incrementStep = buttonMapping.incrementStep || 1;
+                let newValue = currentValue + incrementStep;
+                
+                // Apply upper bound if defined
+                if (buttonMapping.maxOverride !== undefined) {
+                  newValue = Math.min(newValue, buttonMapping.maxOverride);
+                }
+                
+                // Update immediately for the first press
+                console.log(`Button ${buttonIndex} incremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+                
+                // Record press time and start repeat timer
+                buttonHoldStartTimeRef.current[buttonIndex] = Date.now();
+                incrementTimerRef.current = setTimeout(handleIncrementRepeat, INITIAL_DELAY_MS);
+              }
+            } else if (wasPressed) {
+              // Button was released, clear the repeat timer
+              if (incrementTimerRef.current) {
+                clearTimeout(incrementTimerRef.current);
+                incrementTimerRef.current = null;
+              }
             }
             
             // Handle decrement (next button)
@@ -285,25 +362,38 @@ export function useControllerInput(
               // Update next button state
               buttonStatesRef.current[buttonMapping.nextButtonIndex] = nextIsPressed;
               
-              // Handle decrement
-              if (nextIsPressed && !nextWasPressed) {
-                // Get current value or initialize
-                const currentValue = typeof valueRef.current === 'number' 
-                  ? valueRef.current 
-                  : (buttonMapping.maxOverride !== undefined ? buttonMapping.maxOverride : 0);
-                
-                // Calculate new value by subtracting increment step
-                const incrementStep = buttonMapping.incrementStep || 1;
-                let newValue = currentValue - incrementStep;
-                
-                // Apply lower bound if defined
-                if (buttonMapping.minOverride !== undefined) {
-                  newValue = Math.max(newValue, buttonMapping.minOverride);
+              // Handle decrement with repeat
+              if (nextIsPressed) {
+                if (!nextWasPressed) {
+                  // Button was just pressed, handle first press immediately
+                  const currentValue = typeof valueRef.current === 'number' 
+                    ? valueRef.current 
+                    : (buttonMapping.maxOverride !== undefined ? buttonMapping.maxOverride : 0);
+                  
+                  // Calculate new value by subtracting increment step
+                  const incrementStep = buttonMapping.incrementStep || 1;
+                  let newValue = currentValue - incrementStep;
+                  
+                  // Apply lower bound if defined
+                  if (buttonMapping.minOverride !== undefined) {
+                    newValue = Math.max(newValue, buttonMapping.minOverride);
+                  }
+                  
+                  // Update immediately for the first press
+                  console.log(`Button ${buttonMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
+                  valueRef.current = newValue;
+                  onValueChange(newValue);
+                  
+                  // Record press time and start repeat timer
+                  buttonHoldStartTimeRef.current[buttonMapping.nextButtonIndex] = Date.now();
+                  decrementTimerRef.current = setTimeout(handleDecrementRepeat, INITIAL_DELAY_MS);
                 }
-                
-                console.log(`Button ${buttonMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
-                valueRef.current = newValue;
-                onValueChange(newValue);
+              } else if (nextWasPressed) {
+                // Button was released, clear the repeat timer
+                if (decrementTimerRef.current) {
+                  clearTimeout(decrementTimerRef.current);
+                  decrementTimerRef.current = null;
+                }
               }
             }
           } else {
@@ -405,8 +495,8 @@ export function useControllerInput(
             // Increment/decrement mode - change the value by increment step when keys are pressed
             // Primary key increments, next key decrements
 
-            // Handle increment (primary key)
-            if (isKeyDown && !wasKeyDown) {
+            // Handle key press and release with repeat functionality
+            const handleKeyIncrementRepeat = () => {
               // Get current value or initialize to inputMin (or 0 if not defined)
               const currentValue = typeof valueRef.current === 'number' 
                 ? valueRef.current 
@@ -421,9 +511,75 @@ export function useControllerInput(
                 newValue = Math.min(newValue, keyMapping.maxOverride);
               }
               
-              console.log(`Key ${keyCode} incremented value from ${currentValue} to ${newValue}`);
-              valueRef.current = newValue;
-              onValueChange(newValue);
+              // Only update if value changed (avoid repeating at limits)
+              if (newValue !== currentValue) {
+                console.log(`Key ${keyCode} incremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+                
+                // Schedule next repeat
+                incrementTimerRef.current = setTimeout(handleKeyIncrementRepeat, REPEAT_INTERVAL_MS);
+              }
+            };
+            
+            const handleKeyDecrementRepeat = () => {
+              // Get current value or initialize
+              const currentValue = typeof valueRef.current === 'number' 
+                ? valueRef.current 
+                : (keyMapping.maxOverride !== undefined ? keyMapping.maxOverride : 0);
+              
+              // Calculate new value by subtracting increment step
+              const incrementStep = keyMapping.incrementStep || 1;
+              let newValue = currentValue - incrementStep;
+              
+              // Apply lower bound if defined
+              if (keyMapping.minOverride !== undefined) {
+                newValue = Math.max(newValue, keyMapping.minOverride);
+              }
+              
+              // Only update if value changed (avoid repeating at limits)
+              if (newValue !== currentValue) {
+                console.log(`Key ${keyMapping.nextKeyCode} decremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+                
+                // Schedule next repeat
+                decrementTimerRef.current = setTimeout(handleKeyDecrementRepeat, REPEAT_INTERVAL_MS);
+              }
+            };
+            
+            // Handle increment (primary key)
+            if (isKeyDown) {
+              if (!wasKeyDown) {
+                // Key was just pressed, start the hold timer after initial press
+                const currentValue = typeof valueRef.current === 'number' 
+                  ? valueRef.current 
+                  : (keyMapping.minOverride !== undefined ? keyMapping.minOverride : 0);
+                
+                // Calculate new value by adding increment step
+                const incrementStep = keyMapping.incrementStep || 1;
+                let newValue = currentValue + incrementStep;
+                
+                // Apply upper bound if defined
+                if (keyMapping.maxOverride !== undefined) {
+                  newValue = Math.min(newValue, keyMapping.maxOverride);
+                }
+                
+                // Update immediately for the first press
+                console.log(`Key ${keyCode} incremented value from ${currentValue} to ${newValue}`);
+                valueRef.current = newValue;
+                onValueChange(newValue);
+                
+                // Record press time and start repeat timer
+                keyHoldStartTimeRef.current[keyCode] = Date.now();
+                incrementTimerRef.current = setTimeout(handleKeyIncrementRepeat, INITIAL_DELAY_MS);
+              }
+            } else if (wasKeyDown) {
+              // Key was released, clear the repeat timer
+              if (incrementTimerRef.current) {
+                clearTimeout(incrementTimerRef.current);
+                incrementTimerRef.current = null;
+              }
             }
             
             // Handle decrement (next key)
@@ -434,25 +590,38 @@ export function useControllerInput(
               // Update next key state
               keyStatesRef.current[keyMapping.nextKeyCode] = nextIsPressed;
               
-              // Handle decrement
-              if (nextIsPressed && !nextWasPressed) {
-                // Get current value or initialize
-                const currentValue = typeof valueRef.current === 'number' 
-                  ? valueRef.current 
-                  : (keyMapping.maxOverride !== undefined ? keyMapping.maxOverride : 0);
-                
-                // Calculate new value by subtracting increment step
-                const incrementStep = keyMapping.incrementStep || 1;
-                let newValue = currentValue - incrementStep;
-                
-                // Apply lower bound if defined
-                if (keyMapping.minOverride !== undefined) {
-                  newValue = Math.max(newValue, keyMapping.minOverride);
+              // Handle decrement with repeat
+              if (nextIsPressed) {
+                if (!nextWasPressed) {
+                  // Key was just pressed, handle first press immediately
+                  const currentValue = typeof valueRef.current === 'number' 
+                    ? valueRef.current 
+                    : (keyMapping.maxOverride !== undefined ? keyMapping.maxOverride : 0);
+                  
+                  // Calculate new value by subtracting increment step
+                  const incrementStep = keyMapping.incrementStep || 1;
+                  let newValue = currentValue - incrementStep;
+                  
+                  // Apply lower bound if defined
+                  if (keyMapping.minOverride !== undefined) {
+                    newValue = Math.max(newValue, keyMapping.minOverride);
+                  }
+                  
+                  // Update immediately for the first press
+                  console.log(`Key ${keyMapping.nextKeyCode} decremented value from ${currentValue} to ${newValue}`);
+                  valueRef.current = newValue;
+                  onValueChange(newValue);
+                  
+                  // Record press time and start repeat timer
+                  keyHoldStartTimeRef.current[keyMapping.nextKeyCode] = Date.now();
+                  decrementTimerRef.current = setTimeout(handleKeyDecrementRepeat, INITIAL_DELAY_MS);
                 }
-                
-                console.log(`Key ${keyMapping.nextKeyCode} decremented value from ${currentValue} to ${newValue}`);
-                valueRef.current = newValue;
-                onValueChange(newValue);
+              } else if (nextWasPressed) {
+                // Key was released, clear the repeat timer
+                if (decrementTimerRef.current) {
+                  clearTimeout(decrementTimerRef.current);
+                  decrementTimerRef.current = null;
+                }
               }
             }
           } else {
@@ -557,8 +726,8 @@ export function useControllerInput(
                 // Increment/decrement mode - change the value by increment step when mouse buttons are pressed
                 // Primary button increments, next button decrements
 
-                // Handle increment (primary button)
-                if (isPressed && !wasPressed) {
+                // Handle mouse button press and release with repeat functionality
+                const handleMouseIncrementRepeat = () => {
                   // Get current value or initialize to inputMin (or 0 if not defined)
                   const currentValue = typeof valueRef.current === 'number' 
                     ? valueRef.current 
@@ -573,9 +742,75 @@ export function useControllerInput(
                     newValue = Math.min(newValue, mouseMapping.maxOverride);
                   }
                   
-                  console.log(`Mouse button ${mouseMapping.buttonIndex} incremented value from ${currentValue} to ${newValue}`);
-                  valueRef.current = newValue;
-                  onValueChange(newValue);
+                  // Only update if value changed (avoid repeating at limits)
+                  if (newValue !== currentValue) {
+                    console.log(`Mouse button ${mouseMapping.buttonIndex} incremented value from ${currentValue} to ${newValue}`);
+                    valueRef.current = newValue;
+                    onValueChange(newValue);
+                    
+                    // Schedule next repeat
+                    incrementTimerRef.current = setTimeout(handleMouseIncrementRepeat, REPEAT_INTERVAL_MS);
+                  }
+                };
+                
+                const handleMouseDecrementRepeat = () => {
+                  // Get current value or initialize
+                  const currentValue = typeof valueRef.current === 'number' 
+                    ? valueRef.current 
+                    : (mouseMapping.maxOverride !== undefined ? mouseMapping.maxOverride : 0);
+                  
+                  // Calculate new value by subtracting increment step
+                  const incrementStep = mouseMapping.incrementStep || 1;
+                  let newValue = currentValue - incrementStep;
+                  
+                  // Apply lower bound if defined
+                  if (mouseMapping.minOverride !== undefined) {
+                    newValue = Math.max(newValue, mouseMapping.minOverride);
+                  }
+                  
+                  // Only update if value changed (avoid repeating at limits)
+                  if (newValue !== currentValue) {
+                    console.log(`Mouse button ${mouseMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
+                    valueRef.current = newValue;
+                    onValueChange(newValue);
+                    
+                    // Schedule next repeat
+                    decrementTimerRef.current = setTimeout(handleMouseDecrementRepeat, REPEAT_INTERVAL_MS);
+                  }
+                };
+                
+                // Handle increment (primary button)
+                if (isPressed) {
+                  if (!wasPressed) {
+                    // Button was just pressed, start the hold timer after initial press
+                    const currentValue = typeof valueRef.current === 'number' 
+                      ? valueRef.current 
+                      : (mouseMapping.minOverride !== undefined ? mouseMapping.minOverride : 0);
+                    
+                    // Calculate new value by adding increment step
+                    const incrementStep = mouseMapping.incrementStep || 1;
+                    let newValue = currentValue + incrementStep;
+                    
+                    // Apply upper bound if defined
+                    if (mouseMapping.maxOverride !== undefined) {
+                      newValue = Math.min(newValue, mouseMapping.maxOverride);
+                    }
+                    
+                    // Update immediately for the first press
+                    console.log(`Mouse button ${mouseMapping.buttonIndex} incremented value from ${currentValue} to ${newValue}`);
+                    valueRef.current = newValue;
+                    onValueChange(newValue);
+                    
+                    // Record press time and start repeat timer
+                    mouseButtonHoldStartTimeRef.current[mouseMapping.buttonIndex] = Date.now();
+                    incrementTimerRef.current = setTimeout(handleMouseIncrementRepeat, INITIAL_DELAY_MS);
+                  }
+                } else if (wasPressed) {
+                  // Button was released, clear the repeat timer
+                  if (incrementTimerRef.current) {
+                    clearTimeout(incrementTimerRef.current);
+                    incrementTimerRef.current = null;
+                  }
                 }
                 
                 // Handle decrement (next button)
@@ -586,25 +821,38 @@ export function useControllerInput(
                   // Update next button state
                   mouseButtonStatesRef.current[mouseMapping.nextButtonIndex] = nextIsPressed;
                   
-                  // Handle decrement
-                  if (nextIsPressed && !nextWasPressed) {
-                    // Get current value or initialize
-                    const currentValue = typeof valueRef.current === 'number' 
-                      ? valueRef.current 
-                      : (mouseMapping.maxOverride !== undefined ? mouseMapping.maxOverride : 0);
-                    
-                    // Calculate new value by subtracting increment step
-                    const incrementStep = mouseMapping.incrementStep || 1;
-                    let newValue = currentValue - incrementStep;
-                    
-                    // Apply lower bound if defined
-                    if (mouseMapping.minOverride !== undefined) {
-                      newValue = Math.max(newValue, mouseMapping.minOverride);
+                  // Handle decrement with repeat
+                  if (nextIsPressed) {
+                    if (!nextWasPressed) {
+                      // Button was just pressed, handle first press immediately
+                      const currentValue = typeof valueRef.current === 'number' 
+                        ? valueRef.current 
+                        : (mouseMapping.maxOverride !== undefined ? mouseMapping.maxOverride : 0);
+                      
+                      // Calculate new value by subtracting increment step
+                      const incrementStep = mouseMapping.incrementStep || 1;
+                      let newValue = currentValue - incrementStep;
+                      
+                      // Apply lower bound if defined
+                      if (mouseMapping.minOverride !== undefined) {
+                        newValue = Math.max(newValue, mouseMapping.minOverride);
+                      }
+                      
+                      // Update immediately for the first press
+                      console.log(`Mouse button ${mouseMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
+                      valueRef.current = newValue;
+                      onValueChange(newValue);
+                      
+                      // Record press time and start repeat timer
+                      mouseButtonHoldStartTimeRef.current[mouseMapping.nextButtonIndex] = Date.now();
+                      decrementTimerRef.current = setTimeout(handleMouseDecrementRepeat, INITIAL_DELAY_MS);
                     }
-                    
-                    console.log(`Mouse button ${mouseMapping.nextButtonIndex} decremented value from ${currentValue} to ${newValue}`);
-                    valueRef.current = newValue;
-                    onValueChange(newValue);
+                  } else if (nextWasPressed) {
+                    // Button was released, clear the repeat timer
+                    if (decrementTimerRef.current) {
+                      clearTimeout(decrementTimerRef.current);
+                      decrementTimerRef.current = null;
+                    }
                   }
                 }
               } else {
@@ -732,6 +980,17 @@ export function useControllerInput(
     return () => {
       console.log('Cleaning up input processing');
       clearInterval(intervalId);
+      
+      // Clear any pending increment/decrement timers
+      if (incrementTimerRef.current) {
+        clearTimeout(incrementTimerRef.current);
+        incrementTimerRef.current = null;
+      }
+      
+      if (decrementTimerRef.current) {
+        clearTimeout(decrementTimerRef.current);
+        decrementTimerRef.current = null;
+      }
       
       // Disable keyboard and mouse input when unmounting
       if (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-x' || mapping.type === 'mouse-y') {
