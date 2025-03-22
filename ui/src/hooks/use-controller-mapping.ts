@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ControllerMapping, MappingStorage } from '@/types/controller';
+import { ControllerMapping, MappingStorage, ButtonMapping } from '@/types/controller';
+
+// Define a type for legacy mappings that might be in storage
+interface LegacyMapping {
+  type: string;
+  nodeId: string;
+  fieldName: string;
+  [key: string]: any; // Allow any additional properties for legacy types
+}
 
 const STORAGE_KEY = 'comfystream_controller_mappings';
 
@@ -16,7 +24,55 @@ export function useControllerMapping() {
         console.log('Found saved controller mappings:', savedMappings);
         const parsedMappings = JSON.parse(savedMappings) as MappingStorage;
         console.log('Parsed mappings:', parsedMappings);
-        setMappings(parsedMappings.mappings);
+        
+        // Handle legacy mappings if needed
+        const updatedMappings = { ...parsedMappings.mappings };
+        let hasUpdated = false;
+        
+        // Check for any legacy mappings and update them to the new format
+        Object.entries(updatedMappings).forEach(([nodeId, fields]) => {
+          Object.entries(fields).forEach(([fieldName, mapping]) => {
+            const legacyMapping = mapping as LegacyMapping;
+            
+            if (legacyMapping.type === 'promptList') {
+              // Convert promptList mapping to button with series mode
+              console.log(`Converting legacy promptList mapping for ${nodeId}.${fieldName} to button with series mode`);
+              
+              updatedMappings[nodeId][fieldName] = {
+                type: 'button',
+                nodeId,
+                fieldName,
+                buttonIndex: legacyMapping.nextButtonIndex || 0,
+                mode: 'series',
+                valueWhenPressed: '1',
+                valueWhenReleased: '0',
+                nextButtonIndex: legacyMapping.prevButtonIndex,
+                valuesList: ['1', '2', '3'], // Default values
+                currentValueIndex: 0
+              } as ButtonMapping;
+              
+              hasUpdated = true;
+            } else if (legacyMapping.type === 'button' && !('mode' in legacyMapping)) {
+              // Handle legacy button mappings that don't have mode
+              console.log(`Updating legacy button mapping for ${nodeId}.${fieldName}`);
+              
+              updatedMappings[nodeId][fieldName] = {
+                ...legacyMapping,
+                mode: legacyMapping.toggleMode ? 'toggle' : 'momentary'
+              } as ButtonMapping;
+              
+              hasUpdated = true;
+            }
+          });
+        });
+        
+        if (hasUpdated) {
+          console.log('Updated legacy mappings format to new format');
+          setMappings(updatedMappings);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ mappings: updatedMappings }));
+        } else {
+          setMappings(parsedMappings.mappings);
+        }
       } else {
         console.log('No saved controller mappings found in localStorage');
       }

@@ -6,7 +6,7 @@ import { usePrompt } from "./settings";
 import { useControllerInput } from "@/hooks/use-controller-input";
 import { useControllerMapping } from "@/hooks/use-controller-mapping";
 import { ControllerMappingButton } from "./controller-mapping";
-import { AxisMapping } from "@/types/controller";
+import { AxisMapping, ButtonMapping } from "@/types/controller";
 
 type InputValue = string | number | boolean;
 
@@ -485,19 +485,6 @@ export const ControlPanel = ({
   // Set up controller input handler with enhanced feedback
   useControllerInput(mapping, (value) => {
     console.log("Controller input received:", value);
-    
-    // Special handling for prompt list navigation
-    if (value === '__NEXT_PROMPT__' && currentPrompts && promptIdxToUpdate < currentPrompts.length - 1) {
-      console.log("Controller navigating to next prompt");
-      setPromptIdxToUpdate(promptIdxToUpdate + 1);
-      return;
-    }
-    
-    if (value === '__PREV_PROMPT__' && promptIdxToUpdate > 0) {
-      console.log("Controller navigating to previous prompt");
-      setPromptIdxToUpdate(promptIdxToUpdate - 1);
-      return;
-    }
     
     // For regular values, ALWAYS update the control panel state immediately
     if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {

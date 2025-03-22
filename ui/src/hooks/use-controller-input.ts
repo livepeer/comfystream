@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useController } from './use-controller';
-import { AxisMapping, ButtonMapping, ControllerMapping, PromptListMapping } from '@/types/controller';
+import { AxisMapping, ButtonMapping, ControllerMapping } from '@/types/controller';
 
 // Hook for processing controller input according to a mapping
 export function useControllerInput(
@@ -12,11 +12,20 @@ export function useControllerInput(
   const mappingRef = useRef<ControllerMapping | undefined>(mapping);
   const lastPollTimeRef = useRef(0);
   
+  // Button state tracking to improve detection
+  const buttonStatesRef = useRef<Record<number, boolean>>({});
+  
   // Update the mapping ref when the mapping changes
   useEffect(() => {
     if (mapping !== mappingRef.current) {
       console.log('Controller mapping changed:', mapping);
       mappingRef.current = mapping;
+      
+      // Reset value reference when mapping changes
+      valueRef.current = null;
+      
+      // Reset button states
+      buttonStatesRef.current = {};
     }
   }, [mapping]);
   
@@ -106,9 +115,18 @@ export function useControllerInput(
             return;
           }
           
-          if (buttonMapping.toggleMode) {
-            // Toggle mode - change value only when button is just pressed
-            if (wasButtonJustPressed(controllerIndex, buttonIndex)) {
+          const isPressed = freshController.buttons[buttonIndex]?.pressed || false;
+          
+          // Store previous state
+          const wasPressed = buttonStatesRef.current[buttonIndex] || false;
+          
+          // Update button state cache
+          buttonStatesRef.current[buttonIndex] = isPressed;
+          
+          // Handle based on button mode
+          if (buttonMapping.mode === 'toggle') {
+            // Toggle mode - change value only when button is just pressed (rising edge)
+            if (isPressed && !wasPressed) {
               const newValue = valueRef.current === buttonMapping.valueWhenPressed 
                 ? (buttonMapping.valueWhenReleased || '') 
                 : buttonMapping.valueWhenPressed;
@@ -117,45 +135,75 @@ export function useControllerInput(
               valueRef.current = newValue;
               onValueChange(newValue);
             }
+          } else if (buttonMapping.mode === 'series') {
+            // Series mode - cycle through values when button is just pressed
+            if (isPressed && !wasPressed) {
+              // Check if we have values to cycle through
+              if (buttonMapping.valuesList && buttonMapping.valuesList.length > 0) {
+                // Use currentValueIndex or initialize to 0
+                let currentIndex = buttonMapping.currentValueIndex || 0;
+                
+                // Move to next value in the list
+                currentIndex = (currentIndex + 1) % buttonMapping.valuesList.length;
+                
+                const newValue = buttonMapping.valuesList[currentIndex];
+                console.log(`Button ${buttonIndex} cycled to value ${currentIndex}:`, newValue);
+                
+                // Store the new index in the mapping reference
+                if (mappingRef.current && mappingRef.current.type === 'button') {
+                  (mappingRef.current as ButtonMapping).currentValueIndex = currentIndex;
+                }
+                
+                valueRef.current = newValue;
+                onValueChange(newValue);
+              }
+            }
+            
+            // Check for nextButtonIndex if defined (for backward cycling)
+            if (buttonMapping.nextButtonIndex !== undefined && 
+                buttonMapping.nextButtonIndex >= 0 &&
+                buttonMapping.nextButtonIndex < freshController.buttons.length) {
+              
+              const nextIsPressed = freshController.buttons[buttonMapping.nextButtonIndex]?.pressed || false;
+              const nextWasPressed = buttonStatesRef.current[buttonMapping.nextButtonIndex] || false;
+              
+              // Update next button state
+              buttonStatesRef.current[buttonMapping.nextButtonIndex] = nextIsPressed;
+              
+              // Handle backward cycling
+              if (nextIsPressed && !nextWasPressed && 
+                  buttonMapping.valuesList && buttonMapping.valuesList.length > 0) {
+                
+                // Use currentValueIndex or initialize to 0
+                let currentIndex = buttonMapping.currentValueIndex || 0;
+                
+                // Move to previous value in the list (with wrap-around)
+                currentIndex = (currentIndex - 1 + buttonMapping.valuesList.length) % buttonMapping.valuesList.length;
+                
+                const newValue = buttonMapping.valuesList[currentIndex];
+                console.log(`Button ${buttonMapping.nextButtonIndex} cycled to previous value ${currentIndex}:`, newValue);
+                
+                // Store the new index in the mapping reference
+                if (mappingRef.current && mappingRef.current.type === 'button') {
+                  (mappingRef.current as ButtonMapping).currentValueIndex = currentIndex;
+                }
+                
+                valueRef.current = newValue;
+                onValueChange(newValue);
+              }
+            }
           } else {
-            // Direct mode - value follows button state
-            const isPressed = freshController.buttons[buttonIndex]?.pressed || false;
+            // Momentary mode (default) - value follows button state
             const newValue = isPressed 
               ? buttonMapping.valueWhenPressed 
               : (buttonMapping.valueWhenReleased !== undefined ? buttonMapping.valueWhenReleased : valueRef.current);
             
-            if (valueRef.current !== newValue) {
-              if (shouldLog) {
-                console.log(`Button ${buttonIndex} state changed to:`, isPressed, 'value:', newValue);
-              }
+            // Only send updates on state change
+            if (isPressed !== wasPressed || valueRef.current === null) {
+              console.log(`Button ${buttonIndex} state changed to:`, isPressed, 'value:', newValue);
               valueRef.current = newValue;
               onValueChange(newValue);
             }
-          }
-          break;
-        }
-        
-        case 'promptList': {
-          const promptListMapping = mapping as PromptListMapping;
-          
-          // Validate button indices
-          if (promptListMapping.nextButtonIndex < 0 || 
-              promptListMapping.nextButtonIndex >= freshController.buttons.length ||
-              promptListMapping.prevButtonIndex < 0 || 
-              promptListMapping.prevButtonIndex >= freshController.buttons.length) {
-            if (shouldLog) console.warn('Invalid button indices for prompt list navigation');
-            return;
-          }
-          
-          // Check for next/prev button presses
-          if (wasButtonJustPressed(controllerIndex, promptListMapping.nextButtonIndex)) {
-            console.log('Next prompt button pressed');
-            onValueChange('__NEXT_PROMPT__'); // Special value handled by the control panel
-          }
-          
-          if (wasButtonJustPressed(controllerIndex, promptListMapping.prevButtonIndex)) {
-            console.log('Previous prompt button pressed');
-            onValueChange('__PREV_PROMPT__'); // Special value handled by the control panel
           }
           break;
         }

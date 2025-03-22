@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useController } from '@/hooks/use-controller';
 import { useControllerMapping } from '@/hooks/use-controller-mapping';
-import { AxisMapping, ButtonMapping, ControllerMapping, PromptListMapping } from '@/types/controller';
+import { AxisMapping, ButtonMapping, ControllerMapping } from '@/types/controller';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -33,7 +33,7 @@ export function ControllerMappingButton({
   const [isOpen, setIsOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [detectedInput, setDetectedInput] = useState<string>('');
-  const [mappingType, setMappingType] = useState<'axis' | 'button' | 'promptList'>('axis');
+  const [mappingType, setMappingType] = useState<'axis' | 'button'>('axis');
   const [currentMapping, setCurrentMapping] = useState<ControllerMapping | undefined>(
     getMapping(nodeId, fieldName)
   );
@@ -46,16 +46,18 @@ export function ControllerMappingButton({
   
   // Form state for button mapping
   const [buttonIndex, setButtonIndex] = useState<number>(0);
-  const [toggleMode, setToggleMode] = useState<boolean>(false);
+  const [buttonMode, setButtonMode] = useState<'toggle' | 'momentary' | 'series'>('momentary');
   const [valueWhenPressed, setValueWhenPressed] = useState<string>('1');
   const [valueWhenReleased, setValueWhenReleased] = useState<string>('0');
-  
-  // Form state for prompt list mapping
-  const [nextButtonIndex, setNextButtonIndex] = useState<number>(1);
-  const [prevButtonIndex, setPrevButtonIndex] = useState<number>(0);
+  const [nextButtonIndex, setNextButtonIndex] = useState<number>(-1);
+  const [valuesList, setValuesList] = useState<Array<string>>(['1', '2', '3']);
+  const [currentValueIndex, setCurrentValueIndex] = useState<number>(0);
   
   // Track the type of input that was detected to avoid rerenders
   const [detectedInputType, setDetectedInputType] = useState<"none" | "button" | "axis">("none");
+  
+  // Track which button we're detecting (primary or next)
+  const [detectingButtonTarget, setDetectingButtonTarget] = useState<"primary" | "next">("primary");
   
   // Reference to store detection state without causing re-renders
   const detectionStateRef = useRef({
@@ -86,13 +88,15 @@ export function ControllerMappingButton({
       } else if (mapping.type === 'button') {
         const buttonMapping = mapping as ButtonMapping;
         setButtonIndex(buttonMapping.buttonIndex);
-        setToggleMode(buttonMapping.toggleMode);
+        setButtonMode(buttonMapping.mode || 'momentary');
         setValueWhenPressed(buttonMapping.valueWhenPressed.toString());
         setValueWhenReleased(buttonMapping.valueWhenReleased?.toString() || '0');
-      } else if (mapping.type === 'promptList') {
-        const promptListMapping = mapping as PromptListMapping;
-        setNextButtonIndex(promptListMapping.nextButtonIndex);
-        setPrevButtonIndex(promptListMapping.prevButtonIndex);
+        
+        if (buttonMapping.mode === 'series') {
+          setNextButtonIndex(buttonMapping.nextButtonIndex || -1);
+          setValuesList(buttonMapping.valuesList?.map(v => v.toString()) || ['1', '2', '3']);
+          setCurrentValueIndex(buttonMapping.currentValueIndex || 0);
+        }
       }
     }
   }, [nodeId, fieldName, getMapping]);
@@ -132,13 +136,10 @@ export function ControllerMappingButton({
           setDetectedInput(`Button ${index}`);
           
           if (mappingType === 'button') {
-            setButtonIndex(index);
-          } else if (mappingType === 'promptList') {
-            // For prompt list, first press sets nextButton, second press sets prevButton
-            if (detectedInput === '') {
+            if (detectingButtonTarget === "primary") {
+              setButtonIndex(index);
+            } else if (detectingButtonTarget === "next") {
               setNextButtonIndex(index);
-            } else {
-              setPrevButtonIndex(index);
             }
           }
         }
@@ -207,25 +208,24 @@ export function ControllerMappingButton({
         minOverride,
         maxOverride
       } as AxisMapping;
-    } else if (mappingType === 'button') {
+    } else {
+      // Button mapping - differentiate based on mode
       mapping = {
         type: 'button',
         nodeId,
         fieldName,
         buttonIndex,
-        toggleMode,
+        mode: buttonMode, 
         valueWhenPressed: parseFloat(valueWhenPressed) || valueWhenPressed,
         valueWhenReleased: parseFloat(valueWhenReleased) || valueWhenReleased
       } as ButtonMapping;
-    } else {
-      mapping = {
-        type: 'promptList',
-        nodeId,
-        fieldName,
-        nextButtonIndex,
-        prevButtonIndex,
-        currentPromptIndex: 0
-      } as PromptListMapping;
+      
+      // Add series-specific properties if in series mode
+      if (buttonMode === 'series') {
+        (mapping as ButtonMapping).nextButtonIndex = nextButtonIndex !== -1 ? nextButtonIndex : undefined;
+        (mapping as ButtonMapping).valuesList = valuesList.map(v => parseFloat(v) || v);
+        (mapping as ButtonMapping).currentValueIndex = currentValueIndex;
+      }
     }
     
     saveMapping(nodeId, fieldName, mapping);
@@ -242,9 +242,12 @@ export function ControllerMappingButton({
   };
   
   // Start listening for controller input
-  const handleStartListening = () => {
+  const handleStartListening = (target?: "primary" | "next") => {
     // Clear previous detection state
     setDetectedInput('');
+    
+    // Set which button we're detecting
+    setDetectingButtonTarget(target || "primary");
     
     // Force a refresh of controllers
     if (typeof navigator.getGamepads === 'function') {
@@ -338,18 +341,15 @@ export function ControllerMappingButton({
                 <p className="text-xs mb-2">
                   {mappingType === 'axis' 
                     ? 'Move a joystick or trigger you want to map' 
-                    : mappingType === 'button' 
-                      ? 'Press the button you want to map' 
-                      : 'First press button for "Next", then press button for "Previous"'}
+                    : 'Press the button you want to map'}
                 </p>
                 
                 {detectedInput && (
                   <p className="text-xs bg-white p-2 rounded border border-blue-100 font-medium text-blue-700">
                     Detected: {detectedInput}
                     {mappingType === 'axis' && <> → Setting Axis to {axisIndex}</>}
-                    {mappingType === 'button' && <> → Setting Button to {buttonIndex}</>}
-                    {mappingType === 'promptList' && !detectedInput.includes('Next') && <> → Setting Next Button to {nextButtonIndex}</>}
-                    {mappingType === 'promptList' && detectedInput.includes('Next') && <> → Setting Prev Button to {prevButtonIndex}</>}
+                    {mappingType === 'button' && detectingButtonTarget === "primary" && <> → Setting {buttonMode === 'series' ? 'Previous' : ''} Button to {buttonIndex}</>}
+                    {mappingType === 'button' && detectingButtonTarget === "next" && <> → Setting Next Button to {nextButtonIndex}</>}
                   </p>
                 )}
               </div>
@@ -380,12 +380,11 @@ export function ControllerMappingButton({
               <select
                 id="mapping-type"
                 value={mappingType}
-                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button' | 'promptList')}
+                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button')}
                 className="p-2 border rounded w-full"
               >
                 <option value="axis">Axis</option>
                 <option value="button">Button</option>
-                <option value="promptList">Prompt List</option>
               </select>
             </div>
             
@@ -403,7 +402,7 @@ export function ControllerMappingButton({
                       onChange={(e) => setAxisIndex(parseInt(e.target.value) || 0)} 
                     />
                     <Button 
-                      onClick={handleStartListening} 
+                      onClick={() => handleStartListening("primary")} 
                       disabled={!isControllerConnected || isListening}
                       size="sm"
                     >
@@ -446,11 +445,47 @@ export function ControllerMappingButton({
                 </div>
               </div>
             )}
+
+<div className="space-y-2 mt-4">
+                  <Label>Button Mode</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        id="mode-momentary"
+                        checked={buttonMode === 'momentary'}
+                        onChange={() => setButtonMode('momentary')}
+                        className="w-4 h-4"
+                      />
+                      <Label htmlFor="mode-momentary">Momentary</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        id="mode-toggle"
+                        checked={buttonMode === 'toggle'}
+                        onChange={() => setButtonMode('toggle')}
+                        className="w-4 h-4"
+                      />
+                      <Label htmlFor="mode-toggle">Toggle</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        id="mode-series"
+                        checked={buttonMode === 'series'}
+                        onChange={() => setButtonMode('series')}
+                        className="w-4 h-4"
+                      />
+                      <Label htmlFor="mode-series">Series</Label>
+                    </div>
+                  </div>
+                </div>
             
             {mappingType === 'button' && (
               <div className="space-y-2">
                 <div>
-                  <Label htmlFor="button-index">Button</Label>
+                  <Label htmlFor="button-index">{buttonMode === 'series' ? 'Previous Button' : 'Button'}</Label>
                   <div className="flex gap-2">
                     <Input 
                       id="button-index"
@@ -461,7 +496,7 @@ export function ControllerMappingButton({
                       onChange={(e) => setButtonIndex(parseInt(e.target.value) || 0)} 
                     />
                     <Button 
-                      onClick={handleStartListening} 
+                      onClick={() => handleStartListening("primary")} 
                       disabled={!isControllerConnected || isListening}
                       size="sm"
                     >
@@ -470,71 +505,94 @@ export function ControllerMappingButton({
                   </div>
                 </div>
                 
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="toggle-mode"
-                    checked={toggleMode}
-                    onChange={(e) => setToggleMode(e.target.checked)}
-                    className="w-4 h-4"
-                  />
-                  <Label htmlFor="toggle-mode">Toggle Mode</Label>
-                </div>
-                
-                <div>
-                  <Label htmlFor="value-pressed">Value When Pressed</Label>
-                  <Input 
-                    id="value-pressed"
-                    value={valueWhenPressed} 
-                    onChange={(e) => setValueWhenPressed(e.target.value)} 
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="value-released">Value When Released {toggleMode && '(Toggle Off)'}</Label>
-                  <Input 
-                    id="value-released"
-                    value={valueWhenReleased} 
-                    onChange={(e) => setValueWhenReleased(e.target.value)} 
-                  />
-                </div>
-              </div>
-            )}
-            
-            {mappingType === 'promptList' && (
-              <div className="space-y-2">
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <Label htmlFor="next-button">Next Prompt Button ({nextButtonIndex})</Label>
-                    <Button 
-                      onClick={handleStartListening} 
-                      disabled={!isControllerConnected || isListening}
-                      size="sm"
-                    >
-                      Detect Both
-                    </Button>
+                {buttonMode !== 'series' && (
+                  <div>
+                    <Label htmlFor="value-pressed">Value When Pressed</Label>
+                    <Input 
+                      id="value-pressed"
+                      value={valueWhenPressed} 
+                      onChange={(e) => setValueWhenPressed(e.target.value)} 
+                    />
                   </div>
-                  <Input 
-                    id="next-button"
-                    type="number" 
-                    min="0" 
-                    max="20"
-                    value={nextButtonIndex} 
-                    onChange={(e) => setNextButtonIndex(parseInt(e.target.value) || 0)} 
-                  />
-                </div>
+                )}
                 
-                <div className="mt-2">
-                  <Label htmlFor="prev-button">Previous Prompt Button ({prevButtonIndex})</Label>
-                  <Input 
-                    id="prev-button"
-                    type="number" 
-                    min="0" 
-                    max="20"
-                    value={prevButtonIndex} 
-                    onChange={(e) => setPrevButtonIndex(parseInt(e.target.value) || 0)} 
-                  />
-                </div>
+                {buttonMode !== 'series' && (
+                  <div>
+                    <Label htmlFor="value-released">Value When Released {buttonMode === 'toggle' && '(Toggle Off)'}</Label>
+                    <Input 
+                      id="value-released"
+                      value={valueWhenReleased} 
+                      onChange={(e) => setValueWhenReleased(e.target.value)} 
+                    />
+                  </div>
+                )}
+                
+                {buttonMode === 'series' && (
+                  <>
+                    <div>
+                      <Label htmlFor="next-button">Next Value Button (Optional)</Label>
+                      <div className="flex gap-2">
+                        <Input 
+                          id="next-button"
+                          type="number" 
+                          min="-1" 
+                          max="20"
+                          value={nextButtonIndex} 
+                          onChange={(e) => setNextButtonIndex(parseInt(e.target.value) || -1)} 
+                          placeholder="No second button"
+                        />
+                        <Button 
+                          onClick={() => handleStartListening("next")} 
+                          disabled={!isControllerConnected || isListening}
+                          size="sm"
+                        >
+                          Detect
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">Set to -1 to disable second button</p>
+                    </div>
+                    
+                    <div>
+                      <Label>Values to Cycle Through</Label>
+                      <div className="border rounded-md p-2 bg-gray-50 space-y-2 mt-1 max-h-40 overflow-y-auto">
+                        {valuesList.map((value, index) => (
+                          <div key={index} className="flex gap-2 items-center">
+                            <Input
+                              value={value}
+                              onChange={(e) => {
+                                const newList = [...valuesList];
+                                newList[index] = e.target.value;
+                                setValuesList(newList);
+                              }}
+                              className="flex-1"
+                            />
+                            <Button
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => {
+                                const newList = valuesList.filter((_, i) => i !== index);
+                                setValuesList(newList);
+                                if (currentValueIndex >= newList.length) {
+                                  setCurrentValueIndex(newList.length - 1);
+                                }
+                              }}
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                        ))}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setValuesList([...valuesList, ''])}
+                        >
+                          Add Value
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
             

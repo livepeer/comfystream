@@ -1,6 +1,6 @@
 // Base mapping interface
 export interface ControllerMappingBase {
-  type: 'axis' | 'button' | 'promptList';
+  type: 'axis' | 'button';
   nodeId: string;
   fieldName: string;
 }
@@ -14,25 +14,22 @@ export interface AxisMapping extends ControllerMappingBase {
   maxOverride?: number;
 }
 
-// Button mapping for toggles or incremental changes
+// Button mapping for toggles, momentary or cycling through series of values
 export interface ButtonMapping extends ControllerMappingBase {
   type: 'button';
   buttonIndex: number;
-  toggleMode: boolean;
+  mode: 'toggle' | 'momentary' | 'series';
   valueWhenPressed: string | number;
   valueWhenReleased?: string | number;
-}
-
-// Prompt list mapping for cycling through prompts
-export interface PromptListMapping extends ControllerMappingBase {
-  type: 'promptList';
-  nextButtonIndex: number;
-  prevButtonIndex: number;
-  currentPromptIndex: number;
+  
+  // For series mode
+  nextButtonIndex?: number; // Optional second button for series navigation
+  valuesList?: Array<string | number>; // List of values to cycle through
+  currentValueIndex?: number; // Current index in the valuesList
 }
 
 // Union type for all mapping types
-export type ControllerMapping = AxisMapping | ButtonMapping | PromptListMapping;
+export type ControllerMapping = AxisMapping | ButtonMapping;
 
 // Mapping storage interface
 export interface MappingStorage {
