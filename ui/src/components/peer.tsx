@@ -1,7 +1,10 @@
+"use client";
+
 import * as React from "react";
 import { Prompt } from "@/types";
 import { usePeer } from "@/hooks/use-peer";
 import { PeerContext } from "@/context/peer-context";
+import { ControllerProvider } from "@/context/controller-context";
 
 export interface PeerProps extends React.HTMLAttributes<HTMLDivElement> {
   url: string;
@@ -28,7 +31,9 @@ export const PeerConnector = (props: PeerProps) => {
     <div>
       {peer && (
         <PeerContext.Provider value={peer}>
-          {props.children}
+          <ControllerProvider>
+            {props.children}
+          </ControllerProvider>
         </PeerContext.Provider>
       )}
     </div>

@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from "react";
 import { usePeerContext } from "@/context/peer-context";
 import { usePrompt } from "./settings";
+import { useControllerInput } from "@/hooks/use-controller-input";
+import { useControllerMapping } from "@/hooks/use-controller-mapping";
+import { ControllerMappingButton } from "./controller-mapping";
 
 type InputValue = string | number | boolean;
 
@@ -337,6 +340,31 @@ export const ControlPanel = ({
     }
   };
 
+  // Get controller mapping
+  const { getMapping } = useControllerMapping();
+  const mapping = getMapping(panelState.nodeId, panelState.fieldName);
+
+  // Set up controller input handler
+  useControllerInput(mapping, (value) => {
+    if (!panelState.isAutoUpdateEnabled) return;
+
+    // Special handling for prompt list navigation
+    if (value === '__NEXT_PROMPT__' && currentPrompts && promptIdxToUpdate < currentPrompts.length - 1) {
+      setPromptIdxToUpdate(promptIdxToUpdate + 1);
+      return;
+    }
+    
+    if (value === '__PREV_PROMPT__' && promptIdxToUpdate > 0) {
+      setPromptIdxToUpdate(promptIdxToUpdate - 1);
+      return;
+    }
+    
+    // For regular values, update the control panel state
+    if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {
+      onStateChange({ value: value.toString() });
+    }
+  });
+
   return (
     <div className="flex flex-col gap-3 p-3">
       <select
@@ -433,6 +461,14 @@ export const ControlPanel = ({
                 `(${availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.min} - ${availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.max})`}
             </span>
           )}
+
+        <ControllerMappingButton
+          nodeId={panelState.nodeId}
+          fieldName={panelState.fieldName}
+          inputType={panelState.nodeId && panelState.fieldName ? availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.type : ""}
+          inputMin={panelState.nodeId && panelState.fieldName ? availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.min : undefined}
+          inputMax={panelState.nodeId && panelState.fieldName ? availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.max : undefined}
+        />
       </div>
 
       <button
