@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useController } from '@/hooks/use-controller';
 import { useControllerMapping } from '@/hooks/use-controller-mapping';
-import { AxisMapping, ButtonMapping, ControllerMapping } from '@/types/controller';
+import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseXMapping, MouseYMapping } from '@/types/controller';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -33,7 +33,7 @@ export function ControllerMappingButton({
   const [isOpen, setIsOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [detectedInput, setDetectedInput] = useState<string>('');
-  const [mappingType, setMappingType] = useState<'axis' | 'button'>('axis');
+  const [mappingType, setMappingType] = useState<'axis' | 'button' | 'key' | 'mouse' | 'mouse-x' | 'mouse-y'>('axis');
   const [currentMapping, setCurrentMapping] = useState<ControllerMapping | undefined>(
     getMapping(nodeId, fieldName)
   );
@@ -46,7 +46,7 @@ export function ControllerMappingButton({
   
   // Form state for button mapping
   const [buttonIndex, setButtonIndex] = useState<number>(0);
-  const [buttonMode, setButtonMode] = useState<'toggle' | 'momentary' | 'series'>('momentary');
+  const [buttonMode, setButtonMode] = useState<'toggle' | 'momentary' | 'series' | 'axis'>('momentary');
   const [valueWhenPressed, setValueWhenPressed] = useState<string>('1');
   const [valueWhenReleased, setValueWhenReleased] = useState<string>('0');
   const [nextButtonIndex, setNextButtonIndex] = useState<number>(-1);
@@ -54,10 +54,21 @@ export function ControllerMappingButton({
   const [currentValueIndex, setCurrentValueIndex] = useState<number>(0);
   
   // Track the type of input that was detected to avoid rerenders
-  const [detectedInputType, setDetectedInputType] = useState<"none" | "button" | "axis">("none");
+  const [detectedInputType, setDetectedInputType] = useState<"none" | "button" | "axis" | "key" | "mouse">("none");
   
   // Track which button we're detecting (primary or next)
   const [detectingButtonTarget, setDetectingButtonTarget] = useState<"primary" | "next">("primary");
+  
+  // State for keyboard mapping
+  const [keyCode, setKeyCode] = useState<string>('');
+  const [nextKeyCode, setNextKeyCode] = useState<string>('');
+  const [isListeningForKey, setIsListeningForKey] = useState(false);
+  
+  // State for mouse mapping
+  const [mouseAction, setMouseAction] = useState<'move-x' | 'move-y' | 'wheel' | 'button'>('button');
+  const [mouseButtonIndex, setMouseButtonIndex] = useState<number>(0);
+  const [nextMouseButtonIndex, setNextMouseButtonIndex] = useState<number>(-1);
+  const [isListeningForMouse, setIsListeningForMouse] = useState(false);
   
   // Reference to store detection state without causing re-renders
   const detectionStateRef = useRef({
@@ -96,6 +107,52 @@ export function ControllerMappingButton({
           setNextButtonIndex(buttonMapping.nextButtonIndex || -1);
           setValuesList(buttonMapping.valuesList?.map(v => v.toString()) || ['1', '2', '3']);
           setCurrentValueIndex(buttonMapping.currentValueIndex || 0);
+        }
+      } else if (mapping.type === 'key') {
+        const keyMapping = mapping as KeyMapping;
+        setKeyCode(keyMapping.keyCode);
+        setButtonMode(keyMapping.mode || 'momentary');
+        setValueWhenPressed(keyMapping.valueWhenPressed.toString());
+        setValueWhenReleased(keyMapping.valueWhenReleased?.toString() || '0');
+        
+        if (keyMapping.mode === 'series') {
+          setNextKeyCode(keyMapping.nextKeyCode || '');
+          setValuesList(keyMapping.valuesList?.map(v => v.toString()) || ['1', '2', '3']);
+          setCurrentValueIndex(keyMapping.currentValueIndex || 0);
+        }
+      } else if (mapping.type === 'mouse-x') {
+        const mouseXMapping = mapping as MouseXMapping;
+        setMultiplier(mouseXMapping.multiplier || 0.01);
+        setMinOverride(mouseXMapping.minOverride);
+        setMaxOverride(mouseXMapping.maxOverride);
+      } else if (mapping.type === 'mouse-y') {
+        const mouseYMapping = mapping as MouseYMapping;
+        setMultiplier(mouseYMapping.multiplier || 0.01);
+        setMinOverride(mouseYMapping.minOverride);
+        setMaxOverride(mouseYMapping.maxOverride);
+      } else if (mapping.type === 'mouse') {
+        const mouseMapping = mapping as MouseMapping;
+        setMouseAction(mouseMapping.action);
+        
+        if (mouseMapping.buttonIndex !== undefined) {
+          setMouseButtonIndex(mouseMapping.buttonIndex);
+        }
+        
+        if (mouseMapping.action === 'button') {
+          setButtonMode(mouseMapping.mode || 'momentary');
+          setValueWhenPressed(mouseMapping.valueWhenPressed?.toString() || '1');
+          setValueWhenReleased(mouseMapping.valueWhenReleased?.toString() || '0');
+          
+          if (mouseMapping.mode === 'series') {
+            setNextMouseButtonIndex(mouseMapping.nextButtonIndex || -1);
+            setValuesList(mouseMapping.valuesList?.map(v => v.toString()) || ['1', '2', '3']);
+            setCurrentValueIndex(mouseMapping.currentValueIndex || 0);
+          }
+        } else {
+          // For mouse movement or wheel
+          setMultiplier(mouseMapping.multiplier || 0.01);
+          setMinOverride(mouseMapping.minOverride);
+          setMaxOverride(mouseMapping.maxOverride);
         }
       }
     }
@@ -208,7 +265,7 @@ export function ControllerMappingButton({
         minOverride,
         maxOverride
       } as AxisMapping;
-    } else {
+    } else if (mappingType === 'button') {
       // Button mapping - differentiate based on mode
       mapping = {
         type: 'button',
@@ -226,11 +283,94 @@ export function ControllerMappingButton({
         (mapping as ButtonMapping).valuesList = valuesList.map(v => parseFloat(v) || v);
         (mapping as ButtonMapping).currentValueIndex = currentValueIndex;
       }
+    } else if (mappingType === 'key') {
+      // Keyboard mapping
+      mapping = {
+        type: 'key',
+        nodeId,
+        fieldName,
+        keyCode,
+        mode: buttonMode,
+        valueWhenPressed: parseFloat(valueWhenPressed) || valueWhenPressed,
+        valueWhenReleased: parseFloat(valueWhenReleased) || valueWhenReleased
+      } as KeyMapping;
+      
+      // Add series-specific properties if in series mode
+      if (buttonMode === 'series') {
+        (mapping as KeyMapping).nextKeyCode = nextKeyCode || undefined;
+        (mapping as KeyMapping).valuesList = valuesList.map(v => parseFloat(v) || v);
+        (mapping as KeyMapping).currentValueIndex = currentValueIndex;
+      }
+    } else if (mappingType === 'mouse-x') {
+      mapping = {
+        type: 'mouse-x',
+        nodeId,
+        fieldName,
+        multiplier: multiplier || 0.01,
+        minOverride,
+        maxOverride
+      } as MouseXMapping;
+    } else if (mappingType === 'mouse-y') {
+      mapping = {
+        type: 'mouse-y',
+        nodeId,
+        fieldName,
+        multiplier: multiplier || 0.01,
+        minOverride,
+        maxOverride
+      } as MouseYMapping;
+    } else if (mappingType === 'mouse') {
+      // Mouse mapping
+      if (mouseAction === 'button') {
+        mapping = {
+          type: 'mouse',
+          nodeId,
+          fieldName,
+          action: mouseAction,
+          buttonIndex: mouseButtonIndex,
+          mode: buttonMode,
+          valueWhenPressed: parseFloat(valueWhenPressed) || valueWhenPressed,
+          valueWhenReleased: parseFloat(valueWhenReleased) || valueWhenReleased
+        } as MouseMapping;
+        
+        // Add series-specific properties if in series mode
+        if (buttonMode === 'series') {
+          (mapping as MouseMapping).nextAction = 'button';
+          (mapping as MouseMapping).nextButtonIndex = nextMouseButtonIndex !== -1 ? nextMouseButtonIndex : undefined;
+          (mapping as MouseMapping).valuesList = valuesList.map(v => parseFloat(v) || v);
+          (mapping as MouseMapping).currentValueIndex = currentValueIndex;
+        }
+      } else {
+        // Mouse wheel - explicitly set mode to 'axis'
+        mapping = {
+          type: 'mouse',
+          nodeId,
+          fieldName,
+          action: mouseAction,
+          mode: 'axis', // Always 'axis' for wheel
+          multiplier: multiplier,
+          minOverride,
+          maxOverride
+        } as MouseMapping;
+      }
+    } else {
+      // Default to a button mapping if something goes wrong
+      mapping = {
+        type: 'button',
+        nodeId,
+        fieldName,
+        buttonIndex: 0,
+        mode: 'momentary',
+        valueWhenPressed: 1,
+        valueWhenReleased: 0
+      } as ButtonMapping;
     }
     
     saveMapping(nodeId, fieldName, mapping);
     setCurrentMapping(mapping);
     setIsListening(false);
+    setIsListeningForKey(false);
+    setIsListeningForMouse(false);
     setIsOpen(false);
   };
   
@@ -278,6 +418,88 @@ export function ControllerMappingButton({
   const handleStopListening = () => {
     setIsListening(false);
   };
+  
+  // Start listening for keyboard input
+  const handleStartKeyListening = (target: "primary" | "next") => {
+    setDetectingButtonTarget(target);
+    setIsListeningForKey(true);
+  };
+  
+  // Stop listening for keyboard input
+  const handleStopKeyListening = () => {
+    setIsListeningForKey(false);
+  };
+  
+  // Handle keyboard detection
+  useEffect(() => {
+    if (!isListeningForKey) return;
+    
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Prevent default to avoid triggering browser shortcuts
+      event.preventDefault();
+      
+      console.log(`Key detected: ${event.code}`);
+      
+      // Set the detected key
+      if (detectingButtonTarget === "primary") {
+        setKeyCode(event.code);
+      } else {
+        setNextKeyCode(event.code);
+      }
+      
+      // Stop listening
+      setIsListeningForKey(false);
+    };
+    
+    // Add event listener for key down
+    window.addEventListener('keydown', handleKeyDown);
+    
+    // Clean up
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isListeningForKey, detectingButtonTarget]);
+  
+  // Start listening for mouse input
+  const handleStartMouseListening = (target: "primary" | "next") => {
+    setDetectingButtonTarget(target);
+    setIsListeningForMouse(true);
+  };
+  
+  // Stop listening for mouse input
+  const handleStopMouseListening = () => {
+    setIsListeningForMouse(false);
+  };
+  
+  // Handle mouse detection
+  useEffect(() => {
+    if (!isListeningForMouse || mouseAction !== 'button') return;
+    
+    const handleMouseDown = (event: MouseEvent) => {
+      // Prevent default
+      event.preventDefault();
+      
+      console.log(`Mouse button detected: ${event.button}`);
+      
+      // Set the detected button
+      if (detectingButtonTarget === "primary") {
+        setMouseButtonIndex(event.button);
+      } else {
+        setNextMouseButtonIndex(event.button);
+      }
+      
+      // Stop listening
+      setIsListeningForMouse(false);
+    };
+    
+    // Add event listener for mouse down
+    window.addEventListener('mousedown', handleMouseDown);
+    
+    // Clean up
+    return () => {
+      window.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [isListeningForMouse, detectingButtonTarget, mouseAction]);
   
   return (
     <>
@@ -380,11 +602,15 @@ export function ControllerMappingButton({
               <select
                 id="mapping-type"
                 value={mappingType}
-                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button')}
+                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button' | 'key' | 'mouse' | 'mouse-x' | 'mouse-y')}
                 className="p-2 border rounded w-full"
               >
-                <option value="axis">Axis</option>
-                <option value="button">Button</option>
+                <option value="axis">Controller Axis</option>
+                <option value="button">Controller Button</option>
+                <option value="key">Keyboard Key</option>
+                <option value="mouse">Mouse Button/Wheel</option>
+                <option value="mouse-x">Mouse X Movement</option>
+                <option value="mouse-y">Mouse Y Movement</option>
               </select>
             </div>
             
@@ -589,6 +815,495 @@ export function ControllerMappingButton({
                         >
                           Add Value
                         </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            
+            {mappingType === 'key' && (
+              <div className="space-y-2">
+                <div>
+                  <Label htmlFor="key-code">Key</Label>
+                  <div className="flex gap-2">
+                    <Input 
+                      id="key-code"
+                      value={keyCode} 
+                      onChange={(e) => setKeyCode(e.target.value)}
+                      placeholder="Press Detect to capture a key"
+                      readOnly
+                    />
+                    <Button 
+                      onClick={() => handleStartKeyListening("primary")} 
+                      disabled={isListeningForKey}
+                      size="sm"
+                    >
+                      Detect
+                    </Button>
+                  </div>
+                </div>
+                
+                {isListeningForKey && detectingButtonTarget === "primary" && (
+                  <div className="p-3 mt-2 bg-blue-50 rounded border border-blue-200">
+                    <div className="flex justify-between items-center mb-2">
+                      <p className="text-sm font-medium">Keyboard Detection Mode</p>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={handleStopKeyListening}
+                      >
+                        Stop
+                      </Button>
+                    </div>
+                    <p className="text-xs mb-2">Press any key on your keyboard</p>
+                  </div>
+                )}
+                
+                {buttonMode !== 'series' && (
+                  <div>
+                    <Label htmlFor="value-pressed">Value When Pressed</Label>
+                    <Input 
+                      id="value-pressed"
+                      value={valueWhenPressed} 
+                      onChange={(e) => setValueWhenPressed(e.target.value)} 
+                    />
+                  </div>
+                )}
+                
+                {buttonMode !== 'series' && (
+                  <div>
+                    <Label htmlFor="value-released">Value When Released {buttonMode === 'toggle' && '(Toggle Off)'}</Label>
+                    <Input 
+                      id="value-released"
+                      value={valueWhenReleased} 
+                      onChange={(e) => setValueWhenReleased(e.target.value)} 
+                    />
+                  </div>
+                )}
+                
+                {buttonMode === 'series' && (
+                  <>
+                    <div>
+                      <Label htmlFor="next-key">Next Value Key (Optional)</Label>
+                      <div className="flex gap-2">
+                        <Input 
+                          id="next-key"
+                          value={nextKeyCode} 
+                          onChange={(e) => setNextKeyCode(e.target.value)}
+                          placeholder="Press Detect to capture a key"
+                          readOnly
+                        />
+                        <Button 
+                          onClick={() => handleStartKeyListening("next")} 
+                          disabled={isListeningForKey}
+                          size="sm"
+                        >
+                          Detect
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">Leave empty to disable second key</p>
+                    </div>
+                    
+                    {isListeningForKey && detectingButtonTarget === "next" && (
+                      <div className="p-3 mt-2 bg-blue-50 rounded border border-blue-200">
+                        <div className="flex justify-between items-center mb-2">
+                          <p className="text-sm font-medium">Keyboard Detection Mode</p>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={handleStopKeyListening}
+                          >
+                            Stop
+                          </Button>
+                        </div>
+                        <p className="text-xs mb-2">Press any key on your keyboard</p>
+                      </div>
+                    )}
+                    
+                    <div>
+                      <Label>Values to Cycle Through</Label>
+                      <div className="border rounded-md p-2 bg-gray-50 space-y-2 mt-1 max-h-40 overflow-y-auto">
+                        {valuesList.map((value, index) => (
+                          <div key={index} className="flex gap-2 items-center">
+                            <Input
+                              value={value}
+                              onChange={(e) => {
+                                const newList = [...valuesList];
+                                newList[index] = e.target.value;
+                                setValuesList(newList);
+                              }}
+                              className="flex-1"
+                            />
+                            <Button
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => {
+                                const newList = valuesList.filter((_, i) => i !== index);
+                                setValuesList(newList);
+                                if (currentValueIndex >= newList.length) {
+                                  setCurrentValueIndex(newList.length - 1);
+                                }
+                              }}
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                        ))}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setValuesList([...valuesList, ''])}
+                        >
+                          Add Value
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            
+            {/* Mouse X Movement Mapping UI */}
+            {mappingType === 'mouse-x' && (
+              <div className="space-y-2">
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <Label htmlFor="multiplier-mouse-x">Sensitivity</Label>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => onChange && onChange(0)}
+                      className="text-xs"
+                    >
+                      Reset Value
+                    </Button>
+                  </div>
+                  <Input 
+                    id="multiplier-mouse-x"
+                    type="number" 
+                    step="0.001"
+                    value={multiplier} 
+                    onChange={(e) => setMultiplier(parseFloat(e.target.value) || 0.01)} 
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Higher values = more sensitive horizontal movement
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="min-override-mouse-x">Min Value</Label>
+                    <Input 
+                      id="min-override-mouse-x"
+                      type="number" 
+                      value={minOverride !== undefined ? minOverride : ''} 
+                      placeholder={inputMin?.toString() || 'Default'}
+                      onChange={(e) => setMinOverride(e.target.value ? parseFloat(e.target.value) : undefined)} 
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="max-override-mouse-x">Max Value</Label>
+                    <Input 
+                      id="max-override-mouse-x"
+                      type="number" 
+                      value={maxOverride !== undefined ? maxOverride : ''} 
+                      placeholder={inputMax?.toString() || 'Default'}
+                      onChange={(e) => setMaxOverride(e.target.value ? parseFloat(e.target.value) : undefined)} 
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Mouse Y Movement Mapping UI */}
+            {mappingType === 'mouse-y' && (
+              <div className="space-y-2">
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <Label htmlFor="multiplier-mouse-y">Sensitivity</Label>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => onChange && onChange(0)}
+                      className="text-xs"
+                    >
+                      Reset Value
+                    </Button>
+                  </div>
+                  <Input 
+                    id="multiplier-mouse-y"
+                    type="number" 
+                    step="0.001"
+                    value={multiplier} 
+                    onChange={(e) => setMultiplier(parseFloat(e.target.value) || 0.01)} 
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Higher values = more sensitive vertical movement
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="min-override-mouse-y">Min Value</Label>
+                    <Input 
+                      id="min-override-mouse-y"
+                      type="number" 
+                      value={minOverride !== undefined ? minOverride : ''} 
+                      placeholder={inputMin?.toString() || 'Default'}
+                      onChange={(e) => setMinOverride(e.target.value ? parseFloat(e.target.value) : undefined)} 
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="max-override-mouse-y">Max Value</Label>
+                    <Input 
+                      id="max-override-mouse-y"
+                      type="number" 
+                      value={maxOverride !== undefined ? maxOverride : ''} 
+                      placeholder={inputMax?.toString() || 'Default'}
+                      onChange={(e) => setMaxOverride(e.target.value ? parseFloat(e.target.value) : undefined)} 
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {mappingType === 'mouse' && (
+              <div className="space-y-2">
+                <div>
+                  <Label htmlFor="mouse-action">Mouse Action</Label>
+                  <select
+                    id="mouse-action"
+                    value={mouseAction}
+                    onChange={(e) => setMouseAction(e.target.value as 'wheel' | 'button')}
+                    className="p-2 border rounded w-full"
+                  >
+                    <option value="button">Mouse Button</option>
+                    <option value="wheel">Mouse Wheel</option>
+                  </select>
+                </div>
+                
+                {mouseAction === 'button' && (
+                  <>
+                    <div>
+                      <Label htmlFor="mouse-button">Mouse Button</Label>
+                      <div className="flex gap-2">
+                        <Input 
+                          id="mouse-button"
+                          type="number" 
+                          min="0" 
+                          max="4"
+                          value={mouseButtonIndex} 
+                          onChange={(e) => setMouseButtonIndex(parseInt(e.target.value) || 0)} 
+                          placeholder="0 = left, 1 = middle, 2 = right"
+                        />
+                        <Button 
+                          onClick={() => handleStartMouseListening("primary")} 
+                          disabled={isListeningForMouse}
+                          size="sm"
+                        >
+                          Detect
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">0 = left, 1 = middle, 2 = right</p>
+                    </div>
+                    
+                    {isListeningForMouse && detectingButtonTarget === "primary" && (
+                      <div className="p-3 mt-2 bg-blue-50 rounded border border-blue-200">
+                        <div className="flex justify-between items-center mb-2">
+                          <p className="text-sm font-medium">Mouse Button Detection Mode</p>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={handleStopMouseListening}
+                          >
+                            Stop
+                          </Button>
+                        </div>
+                        <p className="text-xs mb-2">Click any mouse button</p>
+                      </div>
+                    )}
+                    
+                    <div className="space-y-2 mt-4">
+                      <Label>Button Mode</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            id="mode-momentary-mouse"
+                            checked={buttonMode === 'momentary'}
+                            onChange={() => setButtonMode('momentary')}
+                            className="w-4 h-4"
+                          />
+                          <Label htmlFor="mode-momentary-mouse">Momentary</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            id="mode-toggle-mouse"
+                            checked={buttonMode === 'toggle'}
+                            onChange={() => setButtonMode('toggle')}
+                            className="w-4 h-4"
+                          />
+                          <Label htmlFor="mode-toggle-mouse">Toggle</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            id="mode-series-mouse"
+                            checked={buttonMode === 'series'}
+                            onChange={() => setButtonMode('series')}
+                            className="w-4 h-4"
+                          />
+                          <Label htmlFor="mode-series-mouse">Series</Label>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {buttonMode !== 'series' && (
+                      <div>
+                        <Label htmlFor="value-pressed-mouse">Value When Pressed</Label>
+                        <Input 
+                          id="value-pressed-mouse"
+                          value={valueWhenPressed} 
+                          onChange={(e) => setValueWhenPressed(e.target.value)} 
+                        />
+                      </div>
+                    )}
+                    
+                    {buttonMode !== 'series' && (
+                      <div>
+                        <Label htmlFor="value-released-mouse">Value When Released {buttonMode === 'toggle' && '(Toggle Off)'}</Label>
+                        <Input 
+                          id="value-released-mouse"
+                          value={valueWhenReleased} 
+                          onChange={(e) => setValueWhenReleased(e.target.value)} 
+                        />
+                      </div>
+                    )}
+                    
+                    {buttonMode === 'series' && (
+                      <>
+                        <div>
+                          <Label htmlFor="next-mouse-button">Next Value Button (Optional)</Label>
+                          <div className="flex gap-2">
+                            <Input 
+                              id="next-mouse-button"
+                              type="number" 
+                              min="-1" 
+                              max="4"
+                              value={nextMouseButtonIndex} 
+                              onChange={(e) => setNextMouseButtonIndex(parseInt(e.target.value) || -1)} 
+                              placeholder="No second button"
+                            />
+                            <Button 
+                              onClick={() => handleStartMouseListening("next")} 
+                              disabled={isListeningForMouse}
+                              size="sm"
+                            >
+                              Detect
+                            </Button>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">Set to -1 to disable second button</p>
+                        </div>
+                        
+                        {isListeningForMouse && detectingButtonTarget === "next" && (
+                          <div className="p-3 mt-2 bg-blue-50 rounded border border-blue-200">
+                            <div className="flex justify-between items-center mb-2">
+                              <p className="text-sm font-medium">Mouse Button Detection Mode</p>
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={handleStopMouseListening}
+                              >
+                                Stop
+                              </Button>
+                            </div>
+                            <p className="text-xs mb-2">Click any mouse button</p>
+                          </div>
+                        )}
+                        
+                        <div>
+                          <Label>Values to Cycle Through</Label>
+                          <div className="border rounded-md p-2 bg-gray-50 space-y-2 mt-1 max-h-40 overflow-y-auto">
+                            {valuesList.map((value, index) => (
+                              <div key={index} className="flex gap-2 items-center">
+                                <Input
+                                  value={value}
+                                  onChange={(e) => {
+                                    const newList = [...valuesList];
+                                    newList[index] = e.target.value;
+                                    setValuesList(newList);
+                                  }}
+                                  className="flex-1"
+                                />
+                                <Button
+                                  variant="outline" 
+                                  size="sm"
+                                  onClick={() => {
+                                    const newList = valuesList.filter((_, i) => i !== index);
+                                    setValuesList(newList);
+                                    if (currentValueIndex >= newList.length) {
+                                      setCurrentValueIndex(newList.length - 1);
+                                    }
+                                  }}
+                                >
+                                  ✕
+                                </Button>
+                              </div>
+                            ))}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => setValuesList([...valuesList, ''])}
+                            >
+                              Add Value
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+                
+                {(mouseAction === 'wheel') && (
+                  <>
+                    <div>
+                      <Label htmlFor="multiplier-mouse">Sensitivity</Label>
+                      <Input 
+                        id="multiplier-mouse"
+                        type="number" 
+                        step="0.001"
+                        value={multiplier} 
+                        onChange={(e) => setMultiplier(parseFloat(e.target.value) || 0.01)} 
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Higher values = more sensitive wheel scrolling
+                      </p>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label htmlFor="min-override-mouse">Min Value</Label>
+                        <Input 
+                          id="min-override-mouse"
+                          type="number" 
+                          value={minOverride !== undefined ? minOverride : ''} 
+                          placeholder="Default"
+                          onChange={(e) => setMinOverride(e.target.value ? parseFloat(e.target.value) : undefined)} 
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="max-override-mouse">Max Value</Label>
+                        <Input 
+                          id="max-override-mouse"
+                          type="number" 
+                          value={maxOverride !== undefined ? maxOverride : ''} 
+                          placeholder="Default"
+                          onChange={(e) => setMaxOverride(e.target.value ? parseFloat(e.target.value) : undefined)} 
+                        />
                       </div>
                     </div>
                   </>

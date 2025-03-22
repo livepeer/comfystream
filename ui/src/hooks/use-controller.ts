@@ -3,15 +3,45 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // Polling interval for controllers in milliseconds
 const CONTROLLER_POLL_INTERVAL = 16; // Faster polling (60fps)
 
+// Key state tracking interface
+interface KeyboardState {
+  keys: Record<string, boolean>;
+  previousKeys: Record<string, boolean>;
+}
+
+// Mouse state tracking interface
+interface MouseState {
+  buttons: boolean[];
+  previousButtons: boolean[];
+  position: { x: number, y: number };
+  previousPosition: { x: number, y: number };
+  wheelDelta: number;
+}
+
 // Controller hook that detects controllers and provides input state
 export function useController() {
   const [controllers, setControllers] = useState<Gamepad[]>([]);
   const [isControllerConnected, setIsControllerConnected] = useState(false);
+  const [isKeyMouseEnabled, setIsKeyMouseEnabled] = useState(false);
   const prevButtonStates = useRef<Record<number, Record<number, boolean>>>({});
   const prevAxisValues = useRef<Record<number, Record<number, number>>>({});
   const requestRef = useRef<number | null>(null);
   const frameCount = useRef(0);
   const lastControllerCount = useRef(0);
+  
+  // Keyboard and mouse state tracking
+  const keyboardState = useRef<KeyboardState>({
+    keys: {},
+    previousKeys: {}
+  });
+  
+  const mouseState = useRef<MouseState>({
+    buttons: [false, false, false],
+    previousButtons: [false, false, false],
+    position: { x: 0, y: 0 },
+    previousPosition: { x: 0, y: 0 },
+    wheelDelta: 0
+  });
   
   // Handler for when a gamepad is connected
   const handleGamepadConnected = useCallback((event: GamepadEvent) => {
@@ -89,6 +119,88 @@ export function useController() {
     requestRef.current = requestAnimationFrame(pollGamepads);
   }, []);
 
+  // Keyboard event handlers
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (!isKeyMouseEnabled) return;
+    
+    // Store previous state
+    keyboardState.current.previousKeys[event.code] = keyboardState.current.keys[event.code] || false;
+    
+    // Update current state
+    keyboardState.current.keys[event.code] = true;
+    
+    // Only log occasionally to avoid spam
+    if (frameCount.current % 60 === 0) {
+      console.log(`Key pressed: ${event.code}`);
+    }
+  }, [isKeyMouseEnabled]);
+  
+  const handleKeyUp = useCallback((event: KeyboardEvent) => {
+    if (!isKeyMouseEnabled) return;
+    
+    // Store previous state
+    keyboardState.current.previousKeys[event.code] = keyboardState.current.keys[event.code] || false;
+    
+    // Update current state
+    keyboardState.current.keys[event.code] = false;
+    
+    // Only log occasionally
+    if (frameCount.current % 60 === 0) {
+      console.log(`Key released: ${event.code}`);
+    }
+  }, [isKeyMouseEnabled]);
+  
+  // Mouse event handlers
+  const handleMouseMove = useCallback((event: MouseEvent) => {
+    if (!isKeyMouseEnabled) return;
+    
+    // Store previous position
+    mouseState.current.previousPosition = { ...mouseState.current.position };
+    
+    // Update current position
+    mouseState.current.position = { x: event.clientX, y: event.clientY };
+  }, [isKeyMouseEnabled]);
+  
+  const handleMouseDown = useCallback((event: MouseEvent) => {
+    if (!isKeyMouseEnabled) return;
+    
+    // Store previous button state
+    mouseState.current.previousButtons[event.button] = mouseState.current.buttons[event.button];
+    
+    // Update current button state
+    mouseState.current.buttons[event.button] = true;
+    
+    if (frameCount.current % 60 === 0) {
+      console.log(`Mouse button ${event.button} pressed`);
+    }
+  }, [isKeyMouseEnabled]);
+  
+  const handleMouseUp = useCallback((event: MouseEvent) => {
+    if (!isKeyMouseEnabled) return;
+    
+    // Store previous button state
+    mouseState.current.previousButtons[event.button] = mouseState.current.buttons[event.button];
+    
+    // Update current button state
+    mouseState.current.buttons[event.button] = false;
+    
+    if (frameCount.current % 60 === 0) {
+      console.log(`Mouse button ${event.button} released`);
+    }
+  }, [isKeyMouseEnabled]);
+  
+  const handleMouseWheel = useCallback((event: WheelEvent) => {
+    if (!isKeyMouseEnabled) return;
+    
+    // Update wheel delta
+    mouseState.current.wheelDelta = event.deltaY;
+    
+    // Reset wheel delta after a short delay
+    setTimeout(() => {
+      mouseState.current.wheelDelta = 0;
+    }, 50);
+  }, [isKeyMouseEnabled]);
+
   // Check if a button was just pressed (for edge detection)
   const wasButtonJustPressed = useCallback((controllerIndex: number, buttonIndex: number): boolean => {
     const controller = controllers[controllerIndex];
@@ -158,6 +270,43 @@ export function useController() {
     },
     [controllers]
   );
+  
+  // Keyboard and mouse helper methods
+  const isKeyPressed = useCallback((keyCode: string): boolean => {
+    return !!keyboardState.current.keys[keyCode];
+  }, []);
+  
+  const wasKeyJustPressed = useCallback((keyCode: string): boolean => {
+    return keyboardState.current.keys[keyCode] && !keyboardState.current.previousKeys[keyCode];
+  }, []);
+  
+  const isMouseButtonPressed = useCallback((button: number): boolean => {
+    return !!mouseState.current.buttons[button];
+  }, []);
+  
+  const wasMouseButtonJustPressed = useCallback((button: number): boolean => {
+    return mouseState.current.buttons[button] && !mouseState.current.previousButtons[button];
+  }, []);
+  
+  const getMousePositionDelta = useCallback(() => {
+    return {
+      x: mouseState.current.position.x - mouseState.current.previousPosition.x,
+      y: mouseState.current.position.y - mouseState.current.previousPosition.y
+    };
+  }, []);
+  
+  const getMousePosition = useCallback(() => {
+    return { ...mouseState.current.position };
+  }, []);
+  
+  const getMouseWheelDelta = useCallback(() => {
+    return mouseState.current.wheelDelta;
+  }, []);
+  
+  // Toggle keyboard and mouse input
+  const toggleKeyMouseInput = useCallback((enabled: boolean) => {
+    setIsKeyMouseEnabled(enabled);
+  }, []);
 
   // Set up event listeners and polling
   useEffect(() => {
@@ -194,12 +343,56 @@ export function useController() {
       }
     };
   }, [handleGamepadConnected, handleGamepadDisconnected, pollGamepads]);
+  
+  // Set up keyboard and mouse event listeners
+  useEffect(() => {
+    if (isKeyMouseEnabled) {
+      console.log("Setting up keyboard and mouse event listeners");
+      
+      window.addEventListener("keydown", handleKeyDown);
+      window.addEventListener("keyup", handleKeyUp);
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mousedown", handleMouseDown);
+      window.addEventListener("mouseup", handleMouseUp);
+      window.addEventListener("wheel", handleMouseWheel);
+      
+      return () => {
+        console.log("Cleaning up keyboard and mouse event listeners");
+        window.removeEventListener("keydown", handleKeyDown);
+        window.removeEventListener("keyup", handleKeyUp);
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mousedown", handleMouseDown);
+        window.removeEventListener("mouseup", handleMouseUp);
+        window.removeEventListener("wheel", handleMouseWheel);
+      };
+    }
+  }, [
+    isKeyMouseEnabled, 
+    handleKeyDown, 
+    handleKeyUp, 
+    handleMouseMove, 
+    handleMouseDown, 
+    handleMouseUp, 
+    handleMouseWheel
+  ]);
 
   return {
+    // GamePad API
     controllers,
     isControllerConnected,
     wasButtonJustPressed,
     hasAxisChanged,
-    refreshControllers: pollGamepads // Expose the poll function for manual refreshes
+    refreshControllers: pollGamepads, // Expose the poll function for manual refreshes
+    
+    // Keyboard and mouse API
+    isKeyMouseEnabled,
+    toggleKeyMouseInput,
+    isKeyPressed,
+    wasKeyJustPressed,
+    isMouseButtonPressed,
+    wasMouseButtonJustPressed,
+    getMousePositionDelta,
+    getMousePosition,
+    getMouseWheelDelta
   };
 } 
