@@ -1,16 +1,20 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ControlPanel } from "./control-panel";
 import { Button } from "./ui/button";
 import { Drawer, DrawerContent, DrawerTitle } from "./ui/drawer";
 import { Settings } from "lucide-react";
 import { Plus } from "lucide-react"; // Import Plus icon for minimal add button
 
+// Custom event name for control panel refresh
+const CONTROL_PANEL_REFRESH_EVENT = 'comfystream:refreshControlPanel';
+
 export const ControlPanelsContainer = () => {
   const [panels, setPanels] = useState<number[]>([0]); // Start with one panel
   const [nextPanelId, setNextPanelId] = useState(1);
   const [isOpen, setIsOpen] = useState(false);
+  const [forceUpdateKey, setForceUpdateKey] = useState(0); // Add a key for forcing re-renders
   const [panelStates, setPanelStates] = useState<
     Record<
       number,
@@ -29,6 +33,31 @@ export const ControlPanelsContainer = () => {
       isAutoUpdateEnabled: false,
     },
   });
+
+  // Listen for refresh event to force control panel to close and reopen
+  useEffect(() => {
+    const handleRefresh = () => {
+      console.log('Control panel refresh event received');
+      
+      // First, increment the force update key to trigger a complete re-render
+      setForceUpdateKey(prev => prev + 1);
+      
+      // Then close and reopen the panel with a small delay
+      setIsOpen(false);
+      
+      setTimeout(() => {
+        setIsOpen(true);
+      }, 100);
+    };
+
+    // Add event listener
+    window.addEventListener(CONTROL_PANEL_REFRESH_EVENT, handleRefresh);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener(CONTROL_PANEL_REFRESH_EVENT, handleRefresh);
+    };
+  }, []);
 
   const addPanel = () => {
     const newId = nextPanelId;
@@ -80,13 +109,14 @@ export const ControlPanelsContainer = () => {
       {/* Hidden container with all control panels to keep them active when drawer is closed */}
       {!isOpen && (
         <div 
+          key={`hidden-panels-${forceUpdateKey}`}
           aria-hidden="true"
           className="absolute opacity-0 pointer-events-none invisible h-0 overflow-hidden"
           style={{ position: "absolute", left: "-9999px" }}
         >
           {panels.map((id) => (
             <ControlPanel
-              key={`hidden-panel-${id}`}
+              key={`hidden-panel-${id}-${forceUpdateKey}`}
               panelState={panelStates[id]}
               onStateChange={(state) => updatePanelState(id, state)}
             />
@@ -95,6 +125,7 @@ export const ControlPanelsContainer = () => {
       )}
 
       <Drawer
+        key={`drawer-${forceUpdateKey}`}
         open={isOpen}
         onOpenChange={setIsOpen}
         direction="bottom"
@@ -155,7 +186,7 @@ export const ControlPanelsContainer = () => {
               <div className="flex gap-4 p-4 min-h-0">
                 {panels.map((id) => (
                   <div
-                    key={id}
+                    key={`panel-container-${id}-${forceUpdateKey}`}
                     className="flex-none w-80 border rounded-lg bg-white/95 shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col max-h-[calc(50vh-3rem)]"
                   >
                     <div className="flex justify-between items-center p-2 border-b bg-gray-50/80">
@@ -173,7 +204,7 @@ export const ControlPanelsContainer = () => {
                     </div>
                     <div className="flex-1 overflow-y-auto">
                       <ControlPanel
-                        key={`visible-panel-${id}`}
+                        key={`visible-panel-${id}-${forceUpdateKey}`}
                         panelState={panelStates[id]}
                         onStateChange={(state) => updatePanelState(id, state)}
                       />

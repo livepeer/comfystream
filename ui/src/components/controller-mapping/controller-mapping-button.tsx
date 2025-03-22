@@ -18,6 +18,9 @@ import { MouseYMappingForm } from './mouse-y-mapping';
 import { ControllerInfo } from './controller-info';
 import { BaseMappingFormProps, ControllerMappingFormProps } from './base-mapping-form';
 
+// Custom event name for control panel refresh
+const CONTROL_PANEL_REFRESH_EVENT = 'comfystream:refreshControlPanel';
+
 interface ControllerMappingProps {
   nodeId: string;
   fieldName: string;
@@ -68,11 +71,43 @@ export function ControllerMappingButton({
     }
   }, [nodeId, fieldName, getMapping]);
 
+  // Function to dispatch refresh event
+  const triggerControlPanelRefresh = () => {
+    console.log('Triggering control panel refresh');
+    // Create and dispatch a custom event
+    const refreshEvent = new CustomEvent(CONTROL_PANEL_REFRESH_EVENT);
+    window.dispatchEvent(refreshEvent);
+  };
+
+  // Function to force a deep refresh of the controller system
+  const forceSystemRefresh = () => {
+    // 1. Clear any cached data in local component state
+    setCurrentMapping(undefined);
+    
+    // 2. Try to reset controller state (even though we're not directly controlling it)
+    if (typeof navigator.getGamepads === 'function') {
+      console.log('Refreshing gamepad connection state');
+      // This doesn't actually refresh the controllers, but it might help trigger reconnection
+      navigator.getGamepads();
+    }
+    
+    // 3. Dispatch refresh events - this is the key part
+    console.log('Dispatching control panel refresh event');
+    triggerControlPanelRefresh();
+    
+    // 4. NO PAGE RELOAD - it breaks the app
+  };
+
   // Save the current mapping
   const handleSaveMapping = (mapping: ControllerMapping) => {
     saveMapping(nodeId, fieldName, mapping);
     setCurrentMapping(mapping);
     setIsOpen(false);
+    
+    // Simple timeout to force re-open the dialog to make sure changes are applied
+    setTimeout(() => {
+      triggerControlPanelRefresh();
+    }, 500);
   };
 
   // Remove the current mapping
@@ -80,6 +115,11 @@ export function ControllerMappingButton({
     removeMapping(nodeId, fieldName);
     setCurrentMapping(undefined);
     setIsOpen(false);
+    
+    // Simple timeout to force re-open the dialog to make sure changes are applied
+    setTimeout(() => {
+      triggerControlPanelRefresh();
+    }, 500);
   };
 
   // Common props for all mapping forms

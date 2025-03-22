@@ -81,6 +81,9 @@ export function useControllerMapping() {
     }
   }, []);
   
+  // Add a custom event for when mappings change
+  const MAPPING_CHANGE_EVENT = 'comfystream:mappingChanged';
+  
   // Save mappings to localStorage whenever they change
   useEffect(() => {
     try {
@@ -89,6 +92,12 @@ export function useControllerMapping() {
         console.log('Saving controller mappings to localStorage:', mappings);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ mappings }));
         console.log('Saved controller mappings successfully');
+        
+        // Dispatch a custom event to notify other components
+        const event = new CustomEvent(MAPPING_CHANGE_EVENT, { 
+          detail: { action: 'save', mappings } 
+        });
+        window.dispatchEvent(event);
       }
     } catch (error) {
       console.error('Failed to save controller mappings:', error);
@@ -98,6 +107,32 @@ export function useControllerMapping() {
   // Add or update a mapping
   const saveMapping = useCallback((nodeId: string, fieldName: string, mapping: ControllerMapping) => {
     console.log(`Saving mapping for ${nodeId}.${fieldName}:`, mapping);
+    
+    // Force refresh storage before updating
+    try {
+      // First read current mappings from storage to ensure we have the latest
+      const savedMappings = localStorage.getItem(STORAGE_KEY);
+      if (savedMappings) {
+        const parsedMappings = JSON.parse(savedMappings) as MappingStorage;
+        setMappings(prev => {
+          // Merge with our current state
+          const freshMappings = { ...parsedMappings.mappings };
+          
+          // Update with the new mapping
+          if (!freshMappings[nodeId]) {
+            freshMappings[nodeId] = {};
+          }
+          freshMappings[nodeId][fieldName] = mapping;
+          
+          return freshMappings;
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Error refreshing mappings from storage:', error);
+    }
+    
+    // Fallback to normal update if the above fails
     setMappings(prev => {
       const updated = { ...prev };
       
@@ -116,6 +151,38 @@ export function useControllerMapping() {
   // Remove a mapping
   const removeMapping = useCallback((nodeId: string, fieldName: string) => {
     console.log(`Removing mapping for ${nodeId}.${fieldName}`);
+    
+    // Force refresh storage before removing
+    try {
+      // First read current mappings from storage to ensure we have the latest
+      const savedMappings = localStorage.getItem(STORAGE_KEY);
+      if (savedMappings) {
+        const parsedMappings = JSON.parse(savedMappings) as MappingStorage;
+        setMappings(prev => {
+          // Start with fresh mappings from storage
+          const freshMappings = { ...parsedMappings.mappings };
+          
+          // Remove the mapping if it exists
+          if (freshMappings[nodeId] && freshMappings[nodeId][fieldName]) {
+            const { [fieldName]: _, ...rest } = freshMappings[nodeId];
+            freshMappings[nodeId] = rest;
+            
+            // If node has no more mappings, remove the node entry
+            if (Object.keys(freshMappings[nodeId]).length === 0) {
+              const { [nodeId]: __, ...remainingNodes } = freshMappings;
+              return remainingNodes;
+            }
+          }
+          
+          return freshMappings;
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Error refreshing mappings from storage:', error);
+    }
+    
+    // Fallback to normal update if the above fails
     setMappings(prev => {
       const updated = { ...prev };
       
