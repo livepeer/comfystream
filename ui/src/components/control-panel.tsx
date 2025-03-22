@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { usePeerContext } from "@/context/peer-context";
 import { usePrompt } from "./settings";
 import { useControllerInput } from "@/hooks/use-controller-input";
 import { useControllerMapping } from "@/hooks/use-controller-mapping";
 import { ControllerMappingButton } from "./controller-mapping";
+import { AxisMapping } from "@/types/controller";
 
 type InputValue = string | number | boolean;
 
@@ -48,12 +49,46 @@ const InputControl = ({
   value: string;
   onChange: (value: string) => void;
 }) => {
+  // Add a state to track recent controller updates for visual feedback
+  const [isControllerUpdated, setIsControllerUpdated] = useState(false);
+  const controllerUpdateTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  // When the value changes, show controller update indicator
+  useEffect(() => {
+    // Check if this is from initial mount or actual update
+    if (value !== undefined) {
+      setIsControllerUpdated(true);
+      
+      // Clear any existing timer
+      if (controllerUpdateTimer.current) {
+        clearTimeout(controllerUpdateTimer.current);
+      }
+      
+      // Set a timer to remove the indicator
+      controllerUpdateTimer.current = setTimeout(() => {
+        setIsControllerUpdated(false);
+      }, 300); // Flash for 300ms
+    }
+    
+    return () => {
+      if (controllerUpdateTimer.current) {
+        clearTimeout(controllerUpdateTimer.current);
+      }
+    };
+  }, [value]);
+  
+  // Helper to apply controller update styles
+  const controllerUpdateStyle = isControllerUpdated 
+    ? { boxShadow: '0 0 0 2px rgba(59, 130, 246, 0.5)', transition: 'box-shadow 0.2s ease-out' } 
+    : { transition: 'box-shadow 0.2s ease-out' };
+  
   if (input.widget === "combo") {
     return (
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="p-2 border rounded w-full"
+        style={controllerUpdateStyle}
       >
         {Array.isArray(input.value) &&
           input.value.map((option: string) => (
@@ -71,12 +106,14 @@ const InputControl = ({
   switch (inputType) {
     case "boolean":
       return (
-        <input
-          type="checkbox"
-          checked={value === "true"}
-          onChange={(e) => onChange(e.target.checked.toString())}
-          className="w-5 h-5"
-        />
+        <div style={{ display: 'inline-block', ...controllerUpdateStyle }}>
+          <input
+            type="checkbox"
+            checked={value === "true"}
+            onChange={(e) => onChange(e.target.checked.toString())}
+            className="w-5 h-5"
+          />
+        </div>
       );
     case "number":
     case "float":
@@ -92,6 +129,7 @@ const InputControl = ({
             inputType === "float" ? "0.01" : inputType === "int" ? "1" : "any"
           }
           className="p-2 border rounded w-32"
+          style={controllerUpdateStyle}
         />
       );
     case "string":
@@ -101,6 +139,7 @@ const InputControl = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="p-2 border rounded w-full"
+          style={controllerUpdateStyle}
         />
       );
     default:
@@ -111,6 +150,7 @@ const InputControl = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="p-2 border rounded w-full"
+          style={controllerUpdateStyle}
         />
       );
   }
@@ -344,24 +384,220 @@ export const ControlPanel = ({
   const { getMapping } = useControllerMapping();
   const mapping = getMapping(panelState.nodeId, panelState.fieldName);
 
-  // Set up controller input handler
-  useControllerInput(mapping, (value) => {
-    if (!panelState.isAutoUpdateEnabled) return;
+  // Function to immediately send a value update to ComfyUI
+  const sendValueToComfyUI = React.useCallback((rawValue: any) => {
+    if (!controlChannel || !panelState.isAutoUpdateEnabled || !currentPrompts) return;
+    
+    console.log("Controller sending value to ComfyUI:", rawValue);
+    
+    const currentInput = panelState.nodeId && panelState.fieldName 
+      ? availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName] 
+      : null;
+    
+    if (!currentInput) {
+      console.warn("Cannot send value - no current input selected");
+      return;
+    }
+    
+    // Process the value based on the input type
+    let processedValue: InputValue = rawValue;
+    
+    switch (currentInput.type.toLowerCase()) {
+      case "number":
+        if (typeof rawValue === 'string') {
+          if (!/^-?\d*\.?\d*$/.test(rawValue) || rawValue === "") {
+            console.warn("Invalid number value:", rawValue);
+            return;
+          }
+          processedValue = parseFloat(rawValue);
+        } else if (typeof rawValue === 'number') {
+          processedValue = rawValue;
+        } else {
+          console.warn("Unexpected value type for number input:", rawValue);
+          return;
+        }
+        
+        // Apply min/max constraints
+        if (currentInput.min !== undefined && processedValue < currentInput.min) {
+          processedValue = currentInput.min;
+        }
+        if (currentInput.max !== undefined && processedValue > currentInput.max) {
+          processedValue = currentInput.max;
+        }
+        
+        break;
+        
+      case "boolean":
+        if (typeof rawValue === 'string') {
+          processedValue = rawValue === 'true';
+        } else if (typeof rawValue === 'boolean') {
+          processedValue = rawValue;
+        } else {
+          console.warn("Unexpected value type for boolean input:", rawValue);
+          return;
+        }
+        break;
+        
+      default:
+        processedValue = String(rawValue);
+    }
+    
+    console.log("Processed value:", processedValue);
+    
+    // Create updated prompt
+    const updatedPrompts = currentPrompts.map((prompt: any, idx: number) => {
+      if (idx !== promptIdxToUpdate) {
+        return prompt;
+      }
+      
+      const updatedPrompt = JSON.parse(JSON.stringify(prompt)); // Deep clone
+      
+      if (updatedPrompt[panelState.nodeId]?.inputs) {
+        updatedPrompt[panelState.nodeId].inputs[panelState.fieldName] = processedValue;
+        console.log(`Updated node ${panelState.nodeId}, field ${panelState.fieldName} to:`, processedValue);
+      }
+      
+      return updatedPrompt;
+    });
+    
+    // Update last sent value
+    lastSentValueRef.current = {
+      nodeId: panelState.nodeId,
+      fieldName: panelState.fieldName,
+      value: processedValue,
+    };
+    
+    // Send update to ComfyUI
+    const message = JSON.stringify({
+      type: "update_prompts",
+      prompts: updatedPrompts,
+    });
+    
+    console.log("Sending update to ComfyUI");
+    controlChannel.send(message);
+    
+    // Update local prompts
+    setCurrentPrompts(updatedPrompts);
+    
+  }, [controlChannel, panelState.nodeId, panelState.fieldName, panelState.isAutoUpdateEnabled, 
+      availableNodes, promptIdxToUpdate, currentPrompts, setCurrentPrompts]);
 
+  // Set up controller input handler with enhanced feedback
+  useControllerInput(mapping, (value) => {
+    console.log("Controller input received:", value);
+    
     // Special handling for prompt list navigation
     if (value === '__NEXT_PROMPT__' && currentPrompts && promptIdxToUpdate < currentPrompts.length - 1) {
+      console.log("Controller navigating to next prompt");
       setPromptIdxToUpdate(promptIdxToUpdate + 1);
       return;
     }
     
     if (value === '__PREV_PROMPT__' && promptIdxToUpdate > 0) {
+      console.log("Controller navigating to previous prompt");
       setPromptIdxToUpdate(promptIdxToUpdate - 1);
       return;
     }
     
-    // For regular values, update the control panel state
+    // For regular values, ALWAYS update the control panel state immediately
     if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {
-      onStateChange({ value: value.toString() });
+      // Get input details to correctly format the value
+      const currentInput = panelState.nodeId && panelState.fieldName 
+        ? availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName] 
+        : null;
+      
+      if (!currentInput) {
+        console.warn("Cannot format value - no current input selected");
+        return;
+      }
+      
+      let formattedValue: string;
+      
+      // Format the value according to the input type
+      switch (currentInput.type.toLowerCase()) {
+        case "number":
+        case "float":
+        case "int": {
+          let numValue: number;
+          
+          if (typeof value === 'number') {
+            // If we have a raw number from the controller
+            if (mapping?.type === 'axis') {
+              const axisMapping = mapping as AxisMapping;
+              
+              // If min/max are defined in the mapping, use those
+              if (axisMapping.minOverride !== undefined && axisMapping.maxOverride !== undefined) {
+                // The value should already be scaled in use-controller-input.ts,
+                // but let's ensure it respects the bounds
+                numValue = Math.min(Math.max(value, axisMapping.minOverride), axisMapping.maxOverride);
+              } 
+              // Otherwise use the input's min/max if available
+              else if (currentInput.min !== undefined && currentInput.max !== undefined) {
+                // Map from [-1, 1] to [min, max]
+                numValue = currentInput.min + ((value + 1) / 2) * (currentInput.max - currentInput.min);
+              } else {
+                // If no bounds are defined, just use the raw value
+                numValue = value;
+              }
+            } else {
+              numValue = value;
+            }
+            
+            // For integer types, round the value
+            if (currentInput.type.toLowerCase() === "int") {
+              numValue = Math.round(numValue);
+            } else {
+              // For float, limit precision to avoid UI jitter
+              numValue = parseFloat(numValue.toFixed(4));
+            }
+          } else {
+            // Try to parse string or boolean to number
+            numValue = parseFloat(String(value));
+            if (isNaN(numValue)) numValue = 0;
+          }
+          
+          // Apply min/max constraints from the input
+          if (currentInput.min !== undefined) {
+            numValue = Math.max(numValue, currentInput.min);
+          }
+          if (currentInput.max !== undefined) {
+            numValue = Math.min(numValue, currentInput.max);
+          }
+          
+          formattedValue = numValue.toString();
+          break;
+        }
+        
+        case "boolean":
+          if (typeof value === 'boolean') {
+            formattedValue = value.toString();
+          } else if (typeof value === 'number') {
+            // Treat any non-zero value as true
+            formattedValue = (value !== 0).toString();
+          } else if (typeof value === 'string') {
+            // Use standard JS truthiness for strings
+            formattedValue = (value !== '' && value !== '0' && value.toLowerCase() !== 'false').toString();
+          } else {
+            formattedValue = 'false';
+          }
+          break;
+          
+        default:
+          // For other types (like string or combo), just convert to string
+          formattedValue = String(value);
+      }
+      
+      console.log(`Updating control panel state with formatted value: ${formattedValue} (original: ${value})`);
+      
+      // Always update local state regardless of auto-update setting
+      onStateChange({ value: formattedValue });
+      
+      // Only send to ComfyUI if auto-update is enabled
+      if (panelState.isAutoUpdateEnabled) {
+        sendValueToComfyUI(formattedValue);
+      } else {
+        console.log("Auto-update is disabled, UI updated but not sending to server");
+      }
     }
   });
 

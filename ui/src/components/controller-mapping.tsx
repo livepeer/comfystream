@@ -66,6 +66,9 @@ export function ControllerMappingButton({
     lastLogTime: 0
   });
   
+  // Add a state to track axis values for feedback
+  const [currentAxisValue, setCurrentAxisValue] = useState<number | null>(null);
+  
   // Update local state when mapping changes
   useEffect(() => {
     const mapping = getMapping(nodeId, fieldName);
@@ -153,6 +156,12 @@ export function ControllerMappingButton({
             console.log(`Axis ${index} moved: from ${initialValue.toFixed(2)} to ${axisValue.toFixed(2)} (change: ${movement.toFixed(2)})`);
             setDetectedInput(`Axis ${index}`);
             setAxisIndex(index);
+            setCurrentAxisValue(axisValue);
+          }
+          
+          // Always update current value for visual feedback when on the mapped axis
+          if (mappingType === 'axis' && index === axisIndex) {
+            setCurrentAxisValue(axisValue);
           }
         });
       }
@@ -343,6 +352,26 @@ export function ControllerMappingButton({
                     {mappingType === 'promptList' && detectedInput.includes('Next') && <> → Setting Prev Button to {prevButtonIndex}</>}
                   </p>
                 )}
+              </div>
+            )}
+            
+            {/* Add visual feedback for axis movement during detection */}
+            {mappingType === 'axis' && isListening && currentAxisValue !== null && (
+              <div className="mt-2 bg-blue-50 p-2 rounded border border-blue-200">
+                <p className="text-xs font-medium">Current Axis Value:</p>
+                <div className="relative h-4 bg-gray-200 rounded-full mt-1">
+                  <div 
+                    className="absolute top-0 bottom-0 bg-blue-600 rounded-full"
+                    style={{ 
+                      left: '50%', 
+                      width: `${Math.abs(currentAxisValue) * 100}%`, 
+                      transform: `translateX(${currentAxisValue < 0 ? '-100%' : '0'})`,
+                      transformOrigin: 'left center'
+                    }}
+                  />
+                  <div className="absolute top-0 bottom-0 w-px bg-gray-400 left-1/2" />
+                </div>
+                <p className="text-xs text-right mt-1">{currentAxisValue.toFixed(3)}</p>
               </div>
             )}
             

@@ -58,36 +58,40 @@ export function useControllerInput(
             return;
           }
           
-          if (hasAxisChanged(controllerIndex, axisIndex)) {
-            const axisValue = freshController.axes[axisIndex] || 0;
+          // For axes, we should always check the current value, not just when it changes
+          // This ensures continuous updates for smoother control
+          const axisValue = freshController.axes[axisIndex] || 0;
+          
+          if (shouldLog) {
+            console.log(`Axis ${axisIndex} value:`, axisValue.toFixed(4));
+          }
+          
+          // Apply scaling and constraints
+          let scaledValue = axisValue * (axisMapping.multiplier || 1);
+          
+          // Apply min/max overrides if provided
+          if (axisMapping.minOverride !== undefined && axisMapping.maxOverride !== undefined) {
+            // Map from [-1, 1] to [min, max]
+            scaledValue = 
+              axisMapping.minOverride + 
+              ((scaledValue + 1) / 2) * (axisMapping.maxOverride - axisMapping.minOverride);
             
             if (shouldLog) {
-              console.log(`Axis ${axisIndex} value:`, axisValue.toFixed(4));
+              console.log(`Scaled value (with min/max):`, scaledValue.toFixed(4));
             }
-            
-            // Apply scaling and constraints
-            let scaledValue = axisValue * (axisMapping.multiplier || 1);
-            
-            // Apply min/max overrides if provided
-            if (axisMapping.minOverride !== undefined && axisMapping.maxOverride !== undefined) {
-              // Map from [-1, 1] to [min, max]
-              scaledValue = 
-                axisMapping.minOverride + 
-                ((scaledValue + 1) / 2) * (axisMapping.maxOverride - axisMapping.minOverride);
-              
-              if (shouldLog) {
-                console.log(`Scaled value (with min/max):`, scaledValue.toFixed(4));
-              }
+          }
+          
+          // For more precise control, round to a reasonable number of decimal places
+          // This prevents tiny fluctuations from triggering updates
+          const roundedValue = parseFloat(scaledValue.toFixed(3));
+          
+          // Only update if the value has changed significantly
+          if (valueRef.current === null || Math.abs(valueRef.current - roundedValue) > 0.002) {
+            if (shouldLog || Math.abs(valueRef.current - roundedValue) > 0.02) {
+              console.log(`Sending axis value update:`, roundedValue);
             }
-            
-            // Only update if the value has changed significantly
-            if (valueRef.current === null || Math.abs(valueRef.current - scaledValue) > 0.01) {
-              if (shouldLog) {
-                console.log(`Sending value update:`, scaledValue);
-              }
-              valueRef.current = scaledValue;
-              onValueChange(scaledValue);
-            }
+            valueRef.current = roundedValue;
+            onValueChange(roundedValue);
           }
           break;
         }
@@ -156,7 +160,7 @@ export function useControllerInput(
           break;
         }
       }
-    }, 50); // Poll at 20Hz
+    }, 16); // Poll at 60Hz for smoother control
     
     return () => {
       console.log('Cleaning up controller input processing');
