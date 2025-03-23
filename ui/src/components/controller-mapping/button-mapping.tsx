@@ -32,8 +32,11 @@ export function ButtonMappingForm({
       const buttonMapping = currentMapping as ButtonMapping;
       setButtonIndex(buttonMapping.buttonIndex);
       
+      // Handle nextButtonIndex - could be undefined in some modes
       if (buttonMapping.nextButtonIndex !== undefined) {
         setNextButtonIndex(buttonMapping.nextButtonIndex);
+      } else {
+        setNextButtonIndex(-1); // Default value when not specified
       }
     }
   }, [currentMapping]);

@@ -110,6 +110,53 @@ export function MappingFormBase<T extends ControllerMapping>({
   const [minOverride, setMinOverride] = useState<number | undefined>(inputMin);
   const [maxOverride, setMaxOverride] = useState<number | undefined>(inputMax);
   
+  // Initialize form values from current mapping if exists
+  useEffect(() => {
+    if (currentMapping && currentMapping.type === mappingType) {
+      console.log('Loading existing mapping into form:', currentMapping);
+      
+      // Set button mode
+      if ('mode' in currentMapping) {
+        setButtonMode(currentMapping.mode as ButtonModeType);
+      }
+      
+      // Set value when pressed/released
+      if ('valueWhenPressed' in currentMapping) {
+        const value = currentMapping.valueWhenPressed;
+        setValueWhenPressed(value?.toString() || '1');
+      }
+      
+      if ('valueWhenReleased' in currentMapping) {
+        const value = currentMapping.valueWhenReleased;
+        setValueWhenReleased(value?.toString() || '0');
+      }
+      
+      // Set values list for series mode
+      if ('valuesList' in currentMapping && Array.isArray(currentMapping.valuesList)) {
+        setValuesList(currentMapping.valuesList.map(v => v?.toString() || ''));
+      }
+      
+      // Set current value index for series mode
+      if ('currentValueIndex' in currentMapping && typeof currentMapping.currentValueIndex === 'number') {
+        setCurrentValueIndex(currentMapping.currentValueIndex);
+      }
+      
+      // Set increment step for increment mode
+      if ('incrementStep' in currentMapping && typeof currentMapping.incrementStep === 'number') {
+        setIncrementStep(currentMapping.incrementStep);
+      }
+      
+      // Set min/max overrides
+      if ('minOverride' in currentMapping && currentMapping.minOverride !== undefined) {
+        setMinOverride(currentMapping.minOverride);
+      }
+      
+      if ('maxOverride' in currentMapping && currentMapping.maxOverride !== undefined) {
+        setMaxOverride(currentMapping.maxOverride);
+      }
+    }
+  }, [currentMapping, mappingType]);
+  
   // State for the common methods we'll pass to child components
   const modeBasedInputProps: ModeBasedInputProps<T> = {
     buttonMode,
