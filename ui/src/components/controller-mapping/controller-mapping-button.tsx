@@ -13,8 +13,7 @@ import { AxisMappingForm } from './axis-mapping';
 import { ButtonMappingForm } from './button-mapping';
 import { KeyMappingForm } from './key-mapping';
 import { MouseMappingForm } from './mouse-mapping';
-import { MouseXMappingForm } from './mouse-x-mapping';
-import { MouseYMappingForm } from './mouse-y-mapping';
+import { MouseMovementMappingForm } from './mouse-movement-mapping';
 import { ControllerInfo } from './controller-info';
 import { BaseMappingFormProps, ControllerMappingFormProps } from './base-mapping-form';
 
@@ -41,7 +40,8 @@ export function ControllerMappingButton({
   const { controllers, isControllerConnected } = useController();
   const { getMapping, saveMapping, removeMapping, hasMapping } = useControllerMapping();
   const [isOpen, setIsOpen] = useState(false);
-  const [mappingType, setMappingType] = useState<'axis' | 'button' | 'key' | 'mouse' | 'mouse-x' | 'mouse-y'>('axis');
+  const [mappingType, setMappingType] = useState<'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement'>('axis');
+  const [mouseMovementAxis, setMouseMovementAxis] = useState<'x' | 'y'>('x');
   const [currentMapping, setCurrentMapping] = useState<ControllerMapping | undefined>(
     getMapping(nodeId, fieldName)
   );
@@ -67,7 +67,12 @@ export function ControllerMappingButton({
     setCurrentMapping(mapping);
     
     if (mapping) {
-      setMappingType(mapping.type);
+      if (mapping.type === 'mouse-movement') {
+        setMappingType('mouse-movement');
+        setMouseMovementAxis(mapping.axis);
+      } else {
+        setMappingType(mapping.type);
+      }
     }
   }, [nodeId, fieldName, getMapping]);
 
@@ -139,6 +144,11 @@ export function ControllerMappingButton({
     isControllerConnected
   };
 
+  // Handle mouse movement axis change
+  const handleMouseMovementAxisChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setMouseMovementAxis(e.target.value as 'x' | 'y');
+  };
+
   return (
     <>
       <Button
@@ -165,17 +175,32 @@ export function ControllerMappingButton({
               <select
                 id="mapping-type"
                 value={mappingType}
-                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button' | 'key' | 'mouse' | 'mouse-x' | 'mouse-y')}
+                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement')}
                 className="p-2 border rounded w-full"
               >
                 <option value="axis">Controller Axis</option>
                 <option value="button">Controller Button</option>
                 <option value="key">Keyboard Key</option>
                 <option value="mouse">Mouse Button/Wheel</option>
-                <option value="mouse-x">Mouse X Movement</option>
-                <option value="mouse-y">Mouse Y Movement</option>
+                <option value="mouse-movement">Mouse Movement</option>
               </select>
             </div>
+            
+            {/* Show axis selector for mouse movement */}
+            {mappingType === 'mouse-movement' && (
+              <div className="space-y-2">
+                <label htmlFor="mouse-axis" className="text-sm font-medium">Mouse Axis</label>
+                <select
+                  id="mouse-axis"
+                  value={mouseMovementAxis}
+                  onChange={handleMouseMovementAxisChange}
+                  className="p-2 border rounded w-full"
+                >
+                  <option value="x">Horizontal (X Axis)</option>
+                  <option value="y">Vertical (Y Axis)</option>
+                </select>
+              </div>
+            )}
             
             {/* Render the appropriate mapping form based on type */}
             {mappingType === 'axis' && (
@@ -194,12 +219,8 @@ export function ControllerMappingButton({
               <MouseMappingForm {...baseProps} />
             )}
             
-            {mappingType === 'mouse-x' && (
-              <MouseXMappingForm {...baseProps} />
-            )}
-            
-            {mappingType === 'mouse-y' && (
-              <MouseYMappingForm {...baseProps} />
+            {mappingType === 'mouse-movement' && (
+              <MouseMovementMappingForm {...baseProps} axis={mouseMovementAxis} />
             )}
             
             <div className="flex justify-between mt-6">

@@ -63,6 +63,37 @@ export function useControllerMapping() {
               
               hasUpdated = true;
             }
+            // Migrate mouse-x and mouse-y to mouse-movement
+            else if (legacyMapping.type === 'mouse-x') {
+              console.log(`Converting mouse-x mapping for ${nodeId}.${fieldName} to mouse-movement`);
+              
+              updatedMappings[nodeId][fieldName] = {
+                type: 'mouse-movement',
+                nodeId,
+                fieldName,
+                axis: 'x',
+                multiplier: legacyMapping.multiplier || 0.01,
+                minOverride: legacyMapping.minOverride,
+                maxOverride: legacyMapping.maxOverride
+              };
+              
+              hasUpdated = true;
+            }
+            else if (legacyMapping.type === 'mouse-y') {
+              console.log(`Converting mouse-y mapping for ${nodeId}.${fieldName} to mouse-movement`);
+              
+              updatedMappings[nodeId][fieldName] = {
+                type: 'mouse-movement',
+                nodeId,
+                fieldName,
+                axis: 'y',
+                multiplier: legacyMapping.multiplier || 0.01,
+                minOverride: legacyMapping.minOverride,
+                maxOverride: legacyMapping.maxOverride
+              };
+              
+              hasUpdated = true;
+            }
           });
         });
         

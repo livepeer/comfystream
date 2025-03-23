@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useController } from './use-controller';
-import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseXMapping, MouseYMapping } from '@/types/controller';
+import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseMovementMapping } from '@/types/controller';
 
 // Constants for button hold & repeat functionality
 const INITIAL_DELAY_MS = 500; // Initial delay before repeating starts
@@ -73,7 +73,7 @@ export function useControllerInput(
       mouseAccumulatedYRef.current = 0;
       
       // Enable keyboard and mouse input if needed
-      if (mapping && (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-x' || mapping.type === 'mouse-y')) {
+      if (mapping && (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-movement')) {
         toggleKeyMouseInput(true);
       }
     }
@@ -83,7 +83,7 @@ export function useControllerInput(
     if (!mapping) return;
     
     // Enable keyboard and mouse input if needed
-    if (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-x' || mapping.type === 'mouse-y') {
+    if (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-movement') {
       toggleKeyMouseInput(true);
     }
     
@@ -901,75 +901,70 @@ export function useControllerInput(
           break;
         }
         
-        case 'mouse-x': {
-          const mouseXMapping = mapping as MouseXMapping;
+        case 'mouse-movement': {
+          const mouseMovementMapping = mapping as MouseMovementMapping;
           const position = getMousePosition();
+          
+          // Extract the axis to determine which direction to track
+          const axis = mouseMovementMapping.axis;
           
           // Calculate delta from last position
           const deltaX = position.x - (mousePositionRef.current?.x || position.x);
-          
-          // Store current position
-          mousePositionRef.current = position;
-          
-          // Only process significant movement
-          if (Math.abs(deltaX) > 1) {
-            // Scale the delta by the multiplier
-            const scaledDelta = deltaX * (mouseXMapping.multiplier || 0.01);
-            
-            // Add the delta to our accumulated value
-            mouseAccumulatedXRef.current += scaledDelta;
-            
-            // Get min/max values (from mapping or defaults)
-            const minValue = mouseXMapping.minOverride !== undefined ? mouseXMapping.minOverride : -1;
-            const maxValue = mouseXMapping.maxOverride !== undefined ? mouseXMapping.maxOverride : 1;
-            
-            // Clamp the accumulated value within bounds
-            mouseAccumulatedXRef.current = Math.max(minValue, Math.min(maxValue, mouseAccumulatedXRef.current));
-            
-            // Round to reasonable precision
-            const roundedValue = parseFloat(mouseAccumulatedXRef.current.toFixed(3));
-            
-            // Only update on significant changes
-            if (valueRef.current === null || Math.abs(valueRef.current - roundedValue) > 0.001) {
-              valueRef.current = roundedValue;
-              onValueChange(roundedValue);
-            }
-          }
-          break;
-        }
-        
-        case 'mouse-y': {
-          const mouseYMapping = mapping as MouseYMapping;
-          const position = getMousePosition();
-          
-          // Calculate delta from last position
           const deltaY = position.y - (mousePositionRef.current?.y || position.y);
           
           // Store current position
           mousePositionRef.current = position;
           
-          // Only process significant movement
-          if (Math.abs(deltaY) > 1) {
-            // Scale the delta by the multiplier (note: invert Y for intuitive up/down)
-            const scaledDelta = -deltaY * (mouseYMapping.multiplier || 0.01); // Negative because screen Y is inverted
-            
-            // Add the delta to our accumulated value
-            mouseAccumulatedYRef.current += scaledDelta;
-            
-            // Get min/max values (from mapping or defaults)
-            const minValue = mouseYMapping.minOverride !== undefined ? mouseYMapping.minOverride : -1;
-            const maxValue = mouseYMapping.maxOverride !== undefined ? mouseYMapping.maxOverride : 1;
-            
-            // Clamp the accumulated value within bounds
-            mouseAccumulatedYRef.current = Math.max(minValue, Math.min(maxValue, mouseAccumulatedYRef.current));
-            
-            // Round to reasonable precision
-            const roundedValue = parseFloat(mouseAccumulatedYRef.current.toFixed(3));
-            
-            // Only update on significant changes
-            if (valueRef.current === null || Math.abs(valueRef.current - roundedValue) > 0.001) {
-              valueRef.current = roundedValue;
-              onValueChange(roundedValue);
+          // Handle X or Y based on the axis
+          if (axis === 'x') {
+            // Only process significant movement
+            if (Math.abs(deltaX) > 1) {
+              // Scale the delta by the multiplier
+              const scaledDelta = deltaX * (mouseMovementMapping.multiplier || 0.01);
+              
+              // Add the delta to our accumulated value
+              mouseAccumulatedXRef.current += scaledDelta;
+              
+              // Get min/max values (from mapping or defaults)
+              const minValue = mouseMovementMapping.minOverride !== undefined ? mouseMovementMapping.minOverride : -1;
+              const maxValue = mouseMovementMapping.maxOverride !== undefined ? mouseMovementMapping.maxOverride : 1;
+              
+              // Clamp the accumulated value within bounds
+              mouseAccumulatedXRef.current = Math.max(minValue, Math.min(maxValue, mouseAccumulatedXRef.current));
+              
+              // Round to reasonable precision
+              const roundedValue = parseFloat(mouseAccumulatedXRef.current.toFixed(3));
+              
+              // Only update on significant changes
+              if (valueRef.current === null || Math.abs(valueRef.current - roundedValue) > 0.001) {
+                valueRef.current = roundedValue;
+                onValueChange(roundedValue);
+              }
+            }
+          } else if (axis === 'y') {
+            // Only process significant movement
+            if (Math.abs(deltaY) > 1) {
+              // Scale the delta by the multiplier (note: invert Y for intuitive up/down)
+              const scaledDelta = -deltaY * (mouseMovementMapping.multiplier || 0.01); // Negative because screen Y is inverted
+              
+              // Add the delta to our accumulated value
+              mouseAccumulatedYRef.current += scaledDelta;
+              
+              // Get min/max values (from mapping or defaults)
+              const minValue = mouseMovementMapping.minOverride !== undefined ? mouseMovementMapping.minOverride : -1;
+              const maxValue = mouseMovementMapping.maxOverride !== undefined ? mouseMovementMapping.maxOverride : 1;
+              
+              // Clamp the accumulated value within bounds
+              mouseAccumulatedYRef.current = Math.max(minValue, Math.min(maxValue, mouseAccumulatedYRef.current));
+              
+              // Round to reasonable precision
+              const roundedValue = parseFloat(mouseAccumulatedYRef.current.toFixed(3));
+              
+              // Only update on significant changes
+              if (valueRef.current === null || Math.abs(valueRef.current - roundedValue) > 0.001) {
+                valueRef.current = roundedValue;
+                onValueChange(roundedValue);
+              }
             }
           }
           break;
@@ -993,7 +988,7 @@ export function useControllerInput(
       }
       
       // Disable keyboard and mouse input when unmounting
-      if (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-x' || mapping.type === 'mouse-y') {
+      if (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-movement') {
         toggleKeyMouseInput(false);
       }
     };

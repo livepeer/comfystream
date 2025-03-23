@@ -1,6 +1,6 @@
 // Base mapping interface
 export interface ControllerMappingBase {
-  type: 'axis' | 'button' | 'key' | 'mouse' | 'mouse-x' | 'mouse-y';
+  type: 'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement';
   nodeId: string;
   fieldName: string;
 }
@@ -55,17 +55,10 @@ export interface KeyMapping extends ControllerMappingBase {
   maxOverride?: number; // Maximum value
 }
 
-// Mouse X movement mapping (horizontal movement)
-export interface MouseXMapping extends ControllerMappingBase {
-  type: 'mouse-x';
-  multiplier: number;
-  minOverride?: number;
-  maxOverride?: number;
-}
-
-// Mouse Y movement mapping (vertical movement)
-export interface MouseYMapping extends ControllerMappingBase {
-  type: 'mouse-y';
+// Mouse movement mapping (horizontal or vertical movement)
+export interface MouseMovementMapping extends ControllerMappingBase {
+  type: 'mouse-movement';
+  axis: 'x' | 'y';  // Which axis to track
   multiplier: number;
   minOverride?: number;
   maxOverride?: number;
@@ -94,7 +87,7 @@ export interface MouseMapping extends ControllerMappingBase {
 }
 
 // Union type for all mapping types
-export type ControllerMapping = AxisMapping | ButtonMapping | KeyMapping | MouseMapping | MouseXMapping | MouseYMapping;
+export type ControllerMapping = AxisMapping | ButtonMapping | KeyMapping | MouseMapping | MouseMovementMapping;
 
 // Mapping storage interface
 export interface MappingStorage {
