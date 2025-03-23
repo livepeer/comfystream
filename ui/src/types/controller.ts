@@ -1,6 +1,6 @@
 // Base mapping interface
 export interface ControllerMappingBase {
-  type: 'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement';
+  type: 'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement' | 'microphone';
   nodeId: string;
   fieldName: string;
 }
@@ -86,8 +86,18 @@ export interface MouseMapping extends ControllerMappingBase {
   incrementStep?: number; // Amount to increment/decrement by
 }
 
+// Microphone mapping for audio input
+export interface MicrophoneMapping extends ControllerMappingBase {
+  type: 'microphone';
+  audioFeature: 'volume'; // For MVP, only volume is supported
+  multiplier: number;
+  minOverride?: number;
+  maxOverride?: number;
+  smoothing?: number; // Smoothing factor (0-1)
+}
+
 // Union type for all mapping types
-export type ControllerMapping = AxisMapping | ButtonMapping | KeyMapping | MouseMapping | MouseMovementMapping;
+export type ControllerMapping = AxisMapping | ButtonMapping | KeyMapping | MouseMapping | MouseMovementMapping | MicrophoneMapping;
 
 // Mapping storage interface
 export interface MappingStorage {

@@ -14,6 +14,7 @@ import { ButtonMappingForm } from './button-mapping';
 import { KeyMappingForm } from './key-mapping';
 import { MouseMappingForm } from './mouse-mapping';
 import { MouseMovementMappingForm } from './mouse-movement-mapping';
+import { MicrophoneMappingForm } from './microphone-mapping';
 import { ControllerInfo } from './controller-info';
 import { BaseMappingFormProps, ControllerMappingFormProps } from './base-mapping-form';
 
@@ -40,7 +41,7 @@ export function ControllerMappingButton({
   const { controllers, isControllerConnected } = useController();
   const { getMapping, saveMapping, removeMapping, hasMapping } = useControllerMapping();
   const [isOpen, setIsOpen] = useState(false);
-  const [mappingType, setMappingType] = useState<'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement'>('axis');
+  const [mappingType, setMappingType] = useState<'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement' | 'microphone'>('axis');
   const [mouseMovementAxis, setMouseMovementAxis] = useState<'x' | 'y'>('x');
   const [currentMapping, setCurrentMapping] = useState<ControllerMapping | undefined>(
     getMapping(nodeId, fieldName)
@@ -175,7 +176,7 @@ export function ControllerMappingButton({
               <select
                 id="mapping-type"
                 value={mappingType}
-                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement')}
+                onChange={(e) => setMappingType(e.target.value as 'axis' | 'button' | 'key' | 'mouse' | 'mouse-movement' | 'microphone')}
                 className="p-2 border rounded w-full"
               >
                 <option value="axis">Controller Axis</option>
@@ -183,6 +184,7 @@ export function ControllerMappingButton({
                 <option value="key">Keyboard Key</option>
                 <option value="mouse">Mouse Button/Wheel</option>
                 <option value="mouse-movement">Mouse Movement</option>
+                <option value="microphone">Microphone</option>
               </select>
             </div>
             
@@ -221,6 +223,10 @@ export function ControllerMappingButton({
             
             {mappingType === 'mouse-movement' && (
               <MouseMovementMappingForm {...baseProps} axis={mouseMovementAxis} />
+            )}
+            
+            {mappingType === 'microphone' && (
+              <MicrophoneMappingForm {...baseProps} />
             )}
             
             <div className="flex justify-between mt-6">

@@ -14,3 +14,4 @@ export type {
   ModeBasedInputProps,
   MappingFormBaseProps 
 } from './mapping-form-base'; 
+export {MicrophoneMappingForm} from './microphone-mapping';

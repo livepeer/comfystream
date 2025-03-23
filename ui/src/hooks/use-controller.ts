@@ -18,11 +18,29 @@ interface MouseState {
   wheelDelta: number;
 }
 
+// Add AudioContext TypeScript interface if needed
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 // Controller hook that detects controllers and provides input state
 export function useController() {
   const [controllers, setControllers] = useState<Gamepad[]>([]);
   const [isControllerConnected, setIsControllerConnected] = useState(false);
   const [isKeyMouseEnabled, setIsKeyMouseEnabled] = useState(false);
+  
+  // Add microphone state
+  const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState(false);
+  const [isMicrophoneAvailable, setIsMicrophoneAvailable] = useState(false);
+  
+  // Add refs for microphone audio processing
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const dataArrayRef = useRef<Uint8Array | null>(null);
+  
   const prevButtonStates = useRef<Record<number, Record<number, boolean>>>({});
   const prevAxisValues = useRef<Record<number, Record<number, number>>>({});
   const requestRef = useRef<number | null>(null);
@@ -308,6 +326,100 @@ export function useController() {
     setIsKeyMouseEnabled(enabled);
   }, []);
 
+  // Add function to get microphone level
+  const getMicrophoneLevel = useCallback(() => {
+    if (!isMicrophoneEnabled || !analyserRef.current || !dataArrayRef.current) {
+      return 0;
+    }
+    
+    // Get audio data from analyzer
+    analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+    
+    // Calculate average volume (0-1)
+    const data = dataArrayRef.current;
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      sum += data[i];
+    }
+    const average = sum / data.length;
+    
+    return average / 255;
+  }, [isMicrophoneEnabled]);
+  
+  // Function to enable microphone input
+  const enableMicrophone = useCallback(async () => {
+    if (isMicrophoneEnabled) return true;
+    
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      microphoneStreamRef.current = stream;
+      
+      // Set up audio context and analyzer
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = audioContext;
+      
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256; // Small FFT for efficiency
+      analyserRef.current = analyser;
+      
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      
+      // Create data array for analysis
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      dataArrayRef.current = dataArray;
+      
+      setIsMicrophoneEnabled(true);
+      setIsMicrophoneAvailable(true);
+      return true;
+    } catch (error) {
+      console.error('Error accessing microphone:', error);
+      setIsMicrophoneAvailable(false);
+      return false;
+    }
+  }, [isMicrophoneEnabled]);
+  
+  // Function to disable microphone input
+  const disableMicrophone = useCallback(() => {
+    if (microphoneStreamRef.current) {
+      microphoneStreamRef.current.getTracks().forEach(track => track.stop());
+      microphoneStreamRef.current = null;
+    }
+    
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(console.error);
+      audioContextRef.current = null;
+    }
+    
+    analyserRef.current = null;
+    dataArrayRef.current = null;
+    
+    setIsMicrophoneEnabled(false);
+  }, []);
+  
+  // Check for microphone capability on mount
+  useEffect(() => {
+    const checkMicrophoneAvailability = async () => {
+      try {
+        // Just check if we can access the device list
+        await navigator.mediaDevices.enumerateDevices();
+        setIsMicrophoneAvailable(true);
+      } catch (error) {
+        console.error('Microphone enumeration failed:', error);
+        setIsMicrophoneAvailable(false);
+      }
+    };
+    
+    checkMicrophoneAvailability();
+    
+    // Clean up on unmount
+    return () => {
+      disableMicrophone();
+    };
+  }, [disableMicrophone]);
+
   // Set up event listeners and polling
   useEffect(() => {
     console.log("Setting up controller event listeners and polling");
@@ -393,6 +505,13 @@ export function useController() {
     wasMouseButtonJustPressed,
     getMousePositionDelta,
     getMousePosition,
-    getMouseWheelDelta
+    getMouseWheelDelta,
+    
+    // Add microphone functions
+    isMicrophoneAvailable,
+    isMicrophoneEnabled,
+    enableMicrophone,
+    disableMicrophone,
+    getMicrophoneLevel
   };
 } 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useController } from './use-controller';
-import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseMovementMapping } from '@/types/controller';
+import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseMovementMapping, MicrophoneMapping } from '@/types/controller';
 
 // Constants for button hold & repeat functionality
 const INITIAL_DELAY_MS = 500; // Initial delay before repeating starts
@@ -23,7 +23,11 @@ export function useControllerInput(
     wasMouseButtonJustPressed,
     getMousePositionDelta,
     getMousePosition,
-    getMouseWheelDelta
+    getMouseWheelDelta,
+    isMicrophoneEnabled,
+    enableMicrophone,
+    getMicrophoneLevel,
+    disableMicrophone
   } = useController();
   
   const valueRef = useRef<any>(null); // Track current value to avoid unnecessary updates
@@ -54,6 +58,40 @@ export function useControllerInput(
   const keyHoldStartTimeRef = useRef<Record<string, number>>({});
   const mouseButtonHoldStartTimeRef = useRef<Record<number, number>>({});
   
+  // Process microphone input mapping
+  const processMicrophoneMapping = (mapping: MicrophoneMapping, shouldLog: boolean) => {
+    if (mapping.audioFeature !== 'volume') {
+      // For MVP we only support volume - other features would go here
+      return;
+    }
+    
+    // Get the current microphone level (0-1)
+    const level = getMicrophoneLevel();
+    
+    // Skip processing if the level is 0 (no input)
+    if (level === 0) return;
+    
+    if (shouldLog) {
+      console.log(`Microphone level: ${level.toFixed(3)}`);
+    }
+    
+    // Apply multiplier
+    let value = level * mapping.multiplier;
+    
+    // Apply min/max overrides if needed
+    const minValue = mapping.minOverride !== undefined ? mapping.minOverride : 0;
+    const maxValue = mapping.maxOverride !== undefined ? mapping.maxOverride : 1;
+    
+    // Scale the value to the min/max range
+    value = minValue + value * (maxValue - minValue);
+    
+    // Only update if the value has changed significantly
+    if (valueRef.current === null || Math.abs(valueRef.current - value) > 0.001) {
+      valueRef.current = value;
+      onValueChange(value);
+    }
+  };
+  
   // Update the mapping ref when the mapping changes
   useEffect(() => {
     if (mapping !== mappingRef.current) {
@@ -76,8 +114,16 @@ export function useControllerInput(
       if (mapping && (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-movement')) {
         toggleKeyMouseInput(true);
       }
+      
+      // Enable microphone input if needed
+      if (mapping && mapping.type === 'microphone') {
+        enableMicrophone();
+      } else {
+        // Disable microphone if not needed
+        disableMicrophone();
+      }
     }
-  }, [mapping, toggleKeyMouseInput]);
+  }, [mapping, toggleKeyMouseInput, enableMicrophone, disableMicrophone]);
   
   useEffect(() => {
     if (!mapping) return;
@@ -85,6 +131,11 @@ export function useControllerInput(
     // Enable keyboard and mouse input if needed
     if (mapping.type === 'key' || mapping.type === 'mouse' || mapping.type === 'mouse-movement') {
       toggleKeyMouseInput(true);
+    }
+    
+    // Enable microphone if needed
+    if (mapping.type === 'microphone') {
+      enableMicrophone();
     }
     
     console.log('Setting up input processing for:', mapping);
@@ -969,6 +1020,11 @@ export function useControllerInput(
           }
           break;
         }
+        
+        case 'microphone': {
+          processMicrophoneMapping(mapping as MicrophoneMapping, shouldLog);
+          break;
+        }
       }
     }, 16); // Poll at 60Hz for smoother control
     
@@ -1005,7 +1061,12 @@ export function useControllerInput(
     wasMouseButtonJustPressed,
     getMousePositionDelta,
     getMousePosition,
-    getMouseWheelDelta
+    getMouseWheelDelta,
+    isMicrophoneEnabled,
+    enableMicrophone,
+    getMicrophoneLevel,
+    processMicrophoneMapping,
+    disableMicrophone
   ]);
   
   return null; // This hook doesn't return anything, it just applies the effects
