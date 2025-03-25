@@ -13,6 +13,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
+import { Button } from "@/components/ui/button";
+import { Maximize2, Minimize2 } from "lucide-react";
 
 // Custom hook for managing toast lifecycle
 function useToast() {
@@ -164,7 +166,8 @@ interface StageProps {
 function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
-  // Add state and refs for tracking frames
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const outputRef = useRef<HTMLDivElement>(null);
   const [isComfyUIReady, setIsComfyUIReady] = useState<boolean>(false);
   const frameCountRef = useRef<number>(0);
   const frameReadyReported = useRef<boolean>(false);
@@ -219,19 +222,40 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StagePr
     return () => clearInterval(interval);
   }, [connected, remoteStream, peerConnection, onStreamReady]);
 
+  const toggleFullscreen = useCallback(() => {
+    if (!outputRef.current) return;
+    
+    if (!document.fullscreenElement) {
+      outputRef.current.requestFullscreen();
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen();
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
   if (!connected || !remoteStream) {
     return (
-      <>
-        <video 
-          className="w-full h-full object-cover" 
-          autoPlay 
-          loop 
-          playsInline
-          style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
-        >
-          <source src="/loading.mp4" type="video/mp4" />
-        </video>
-      </>
+      <video 
+        className="w-full h-full object-cover" 
+        autoPlay 
+        loop 
+        playsInline
+        style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
+      >
+        <source src="/loading.mp4" type="video/mp4" />
+      </video>
     );
   }
 
@@ -239,6 +263,7 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StagePr
 
   return (
     <div 
+      ref={outputRef}
       className="relative w-full h-full"
       style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
     >
@@ -259,16 +284,26 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StagePr
       )}
       
       {hasVideo && (
-        <div className="absolute top-2 right-2 bg-black/50 text-white px-2 py-1 rounded text-sm">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger>{frameRate} FPS</TooltipTrigger>
-              <TooltipContent>
-                <p>This is the FPS of the output stream.</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
+        <>
+          <div className="absolute top-2 right-2 bg-black/50 text-white px-2 py-1 rounded text-sm">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>{frameRate} FPS</TooltipTrigger>
+                <TooltipContent>
+                  <p>This is the FPS of the output stream.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-2 left-2 bg-black/50 hover:bg-black/70 text-white"
+            onClick={toggleFullscreen}
+          >
+            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </Button>
+        </>
       )}
     </div>
   );

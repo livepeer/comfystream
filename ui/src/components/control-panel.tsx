@@ -40,6 +40,48 @@ interface ControlPanelProps {
   ) => void;
 }
 
+// Add a shared debounce mechanism at the top of the file (after imports)
+const UPDATE_QUEUE: Record<string, any> = {};
+let updateTimeoutId: NodeJS.Timeout | null = null;
+const DEBOUNCE_TIME_MS = 50; // Default debounce for button controls
+const AXIS_DEBOUNCE_TIME_MS = 0; // No debounce for axis controls to maintain fluidity
+
+// Process all pending updates from multiple control panels
+const processUpdateQueue = (controlChannel: RTCDataChannel | null, currentPrompts: any[], setCurrentPrompts: (prompts: any[]) => void) => {
+  if (!controlChannel || Object.keys(UPDATE_QUEUE).length === 0) return;
+  
+  console.log("Processing queued updates:", UPDATE_QUEUE);
+  
+  // Create a deep copy of prompts to apply all updates
+  const updatedPrompts = JSON.parse(JSON.stringify(currentPrompts));
+  
+  // Apply all queued updates
+  Object.entries(UPDATE_QUEUE).forEach(([key, update]) => {
+    const [promptIdx, nodeId, fieldName] = key.split('|');
+    const idx = parseInt(promptIdx);
+    
+    if (updatedPrompts[idx] && updatedPrompts[idx][nodeId]?.inputs) {
+      updatedPrompts[idx][nodeId].inputs[fieldName] = update.value;
+      console.log(`Applied update to prompt ${idx}, node ${nodeId}, field ${fieldName}:`, update.value);
+    }
+  });
+  
+  // Send the consolidated update to ComfyUI
+  const message = JSON.stringify({
+    type: "update_prompts",
+    prompts: updatedPrompts,
+  });
+  
+  console.log("Sending consolidated updates to ComfyUI");
+  controlChannel.send(message);
+  
+  // Update local prompts
+  setCurrentPrompts(updatedPrompts);
+  
+  // Clear the queue
+  Object.keys(UPDATE_QUEUE).forEach(key => delete UPDATE_QUEUE[key]);
+};
+
 const InputControl = ({
   input,
   value,
@@ -292,47 +334,42 @@ export const ControlPanel = ({
         clearTimeout(updateTimeoutRef.current);
       }
 
+      // Determine if this is an axis control - assuming UI changes are not from axis controls
+      // Use a shorter delay for numbers to remain responsive, longer for text
+      const inputDelay = currentInput.type.toLowerCase() === "number" ? 100 : 300;
+
       // Set a new timeout for the update
       updateTimeoutRef.current = setTimeout(
         () => {
-          // Create updated prompt while maintaining current structure
-          let hasUpdated = false;
-          const updatedPrompts = currentPrompts.map(
-            (prompt: any, idx: number) => {
-              if (idx !== promptIdxToUpdate) {
-                return prompt;
-              }
-              const updatedPrompt = JSON.parse(JSON.stringify(prompt)); // Deep clone
-              if (updatedPrompt[panelState.nodeId]?.inputs) {
-                updatedPrompt[panelState.nodeId].inputs[panelState.fieldName] =
-                  processedValue;
-                hasUpdated = true;
-              }
-              return updatedPrompt;
-            },
-          );
-
-          if (hasUpdated) {
-            // Update last sent value
-            lastSentValueRef.current = {
-              nodeId: panelState.nodeId,
-              fieldName: panelState.fieldName,
-              value: processedValue,
-            };
-
-            // Send the full prompts update
-            const message = JSON.stringify({
-              type: "update_prompts",
-              prompts: updatedPrompts,
-            });
-            controlChannel.send(message);
-
-            // Only update prompts after sending
-            setCurrentPrompts(updatedPrompts);
+          // Update last sent value
+          lastSentValueRef.current = {
+            nodeId: panelState.nodeId,
+            fieldName: panelState.fieldName,
+            value: processedValue,
+          };
+          
+          // Create a unique key for this update
+          const updateKey = `${promptIdxToUpdate}|${panelState.nodeId}|${panelState.fieldName}`;
+          
+          // Add to the update queue with the processed value
+          UPDATE_QUEUE[updateKey] = {
+            value: processedValue,
+            timestamp: Date.now(),
+          };
+          
+          // Clear any existing global timeout
+          if (updateTimeoutId) {
+            clearTimeout(updateTimeoutId);
           }
+          
+          // For UI updates we'll use the regular debounce time since these aren't axis inputs
+          updateTimeoutId = setTimeout(() => {
+            processUpdateQueue(controlChannel, currentPrompts, setCurrentPrompts);
+            updateTimeoutId = null;
+          }, DEBOUNCE_TIME_MS);
         },
-        currentInput.type.toLowerCase() === "number" ? 100 : 300,
-      ); // Shorter delay for numbers, longer for text
+        inputDelay
+      );
     }
   }, [
     panelState.value,
@@ -384,7 +421,7 @@ export const ControlPanel = ({
   const { getMapping } = useControllerMapping();
   const mapping = getMapping(panelState.nodeId, panelState.fieldName);
 
-  // Function to immediately send a value update to ComfyUI
+  // Modify the sendValueToComfyUI function
   const sendValueToComfyUI = React.useCallback((rawValue: any) => {
     if (!controlChannel || !panelState.isAutoUpdateEnabled || !currentPrompts) return;
     
@@ -444,43 +481,39 @@ export const ControlPanel = ({
     
     console.log("Processed value:", processedValue);
     
-    // Create updated prompt
-    const updatedPrompts = currentPrompts.map((prompt: any, idx: number) => {
-      if (idx !== promptIdxToUpdate) {
-        return prompt;
-      }
-      
-      const updatedPrompt = JSON.parse(JSON.stringify(prompt)); // Deep clone
-      
-      if (updatedPrompt[panelState.nodeId]?.inputs) {
-        updatedPrompt[panelState.nodeId].inputs[panelState.fieldName] = processedValue;
-        console.log(`Updated node ${panelState.nodeId}, field ${panelState.fieldName} to:`, processedValue);
-      }
-      
-      return updatedPrompt;
-    });
-    
-    // Update last sent value
+    // Update last sent value ref
     lastSentValueRef.current = {
       nodeId: panelState.nodeId,
       fieldName: panelState.fieldName,
       value: processedValue,
     };
     
-    // Send update to ComfyUI
-    const message = JSON.stringify({
-      type: "update_prompts",
-      prompts: updatedPrompts,
-    });
+    // Create a unique key for this update
+    const updateKey = `${promptIdxToUpdate}|${panelState.nodeId}|${panelState.fieldName}`;
     
-    console.log("Sending update to ComfyUI");
-    controlChannel.send(message);
+    // Add to the update queue with the processed value
+    UPDATE_QUEUE[updateKey] = {
+      value: processedValue,
+      timestamp: Date.now(),
+    };
     
-    // Update local prompts
-    setCurrentPrompts(updatedPrompts);
+    // Clear any existing timeout
+    if (updateTimeoutId) {
+      clearTimeout(updateTimeoutId);
+    }
+    
+    // Determine if this is an axis control for more responsive updates
+    const isAxisControl = mapping?.type === 'axis';
+    const debounceTime = isAxisControl ? AXIS_DEBOUNCE_TIME_MS : DEBOUNCE_TIME_MS;
+    
+    // Schedule processing of all updates - use shorter or no debounce for axis controls
+    updateTimeoutId = setTimeout(() => {
+      processUpdateQueue(controlChannel, currentPrompts, setCurrentPrompts);
+      updateTimeoutId = null;
+    }, debounceTime);
     
   }, [controlChannel, panelState.nodeId, panelState.fieldName, panelState.isAutoUpdateEnabled, 
-      availableNodes, promptIdxToUpdate, currentPrompts, setCurrentPrompts]);
+      availableNodes, promptIdxToUpdate, currentPrompts, setCurrentPrompts, mapping]);
 
   // Set up controller input handler with enhanced feedback
   useControllerInput(mapping, (value) => {

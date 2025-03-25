@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useController } from './use-controller';
+import { useControllerMapping } from './use-controller-mapping';
 import { AxisMapping, ButtonMapping, ControllerMapping, KeyMapping, MouseMapping, MouseMovementMapping, MicrophoneMapping } from '@/types/controller';
 
 // Constants for button hold & repeat functionality
@@ -30,8 +31,11 @@ export function useControllerInput(
     disableMicrophone
   } = useController();
   
+  // Access the controller mapping to update global mapping state
+  const { saveMapping } = useControllerMapping();
+  
   const valueRef = useRef<any>(null); // Track current value to avoid unnecessary updates
-  const mappingRef = useRef<ControllerMapping | undefined>(mapping);
+  const mappingRef = useRef<ControllerMapping | undefined>(mapping ? JSON.parse(JSON.stringify(mapping)) : undefined); // Deep clone the mapping
   const lastPollTimeRef = useRef(0);
   
   // Button state tracking to improve detection
@@ -96,7 +100,7 @@ export function useControllerInput(
   useEffect(() => {
     if (mapping !== mappingRef.current) {
       console.log('Controller mapping changed:', mapping);
-      mappingRef.current = mapping;
+      mappingRef.current = mapping ? JSON.parse(JSON.stringify(mapping)) : undefined; // Deep clone the mapping
       
       // Reset value reference when mapping changes
       valueRef.current = null;
@@ -122,7 +126,29 @@ export function useControllerInput(
         // Disable microphone if not needed
         disableMicrophone();
       }
+      
+      // Set the initial value for series mode to ensure the UI is initialized correctly
+      if (mapping && mapping.type === 'button' && mapping.mode === 'series' && 
+          mapping.valuesList && mapping.valuesList.length > 0) {
+        const buttonMapping = mapping as ButtonMapping;
+        const currentIndex = buttonMapping.currentValueIndex ?? 0;
+        
+        // Set the initial value
+        if (buttonMapping.valuesList && buttonMapping.valuesList.length > 0) {
+          const initialValue = buttonMapping.valuesList[currentIndex];
+          if (initialValue !== undefined) {
+            console.log(`Setting initial series value to ${initialValue} (index ${currentIndex})`);
+            valueRef.current = initialValue;
+            
+            // Use a setTimeout to break the potential update cycle
+            setTimeout(() => {
+              onValueChange(initialValue);
+            }, 0);
+          }
+        }
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapping, toggleKeyMouseInput, enableMicrophone, disableMicrophone]);
   
   useEffect(() => {
@@ -259,8 +285,13 @@ export function useControllerInput(
             if (isPressed && !wasPressed) {
               // Check if we have values to cycle through
               if (buttonMapping.valuesList && buttonMapping.valuesList.length > 0) {
-                // Use currentValueIndex or initialize to 0
-                let currentIndex = buttonMapping.currentValueIndex || 0;
+                // Get the current mapping from our local ref to ensure we have the latest state
+                const currentButtonMapping = mappingRef.current?.type === 'button' 
+                  ? mappingRef.current as ButtonMapping
+                  : buttonMapping;
+                
+                // Use currentValueIndex from our ref or initialize to 0
+                let currentIndex = currentButtonMapping.currentValueIndex ?? 0;
                 
                 // Move to next value in the list
                 currentIndex = (currentIndex + 1) % buttonMapping.valuesList.length;
@@ -268,9 +299,16 @@ export function useControllerInput(
                 const newValue = buttonMapping.valuesList[currentIndex];
                 console.log(`Button ${buttonIndex} cycled to value ${currentIndex}:`, newValue);
                 
-                // Store the new index in the mapping reference
+                // Update the index in our local ref
                 if (mappingRef.current && mappingRef.current.type === 'button') {
                   (mappingRef.current as ButtonMapping).currentValueIndex = currentIndex;
+                }
+                
+                // Also update the index in the global mapping store so all panels stay in sync
+                if (mapping.nodeId && mapping.fieldName) {
+                  // Create a copy of the mapping with the updated index
+                  const updatedMapping = { ...buttonMapping, currentValueIndex: currentIndex };
+                  saveMapping(mapping.nodeId, mapping.fieldName, updatedMapping);
                 }
                 
                 valueRef.current = newValue;
@@ -293,8 +331,13 @@ export function useControllerInput(
               if (nextIsPressed && !nextWasPressed && 
                   buttonMapping.valuesList && buttonMapping.valuesList.length > 0) {
                 
-                // Use currentValueIndex or initialize to 0
-                let currentIndex = buttonMapping.currentValueIndex || 0;
+                // Get the current mapping from our local ref to ensure we have the latest state
+                const currentButtonMapping = mappingRef.current?.type === 'button' 
+                  ? mappingRef.current as ButtonMapping
+                  : buttonMapping;
+                
+                // Use currentValueIndex from our ref or initialize to 0
+                let currentIndex = currentButtonMapping.currentValueIndex ?? 0;
                 
                 // Move to previous value in the list (with wrap-around)
                 currentIndex = (currentIndex - 1 + buttonMapping.valuesList.length) % buttonMapping.valuesList.length;
@@ -302,9 +345,16 @@ export function useControllerInput(
                 const newValue = buttonMapping.valuesList[currentIndex];
                 console.log(`Button ${buttonMapping.nextButtonIndex} cycled to previous value ${currentIndex}:`, newValue);
                 
-                // Store the new index in the mapping reference
+                // Update the index in our local ref
                 if (mappingRef.current && mappingRef.current.type === 'button') {
                   (mappingRef.current as ButtonMapping).currentValueIndex = currentIndex;
+                }
+                
+                // Also update the index in the global mapping store so all panels stay in sync
+                if (mapping.nodeId && mapping.fieldName) {
+                  // Create a copy of the mapping with the updated index
+                  const updatedMapping = { ...buttonMapping, currentValueIndex: currentIndex };
+                  saveMapping(mapping.nodeId, mapping.fieldName, updatedMapping);
                 }
                 
                 valueRef.current = newValue;
@@ -502,9 +552,16 @@ export function useControllerInput(
                 const newValue = keyMapping.valuesList[currentIndex];
                 console.log(`Key ${keyCode} cycled to value ${currentIndex}:`, newValue);
                 
-                // Store the new index in the mapping reference
+                // Update the index in our local ref
                 if (mappingRef.current && mappingRef.current.type === 'key') {
                   (mappingRef.current as KeyMapping).currentValueIndex = currentIndex;
+                }
+                
+                // Also update the index in the global mapping store so all panels stay in sync
+                if (mapping.nodeId && mapping.fieldName) {
+                  // Create a copy of the mapping with the updated index
+                  const updatedMapping = { ...keyMapping, currentValueIndex: currentIndex };
+                  saveMapping(mapping.nodeId, mapping.fieldName, updatedMapping);
                 }
                 
                 valueRef.current = newValue;
@@ -533,9 +590,16 @@ export function useControllerInput(
                 const newValue = keyMapping.valuesList[currentIndex];
                 console.log(`Key ${keyMapping.nextKeyCode} cycled to previous value ${currentIndex}:`, newValue);
                 
-                // Store the new index in the mapping reference
+                // Update the index in our local ref
                 if (mappingRef.current && mappingRef.current.type === 'key') {
                   (mappingRef.current as KeyMapping).currentValueIndex = currentIndex;
+                }
+                
+                // Also update the index in the global mapping store so all panels stay in sync
+                if (mapping.nodeId && mapping.fieldName) {
+                  // Create a copy of the mapping with the updated index
+                  const updatedMapping = { ...keyMapping, currentValueIndex: currentIndex };
+                  saveMapping(mapping.nodeId, mapping.fieldName, updatedMapping);
                 }
                 
                 valueRef.current = newValue;
@@ -733,9 +797,16 @@ export function useControllerInput(
                     const newValue = mouseMapping.valuesList[currentIndex];
                     console.log(`Mouse button ${mouseMapping.buttonIndex} cycled to value ${currentIndex}:`, newValue);
                     
-                    // Store the new index in the mapping reference
+                    // Update the index in our local ref
                     if (mappingRef.current && mappingRef.current.type === 'mouse') {
                       (mappingRef.current as MouseMapping).currentValueIndex = currentIndex;
+                    }
+                    
+                    // Also update the index in the global mapping store so all panels stay in sync
+                    if (mapping.nodeId && mapping.fieldName) {
+                      // Create a copy of the mapping with the updated index
+                      const updatedMapping = { ...mouseMapping, currentValueIndex: currentIndex };
+                      saveMapping(mapping.nodeId, mapping.fieldName, updatedMapping);
                     }
                     
                     valueRef.current = newValue;
@@ -764,9 +835,16 @@ export function useControllerInput(
                     const newValue = mouseMapping.valuesList[currentIndex];
                     console.log(`Mouse button ${mouseMapping.nextButtonIndex} cycled to previous value ${currentIndex}:`, newValue);
                     
-                    // Store the new index in the mapping reference
+                    // Update the index in our local ref
                     if (mappingRef.current && mappingRef.current.type === 'mouse') {
                       (mappingRef.current as MouseMapping).currentValueIndex = currentIndex;
+                    }
+                    
+                    // Also update the index in the global mapping store so all panels stay in sync
+                    if (mapping.nodeId && mapping.fieldName) {
+                      // Create a copy of the mapping with the updated index
+                      const updatedMapping = { ...mouseMapping, currentValueIndex: currentIndex };
+                      saveMapping(mapping.nodeId, mapping.fieldName, updatedMapping);
                     }
                     
                     valueRef.current = newValue;
@@ -837,7 +915,7 @@ export function useControllerInput(
                     const currentValue = typeof valueRef.current === 'number' 
                       ? valueRef.current 
                       : (mouseMapping.minOverride !== undefined ? mouseMapping.minOverride : 0);
-                    
+                      
                     // Calculate new value by adding increment step
                     const incrementStep = mouseMapping.incrementStep || 1;
                     let newValue = currentValue + incrementStep;
@@ -879,7 +957,7 @@ export function useControllerInput(
                       const currentValue = typeof valueRef.current === 'number' 
                         ? valueRef.current 
                         : (mouseMapping.maxOverride !== undefined ? mouseMapping.maxOverride : 0);
-                      
+                        
                       // Calculate new value by subtracting increment step
                       const incrementStep = mouseMapping.incrementStep || 1;
                       let newValue = currentValue - incrementStep;
@@ -1066,7 +1144,8 @@ export function useControllerInput(
     enableMicrophone,
     getMicrophoneLevel,
     processMicrophoneMapping,
-    disableMicrophone
+    disableMicrophone,
+    saveMapping
   ]);
   
   return null; // This hook doesn't return anything, it just applies the effects
