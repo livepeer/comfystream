@@ -6,7 +6,7 @@ import { usePrompt } from "./settings";
 import { useControllerInput } from "@/hooks/use-controller-input";
 import { useControllerMapping } from "@/hooks/use-controller-mapping";
 import { ControllerMappingButton } from "./controller-mapping";
-import { AxisMapping, ButtonMapping } from "@/types/controller";
+import { AxisMapping, ButtonMapping, KeyMapping, MouseMapping } from "@/types/controller";
 
 type InputValue = string | number | boolean;
 
@@ -418,7 +418,7 @@ export const ControlPanel = ({
   };
 
   // Get controller mapping
-  const { getMapping } = useControllerMapping();
+  const { getMapping, saveMapping } = useControllerMapping();
   const mapping = getMapping(panelState.nodeId, panelState.fieldName);
 
   // Modify the sendValueToComfyUI function
@@ -717,6 +717,49 @@ export const ControlPanel = ({
                 `(${availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.min} - ${availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName]?.max})`}
             </span>
           )}
+
+        {/* Add a Reset Index button for series mode mappings */}
+        {mapping && 
+          ((mapping.type === 'button' && (mapping as ButtonMapping).mode === 'series') ||
+           (mapping.type === 'key' && (mapping as KeyMapping).mode === 'series') || 
+           (mapping.type === 'mouse' && (mapping as MouseMapping).mode === 'series')) && (
+          <button
+            onClick={() => {
+              let updatedMapping;
+              if (mapping.type === 'button') {
+                const buttonMapping = mapping as ButtonMapping;
+                updatedMapping = {...buttonMapping, currentValueIndex: 0};
+              } else if (mapping.type === 'key') {
+                const keyMapping = mapping as KeyMapping;
+                updatedMapping = {...keyMapping, currentValueIndex: 0};
+              } else if (mapping.type === 'mouse') {
+                const mouseMapping = mapping as MouseMapping;
+                updatedMapping = {...mouseMapping, currentValueIndex: 0};
+              }
+              
+              if (updatedMapping) {
+                // Update the mapping in the global store
+                saveMapping(panelState.nodeId, panelState.fieldName, updatedMapping);
+                
+                // Set the value to the first item in the valuesList
+                const valuesList = updatedMapping.valuesList || [];
+                if (valuesList.length > 0) {
+                  const newValue = valuesList[0];
+                  onStateChange({ value: String(newValue) });
+                  
+                  // Also send to ComfyUI if auto-update is enabled
+                  if (panelState.isAutoUpdateEnabled) {
+                    sendValueToComfyUI(newValue);
+                  }
+                }
+              }
+            }}
+            className="p-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+            title="Reset to first value in series"
+          >
+            Reset Index
+          </button>
+        )}
 
         <ControllerMappingButton
           nodeId={panelState.nodeId}
