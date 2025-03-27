@@ -57,6 +57,7 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pi
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
 RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings tensorrt-cu12-libs --root-user-action=ignore
+RUN conda install -c conda-forge 'ffmpeg=<7' -y
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \
