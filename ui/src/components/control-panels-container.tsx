@@ -4,11 +4,26 @@ import React, { useState, useEffect } from "react";
 import { ControlPanel } from "./control-panel";
 import { Button } from "./ui/button";
 import { Drawer, DrawerContent, DrawerTitle } from "./ui/drawer";
-import { Settings } from "lucide-react";
-import { Plus } from "lucide-react"; // Import Plus icon for minimal add button
+import { Settings, Save, Upload, Plus } from "lucide-react"; // Import all icons
+import { useControllerContext } from "@/context/controller-context";
+import { ControllerMapping } from "@/types/controller";
+
+// Define the unified configuration type
+interface ComfyStreamConfig {
+  version: string;
+  panels: Array<{
+    nodeId: string;
+    fieldName: string;
+    value: string;
+    isAutoUpdateEnabled: boolean;
+  }>;
+  mappings: Record<string, Record<string, ControllerMapping>>;
+}
 
 // Custom event name for control panel refresh
 const CONTROL_PANEL_REFRESH_EVENT = 'comfystream:refreshControlPanel';
+// Custom event for loading controller mappings
+const LOAD_MAPPINGS_EVENT = 'comfystream:loadMappings';
 
 export const ControlPanelsContainer = () => {
   const [panels, setPanels] = useState<number[]>([0]); // Start with one panel
@@ -33,6 +48,9 @@ export const ControlPanelsContainer = () => {
       isAutoUpdateEnabled: false,
     },
   });
+
+  // Get the controller mappings from context
+  const { mappings } = useControllerContext();
 
   // Listen for refresh event to force control panel to close and reopen
   useEffect(() => {
@@ -94,6 +112,108 @@ export const ControlPanelsContainer = () => {
         ...state,
       },
     }));
+  };
+
+  // Export panels configuration and controller mappings to a unified JSON file
+  const exportConfig = () => {
+    try {
+      // Create unified configuration object
+      const config: ComfyStreamConfig = {
+        version: "1.0.0",
+        panels: Object.values(panelStates).map(state => ({
+          nodeId: state.nodeId,
+          fieldName: state.fieldName,
+          value: state.value,
+          isAutoUpdateEnabled: state.isAutoUpdateEnabled
+        })),
+        mappings: mappings // Include controller mappings from context
+      };
+      
+      // Convert to JSON and create download
+      const jsonString = JSON.stringify(config, null, 2);
+      const blob = new Blob([jsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      // Create download link
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "comfystream-config.json";
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log("ComfyStream configuration exported successfully");
+    } catch (error) {
+      console.error("Failed to export configuration:", error);
+      alert("Failed to save configuration. Please try again.");
+    }
+  };
+
+  // Import unified configuration from a JSON file
+  const importConfig = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const config = JSON.parse(e.target?.result as string) as ComfyStreamConfig;
+        
+        // Check version compatibility
+        if (!config.version) {
+          alert("Invalid configuration file format");
+          return;
+        }
+        
+        // Create new panel states
+        const newPanelStates: typeof panelStates = {};
+        const newPanels: number[] = [];
+        
+        if (config.panels) {
+          config.panels.forEach((panel, index) => {
+            newPanelStates[index] = {
+              nodeId: panel.nodeId,
+              fieldName: panel.fieldName,
+              value: panel.value,
+              isAutoUpdateEnabled: panel.isAutoUpdateEnabled
+            };
+            newPanels.push(index);
+          });
+          
+          // Update panel state
+          setPanels(newPanels);
+          setPanelStates(newPanelStates);
+          setNextPanelId(config.panels.length);
+        }
+        
+        // Load controller mappings if present
+        if (config.mappings) {
+          // Dispatch event to update controller mappings
+          // This event will be caught by the useControllerMapping hook
+          window.dispatchEvent(new CustomEvent(LOAD_MAPPINGS_EVENT, {
+            detail: { mappings: config.mappings }
+          }));
+          
+          console.log("Controller mappings loaded from configuration file");
+        }
+        
+        // Force refresh
+        setForceUpdateKey(prev => prev + 1);
+        
+        console.log("ComfyStream configuration imported successfully");
+      } catch (error) {
+        console.error("Failed to parse configuration file:", error);
+        alert("Failed to load configuration. The file may be corrupted or in an invalid format.");
+      }
+    };
+    
+    reader.readAsText(file);
+    
+    // Reset the input so the same file can be selected again
+    event.target.value = '';
   };
 
   return (
@@ -166,8 +286,9 @@ export const ControlPanelsContainer = () => {
           <DrawerTitle className="sr-only">Control Panels</DrawerTitle>
 
           <div className="flex h-full">
-            {/* Left side add button */}
-            <div className="w-12 border-r flex items-start pt-4 justify-center bg-background/50">
+            {/* Left side buttons column */}
+            <div className="w-12 border-r flex flex-col items-center pt-4 gap-3 bg-background/50">
+              {/* Add panel button */}
               <Button
                 onClick={addPanel}
                 variant="ghost"
@@ -175,10 +296,44 @@ export const ControlPanelsContainer = () => {
                 className="h-8 w-8 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 transition-colors shadow-sm hover:shadow text-white"
                 title="Add control panel"
                 aria-label="Add control panel"
-                data-tooltip="Add control panel"
               >
                 <Plus className="h-4 w-4" />
               </Button>
+              
+              {/* Export configuration button */}
+              <Button
+                onClick={exportConfig}
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-md bg-green-500 hover:bg-green-600 active:bg-green-700 transition-colors shadow-sm hover:shadow text-white"
+                title="Save complete configuration (panels and mappings)"
+                aria-label="Save configuration"
+              >
+                <Save className="h-4 w-4" />
+              </Button>
+              
+              {/* Import configuration button */}
+              <label htmlFor="import-config" className="cursor-pointer">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-md bg-purple-500 hover:bg-purple-600 active:bg-purple-700 transition-colors shadow-sm hover:shadow text-white"
+                  title="Load complete configuration (panels and mappings)"
+                  aria-label="Load configuration"
+                  asChild
+                >
+                  <span>
+                    <Upload className="h-4 w-4" />
+                  </span>
+                </Button>
+              </label>
+              <input
+                id="import-config"
+                type="file"
+                accept=".json"
+                onChange={importConfig}
+                className="hidden"
+              />
             </div>
 
             {/* Control panels container */}

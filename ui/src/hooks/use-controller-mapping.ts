@@ -10,6 +10,8 @@ interface LegacyMapping {
 }
 
 const STORAGE_KEY = 'comfystream_controller_mappings';
+// Custom event for loading controller mappings from a file
+const LOAD_MAPPINGS_EVENT = 'comfystream:loadMappings';
 
 export function useControllerMapping() {
   const [mappings, setMappings] = useState<Record<string, Record<string, ControllerMapping>>>({});
@@ -110,6 +112,38 @@ export function useControllerMapping() {
     } catch (error) {
       console.error('Failed to load controller mappings:', error);
     }
+  }, []);
+
+  // Listen for the load mappings event
+  useEffect(() => {
+    const handleLoadMappings = (event: CustomEvent) => {
+      try {
+        const { mappings: newMappings } = event.detail;
+        console.log('Loading mappings from file:', newMappings);
+        
+        if (newMappings && typeof newMappings === 'object') {
+          // Set the mappings from the file
+          setMappings(newMappings);
+          
+          // Also update localStorage for consistency
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ mappings: newMappings }));
+          
+          console.log('Successfully loaded mappings from file');
+        } else {
+          console.error('Invalid mappings format in file');
+        }
+      } catch (error) {
+        console.error('Error loading mappings from file:', error);
+      }
+    };
+    
+    // Add event listener
+    window.addEventListener(LOAD_MAPPINGS_EVENT, handleLoadMappings as EventListener);
+    
+    // Cleanup
+    return () => {
+      window.removeEventListener(LOAD_MAPPINGS_EVENT, handleLoadMappings as EventListener);
+    };
   }, []);
   
   // Add a custom event for when mappings change
