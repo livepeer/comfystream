@@ -27,9 +27,11 @@ RUN mkdir -p /workspace/comfystream && \
     wget "https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}-Linux-x86_64.sh" -O /tmp/miniconda.sh && \
     bash /tmp/miniconda.sh -b -p /workspace/miniconda3 && \
     eval "$(/workspace/miniconda3/bin/conda shell.bash hook)" && \
-    conda create -n comfystream python="${PYTHON_VERSION}" -y && \
-    rm /tmp/miniconda.sh && \
-    conda run -n comfystream --no-capture-output pip install aiortc aiohttp requests tqdm pyyaml --root-user-action=ignore
+    conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
+    rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+
+# Install python packages (TODO: move to comfystream requirements.txt)
+RUN conda run -n comfystream --no-capture-output pip install aiortc aiohttp requests tqdm pyyaml --root-user-action=ignore
 
 # Clone ComfyUI
 ADD --link https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
@@ -57,7 +59,6 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pi
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
 RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings tensorrt-cu12-libs --root-user-action=ignore
-RUN conda install -c conda-forge 'ffmpeg=<7' -y
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \
