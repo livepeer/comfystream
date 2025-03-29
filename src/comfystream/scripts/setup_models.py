@@ -4,6 +4,7 @@ import requests
 from tqdm import tqdm
 import yaml
 import argparse
+from typing import Optional, Union
 from utils import get_config_path, load_model_config
 
 def parse_args():
@@ -13,7 +14,7 @@ def parse_args():
                        help='ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)')
     return parser.parse_args()
 
-def download_file(url, destination, description=None):
+def download_file(url: str, destination: Union[str, Path], description: Optional[str] = None) -> None:
     """Download a file with progress bar"""
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get('content-length', 0))
@@ -30,10 +31,18 @@ def download_file(url, destination, description=None):
             progress_bar.update(size)
     progress_bar.close()
 
-def setup_model_files(workspace_dir, config_path=None):
-    """Download and setup required model files based on configuration"""
+def setup_model_files(workspace_dir: Union[str, Path], config_path: Optional[Union[str, Path]] = None) -> None:
+    """Download and setup required model files based on configuration.
+    
+    Args:
+        workspace_dir: Path to ComfyUI workspace directory
+        config_path: Optional path to models.yaml config file. If None, will use default config path.
+    """
+    workspace_dir = Path(workspace_dir)
     if config_path is None:
         config_path = get_config_path('models.yaml')
+    config_path = Path(config_path)
+    
     try:
         config = load_model_config(config_path)
     except FileNotFoundError:
@@ -74,8 +83,13 @@ def setup_model_files(workspace_dir, config_path=None):
                         )
     print("Models download completed!")
 
-def setup_directories(workspace_dir):
-    """Create required directories in the workspace"""
+def setup_directories(workspace_dir: Union[str, Path]) -> None:
+    """Create required directories in the workspace.
+    
+    Args:
+        workspace_dir: Path to ComfyUI workspace directory
+    """
+    workspace_dir = Path(workspace_dir)
     # Create base directories
     workspace_dir.mkdir(parents=True, exist_ok=True)
     models_dir = workspace_dir / "models"
@@ -93,11 +107,25 @@ def setup_directories(workspace_dir):
     for dir_name in model_dirs:
         (models_dir / dir_name).mkdir(parents=True, exist_ok=True)
 
-def setup_models():
-    args = parse_args()
-    workspace_dir = Path(args.workspace)
-
+def setup_models(workspace_dir: Optional[Union[str, Path]] = None, config_path: Optional[Union[str, Path]] = None) -> None:
+    """Set up ComfyUI models and environment.
+    
+    Args:
+        workspace_dir: Optional path to ComfyUI workspace directory. If None, will use default from env or ~/comfyui
+        config_path: Optional path to models.yaml config file. If None, will use default config path.
+    """
+    if workspace_dir is None:
+        workspace_dir = os.environ.get('COMFY_UI_WORKSPACE', os.path.expanduser('~/comfyui'))
+    
+    workspace_dir = Path(workspace_dir)
+    
     setup_directories(workspace_dir)
-    setup_model_files(workspace_dir)
+    setup_model_files(workspace_dir, config_path)
 
-setup_models()
+def main():
+    """Entry point for command line usage."""
+    args = parse_args()
+    setup_models(args.workspace)
+
+if __name__ == "__main__":
+    main()
