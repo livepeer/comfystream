@@ -1,8 +1,0 @@
-global:
-  scrape_interval: 5s  # Scrape metrics every 5 seconds
-
-scrape_configs:
-  - job_name: "comfystream_metrics"
-    metrics_path: "/metrics"
-    static_configs:
-      - targets: ["localhost:8889"]  # Change this to "localhost" if on Linux
