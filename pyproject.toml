@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "comfystream"
 description = "Build Live AI Video with ComfyUI"
-version = "0.0.5"
+version = "0.0.4"
 license = { file = "LICENSE" }
 dependencies = [
     "asyncio",
@@ -15,11 +15,10 @@ dependencies = [
     "toml",
     "twilio",
     "prometheus_client",
-    "librosa"
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest"]
 
 [project.urls]
 repository = "https://github.com/yondonfu/comfystream"
