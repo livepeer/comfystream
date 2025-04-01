@@ -11,7 +11,6 @@ import torch
 if torch.cuda.is_available():
     torch.cuda.init()
 
-
 from aiohttp import web
 from aiortc import (
     MediaStreamTrack,
@@ -317,6 +316,7 @@ async def offer(request):
         ),
     )
 
+
 async def cancel_collect_frames(track):
     track.running = False
     if hasattr(track, 'collect_task') is not None and not track.collect_task.done():
@@ -325,6 +325,7 @@ async def cancel_collect_frames(track):
             await track.collect_task
         except (asyncio.CancelledError):
             pass
+
 
 async def set_prompt(request):
     pipeline = request.app["pipeline"]
@@ -346,7 +347,6 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         config_path=app["config_file"],
         max_frame_wait_ms=app["max_frame_wait"],
-        cwd=app["workspace"], 
         disable_cuda_malloc=True, 
         gpu_only=True, 
         preview_method='none'
@@ -371,9 +371,6 @@ if __name__ == "__main__":
         "--media-ports", default=None, help="Set the UDP ports for WebRTC media"
     )
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
-    parser.add_argument(
-        "--workspace", default=None, required=True, help="Set Comfy workspace"
-    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -414,7 +411,6 @@ if __name__ == "__main__":
 
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
-    app["workspace"] = args.workspace
     app["config_file"] = args.config_file
     app["max_frame_wait"] = args.max_frame_wait
 
