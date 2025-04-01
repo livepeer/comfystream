@@ -4,5 +4,6 @@ aiortc
 aiohttp
 toml
 tomli
+websockets
 twilio
 prometheus_client
