@@ -1,6 +1,7 @@
 ARG	BASE_IMAGE=livepeer/comfyui-base:latest
 
 FROM	${BASE_IMAGE}
+RUN unset BASH_ENV
 
 ENV	PATH="/workspace/miniconda3/bin:${PATH}" \
 	NVM_DIR=/root/.nvm \
