@@ -75,7 +75,7 @@ class MultiServerPipeline:
                                 # Check if result is already a tuple with frame_id
                                 if isinstance(result, tuple) and len(result) == 2:
                                     frame_id, out_tensor = result
-                                    logger.info(f"Got result with embedded frame_id: {frame_id}")
+                                    logger.debug(f"Got result with embedded frame_id: {frame_id}")
                                 else:
                                     out_tensor = result
                                     # Find which original frame this corresponds to using our mapping

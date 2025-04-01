@@ -106,9 +106,9 @@ class ComfyStreamClient:
                     
                     # Wait for execution completion with timeout
                     try:
-                        logger.info("Waiting for execution to complete (max 10 seconds)...")
+                        logger.debug("Waiting for execution to complete (max 10 seconds)...")
                         await asyncio.wait_for(self.execution_complete_event.wait(), timeout=10.0)
-                        logger.info("Execution complete, ready for next frame")
+                        logger.debug("Execution complete, ready for next frame")
                     except asyncio.TimeoutError:
                         logger.error("Timeout waiting for execution, forcing continuation")
                         self.execution_complete_event.set()
@@ -322,10 +322,10 @@ class ComfyStreamClient:
                 frame_id = None
                 if hasattr(self, '_prompt_id') and self._prompt_id in self._frame_id_mapping:
                     frame_id = self._frame_id_mapping.get(self._prompt_id)
-                    logger.info(f"Using frame_id {frame_id} from prompt_id {self._prompt_id}")
+                    logger.debug(f"Using frame_id {frame_id} from prompt_id {self._prompt_id}")
                 elif hasattr(self, '_current_frame_id') and self._current_frame_id is not None:
                     frame_id = self._current_frame_id
-                    logger.info(f"Using current frame_id {frame_id}")
+                    logger.debug(f"Using current frame_id {frame_id}")
                 
                 # Add to output queue - include frame_id if available
                 if frame_id is not None:
