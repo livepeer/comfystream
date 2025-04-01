@@ -15,7 +15,7 @@ def create_load_tensor_node():
         "_meta": {"title": "Load Tensor (API)"},
     }
 
-def create_load_image_node():
+def create_load_image_base64_node():
     return {
         "inputs": {
             "image": ""  # Should be "image" not "image_data" to match LoadImageBase64
@@ -44,7 +44,7 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
         "_meta": {"title": "Save Tensor (API)"},
     }
 
-def create_save_image_node(inputs: Dict[Any, Any]):
+def create_send_image_websocket_node(inputs: Dict[Any, Any]):
     # Get the correct image input reference
     images_input = inputs.get("images", inputs.get("image"))
     
@@ -59,6 +59,22 @@ def create_save_image_node(inputs: Dict[Any, Any]):
         },
         "class_type": "SendImageWebsocket",    
         "_meta": {"title": "Send Image Websocket (ComfyStream)"},
+    }
+
+def create_send_tensor_websocket_node(inputs: Dict[Any, Any]):
+    # Get the correct image input reference
+    tensor_input = inputs.get("images", inputs.get("tensor"))
+    
+    if not tensor_input:
+        logging.warning("No valid tensor input found for SendTensorWebSocket node")
+        tensor_input = ["", 0]  # Default empty value
+    
+    return {
+        "inputs": {
+            "tensor": tensor_input
+        },
+        "class_type": "SendTensorWebSocket",
+        "_meta": {"title": "Save Tensor WebSocket (ComfyStream)"},
     }
 
 def convert_prompt(prompt):
@@ -100,7 +116,7 @@ def convert_prompt(prompt):
             num_primary_inputs += 1
         elif class_type in ["LoadImage", "LoadImageBase64"]:
             num_inputs += 1
-        elif class_type in ["PreviewImage", "SaveImage", "SendImageWebsocket"]:
+        elif class_type in ["PreviewImage", "SaveImage", "SendImageWebsocket", "SendTensorWebSocket"]:
             num_outputs += 1
 
     # Only handle single primary input
@@ -123,83 +139,16 @@ def convert_prompt(prompt):
 
     # Replace nodes with proper implementations
     for key in keys["PrimaryInputLoadImage"]:
-        prompt[key] = create_load_image_node()
+        prompt[key] = create_load_image_base64_node()
 
     if num_primary_inputs == 0 and len(keys["LoadImage"]) == 1:
-        prompt[keys["LoadImage"][0]] = create_load_image_node()
+        prompt[keys["LoadImage"][0]] = create_load_image_base64_node()
 
     for key in keys["PreviewImage"] + keys["SaveImage"]:
         node = prompt[key]
-        prompt[key] = create_save_image_node(node["inputs"])
+        # prompt[key] = create_save_image_node(node["inputs"]) 
+        prompt[key] = create_send_image_websocket_node(node["inputs"]) # TESTING
 
     # TODO: Validate the processed prompt input
             
     return prompt
-
-'''
-def convert_prompt(prompt: PromptDictInput) -> Prompt:
-    # Validate the schema
-    Prompt.validate(prompt)
-
-    prompt = copy.deepcopy(prompt)
-
-    num_primary_inputs = 0
-    num_inputs = 0
-    num_outputs = 0
-
-    keys = {
-        "PrimaryInputLoadImage": [],
-        "LoadImage": [],
-        "PreviewImage": [],
-        "SaveImage": [],
-    }
-    
-    for key, node in prompt.items():
-        class_type = node.get("class_type")
-
-        # Collect keys for nodes that might need to be replaced
-        if class_type in keys:
-            keys[class_type].append(key)
-
-        # Count inputs and outputs
-        if class_type == "PrimaryInputLoadImage":
-            num_primary_inputs += 1
-        elif class_type in ["LoadImage", "LoadTensor", "LoadAudioTensor"]:
-            num_inputs += 1
-        elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor"]:
-            num_outputs += 1
-
-    # Only handle single primary input
-    if num_primary_inputs > 1:
-        raise Exception("too many primary inputs in prompt")
-
-    # If there are no primary inputs, only handle single input
-    if num_primary_inputs == 0 and num_inputs > 1:
-        raise Exception("too many inputs in prompt")
-
-    # Only handle single output for now
-    if num_outputs > 1:
-        raise Exception("too many outputs in prompt")
-
-    if num_primary_inputs + num_inputs == 0:
-        raise Exception("missing input")
-
-    if num_outputs == 0:
-        raise Exception("missing output")
-
-    # Replace nodes
-    for key in keys["PrimaryInputLoadImage"]:
-        prompt[key] = create_load_tensor_node()
-
-    if num_primary_inputs == 0 and len(keys["LoadImage"]) == 1:
-        prompt[keys["LoadImage"][0]] = create_load_tensor_node()
-
-    for key in keys["PreviewImage"] + keys["SaveImage"]:
-        node = prompt[key]
-        prompt[key] = create_save_tensor_node(node["inputs"])
-
-    # Validate the processed prompt input
-    prompt = Prompt.validate(prompt)
-
-    return prompt
-'''

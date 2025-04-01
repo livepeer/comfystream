@@ -106,9 +106,9 @@ class ComfyStreamClient:
                     
                     # Wait for execution completion with timeout
                     try:
-                        # logger.info("Waiting for execution to complete (max 10 seconds)...")
+                        logger.info("Waiting for execution to complete (max 10 seconds)...")
                         await asyncio.wait_for(self.execution_complete_event.wait(), timeout=10.0)
-                        # logger.info("Execution complete, ready for next frame")
+                        logger.info("Execution complete, ready for next frame")
                     except asyncio.TimeoutError:
                         logger.error("Timeout waiting for execution, forcing continuation")
                         self.execution_complete_event.set()
@@ -138,9 +138,6 @@ class ComfyStreamClient:
                 self.ws = None
             
             logger.info(f"Connecting to WebSocket at {self.server_address}?clientId={self.client_id}")
-            
-            # Set a reasonable timeout for connection
-            websocket_timeout = 10.0  # seconds
             
             try:
                 # Connect with proper error handling
@@ -222,12 +219,12 @@ class ComfyStreamClient:
             data = json.loads(message)
             message_type = data.get("type", "unknown")
 
-            # logger.info(f"Received message type: {message_type}")
+            logger.debug(f"Received message type: {message_type}")
+            logger.debug(f"{data}")
             
+            '''
             # Handle different message types
             if message_type == "status":
-                pass
-                '''
                 # Status message with comfy_ui's queue information
                 queue_remaining = data.get("data", {}).get("queue_remaining", 0)
                 exec_info = data.get("data", {}).get("exec_info", {})
@@ -235,20 +232,19 @@ class ComfyStreamClient:
                     logger.info("Queue empty, no active execution")
                 else:
                     logger.info(f"Queue status: {queue_remaining} items remaining")
-                '''
                 
             elif message_type == "progress":
                 if "data" in data and "value" in data["data"]:
                     progress = data["data"]["value"]
                     max_value = data["data"].get("max", 100)
                     # Log the progress for debugging
-                    # logger.info(f"Progress: {progress}/{max_value}")
+                    logger.info(f"Progress: {progress}/{max_value}")
                 
             elif message_type == "execution_start":
                 self.execution_started = True
                 if "data" in data and "prompt_id" in data["data"]:
                     self._prompt_id = data["data"]["prompt_id"]
-                    # logger.info(f"Execution started for prompt {self._prompt_id}")
+                    logger.info(f"Execution started for prompt {self._prompt_id}")
                 
             elif message_type == "executing":
                 self.execution_started = True
@@ -257,18 +253,19 @@ class ComfyStreamClient:
                         self._prompt_id = data["data"]["prompt_id"]
                     if "node" in data["data"]:
                         node_id = data["data"]["node"]
-                        # logger.info(f"Executing node: {node_id}")
+                        logger.info(f"Executing node: {node_id}")
             
             elif message_type in ["execution_cached", "execution_error", "execution_complete", "execution_interrupted"]:
-                # logger.info(f"{message_type} message received for prompt {self._prompt_id}")
+                logger.info(f"{message_type} message received for prompt {self._prompt_id}")
                 # self.execution_started = False
                 
                 # Always signal completion for these terminal states
                 # self.execution_complete_event.set()
-                # logger.info(f"Set execution_complete_event from {message_type}")
+                logger.info(f"Set execution_complete_event from {message_type}")
                 pass
+            '''
             
-            elif message_type == "executed":
+            if message_type == "executed":
                 # This is sent when a node is completely done
                 if "data" in data and "node_id" in data["data"]:
                     node_id = data["data"]["node_id"]
@@ -283,50 +280,9 @@ class ComfyStreamClient:
                     elif self.execution_started and not self.execution_complete_event.is_set():
                         # Check if this was the last node
                         if data.get("data", {}).get("remaining", 0) == 0:
-                            # logger.info("All nodes executed but no tensor data received, forcing completion")
                             # self.execution_complete_event.set()
                             pass
-            
-            elif message_type == "executed_node" and "output" in data.get("data", {}):
-                node_id = data.get("data", {}).get("node_id")
-                output_data = data.get("data", {}).get("output", {})
-                prompt_id = data.get("data", {}).get("prompt_id", "unknown")
-                
-                logger.info(f"Node {node_id} executed in prompt {prompt_id}")
-                
-                '''
-                # Check if this is from ETN_SendImageWebSocket node
-                if "ui" in output_data and "images" in output_data["ui"]:
-                    images_info = output_data["ui"]["images"]
-                    logger.info(f"Found image output from ETN_SendImageWebSocket in node {node_id}")
-                    
-                    # Images will be received via binary websocket messages after this event
-                    # The binary handler will take care of them
-                    pass
-                
-                # Keep existing handling for tensor data
-                elif "ui" in output_data and "tensor" in output_data["ui"]:
-                    tensor_info = output_data["ui"]["tensor"]
-                    tensor_id = tensor_info.get("tensor_id", "unknown")
-                    logger.info(f"Found tensor data with ID: {tensor_id} in node {node_id}")
-                    
-                    # Decode the tensor data
-                    tensor_data = await self._decode_tensor_data(tensor_info)
-                    if tensor_data is not None:
-                        # Add to output queue without waiting to unblock event loop
-                        tensor_cache.image_outputs.put_nowait(tensor_data)
-                        logger.info(f"Added tensor to output queue, shape: {tensor_data.shape}")
-                        
-                        # IMPORTANT: Immediately signal that we can proceed with the next frame
-                        # when we receive tensor data, don't wait
-                        logger.info("Received tensor data, immediately signaling execution complete")
-                        self.execution_complete_event.set()
-                        logger.info("Set execution_complete_event after processing tensor data")
-                    else:
-                        logger.error("Failed to decode tensor data")
-                        # Signal completion even if decoding failed to prevent hanging
-                        self.execution_complete_event.set()
-                '''
+
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON message: {message[:100]}...")
         except Exception as e:
@@ -366,18 +322,18 @@ class ComfyStreamClient:
                 frame_id = None
                 if hasattr(self, '_prompt_id') and self._prompt_id in self._frame_id_mapping:
                     frame_id = self._frame_id_mapping.get(self._prompt_id)
-                    # logger.info(f"Using frame_id {frame_id} from prompt_id {self._prompt_id}")
+                    logger.info(f"Using frame_id {frame_id} from prompt_id {self._prompt_id}")
                 elif hasattr(self, '_current_frame_id') and self._current_frame_id is not None:
                     frame_id = self._current_frame_id
-                    # logger.info(f"Using current frame_id {frame_id}")
+                    logger.info(f"Using current frame_id {frame_id}")
                 
                 # Add to output queue - include frame_id if available
                 if frame_id is not None:
                     tensor_cache.image_outputs.put_nowait((frame_id, tensor))
-                    # logger.info(f"Added tensor with frame_id {frame_id} to output queue")
+                    logger.debug(f"Added tensor with frame_id {frame_id} to output queue")
                 else:
                     tensor_cache.image_outputs.put_nowait(tensor)
-                    #logger.info("Added tensor without frame_id to output queue")
+                    logger.debug("Added tensor without frame_id to output queue")
                 
                 self.execution_complete_event.set()
                 
@@ -525,7 +481,7 @@ class ComfyStreamClient:
                             # Map prompt_id to frame_id for later retrieval
                             if frame_id is not None:
                                 self._frame_id_mapping[self._prompt_id] = frame_id
-                                # logger.info(f"Mapped prompt_id {self._prompt_id} to frame_id {frame_id}")
+                                logger.info(f"Mapped prompt_id {self._prompt_id} to frame_id {frame_id}")
                             
                             self.execution_started = True
                         else:
@@ -558,7 +514,7 @@ class ComfyStreamClient:
             # Prepare binary data
             if len(tensor.shape) == 4:  # BCHW format (batch of images)
                 if tensor.shape[0] > 1:
-                    # logger.info(f"Taking first image from batch of {tensor.shape[0]}")
+                    logger.info(f"Taking first image from batch of {tensor.shape[0]}")
                     pass
                 tensor = tensor[0]  # Take first image if batch
             
@@ -576,7 +532,7 @@ class ComfyStreamClient:
                 tensor = torch.zeros(3, 512, 512)
             
             # Check tensor dimensions and log detailed info
-            # logger.info(f"Original tensor for WS: shape={tensor.shape}, min={tensor.min().item():.4f}, max={tensor.max().item():.4f}")
+            logger.info(f"Original tensor for WS: shape={tensor.shape}, min={tensor.min().item():.4f}, max={tensor.max().item():.4f}")
             
             # Always ensure consistent 512x512 dimensions
             '''
@@ -623,7 +579,7 @@ class ComfyStreamClient:
             
             # Send binary data via websocket
             await self.ws.send(full_data)
-            # logger.info(f"Sent tensor as PNG image via websocket with proper header, size: {len(full_data)} bytes, image dimensions: {img.size}")
+            logger.info(f"Sent tensor as PNG image via websocket with proper header, size: {len(full_data)} bytes, image dimensions: {img.size}")
             
         except Exception as e:
             logger.error(f"Error sending tensor via websocket: {e}")
@@ -718,12 +674,12 @@ class ComfyStreamClient:
         # Check if the result is a tuple with frame_id
         if isinstance(result, tuple) and len(result) == 2:
             frame_id, tensor = result
-            # logger.info(f"Got processed tensor from output queue with frame_id {frame_id}")
+            logger.info(f"Got processed tensor from output queue with frame_id {frame_id}")
             # Return both the frame_id and tensor to help with ordering in the pipeline
             return frame_id, tensor
         else:
             # If it's not a tuple with frame_id, just return the tensor
-            # logger.info("Got processed tensor from output queue without frame_id")
+            logger.info("Got processed tensor from output queue without frame_id")
             return result
     
     async def get_audio_output(self):

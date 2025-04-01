@@ -372,8 +372,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
     parser.add_argument(
-        "--log-level",
-        default="INFO",
+        "--log-level", "--log_level",
+        dest="log_level",
+        default="WARNING",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level",
     )
@@ -408,6 +409,9 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # Set logger level based on command line arguments
+    logger.setLevel(getattr(logging, args.log_level.upper()))
 
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None

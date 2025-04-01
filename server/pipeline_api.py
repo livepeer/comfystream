@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 import random
-from collections import deque, OrderedDict
+from collections import OrderedDict
 
 from typing import Any, Dict, Union, List, Optional, Deque
 from comfystream.client_api import ComfyStreamClient
@@ -75,7 +75,7 @@ class MultiServerPipeline:
                                 # Check if result is already a tuple with frame_id
                                 if isinstance(result, tuple) and len(result) == 2:
                                     frame_id, out_tensor = result
-                                    # logger.info(f"Got result with embedded frame_id: {frame_id}")
+                                    logger.info(f"Got result with embedded frame_id: {frame_id}")
                                 else:
                                     out_tensor = result
                                     # Find which original frame this corresponds to using our mapping
@@ -96,7 +96,7 @@ class MultiServerPipeline:
                                 
                                 # Remove the mapping
                                 self.client_frame_mapping.pop(frame_id, None)
-                                # logger.info(f"Collected processed frame from client {i}, frame_id: {frame_id}")
+                                logger.info(f"Collected processed frame from client {i}, frame_id: {frame_id}")
                             except asyncio.TimeoutError:
                                 # No frame ready yet, continue
                                 pass
@@ -137,7 +137,7 @@ class MultiServerPipeline:
             
             # Put it in the output queue
             await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
-            # logger.info(f"Released frame {self.next_expected_frame_id} to output queue")
+            logger.info(f"Released frame {self.next_expected_frame_id} to output queue")
             
             # Update the next expected frame ID to the next sequential ID if possible
             # (or the lowest frame ID in our buffer)
@@ -173,7 +173,7 @@ class MultiServerPipeline:
             
             # If we've waited too long, skip the missing frame(s)
             if wait_time_ms > self.max_frame_wait_ms:
-                # logger.warning(f"Missing frame {self.next_expected_frame_id}, skipping to {oldest_frame_id}")
+                logger.warning(f"Missing frame {self.next_expected_frame_id}, skipping to {oldest_frame_id}")
                 self.next_expected_frame_id = oldest_frame_id
                 await self._release_ordered_frames()
 
@@ -282,7 +282,7 @@ class MultiServerPipeline:
         # Also add to the incoming queue for reference
         await self.video_incoming_frames.put((frame_id, frame))
         
-        # logger.info(f"Sent frame {frame_id} to client {client_index}")
+        logger.debug(f"Sent frame {frame_id} to client {client_index}")
 
     async def put_audio_frame(self, frame: av.AudioFrame):
         # For now, only use the first client for audio
@@ -332,13 +332,13 @@ class MultiServerPipeline:
                 # Get newer frame and mark old one as skipped
                 frame.side_data.skipped = True
                 frame_id, frame = await self.video_incoming_frames.get()
-                # logger.info(f"Skipped older frame {frame_id} to catch up")
+                logger.info(f"Skipped older frame {frame_id} to catch up")
             
             # Get the processed frame from our output queue
             processed_frame_id, out_tensor = await self.processed_video_frames.get()
             
             if processed_frame_id != frame_id:
-                # logger.warning(f"Frame ID mismatch: expected {frame_id}, got {processed_frame_id}")
+                logger.warning(f"Frame ID mismatch: expected {frame_id}, got {processed_frame_id}")
                 pass
             
             # Process the frame
