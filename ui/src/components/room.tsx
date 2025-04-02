@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
+import { StreamControl } from "@/components/stream-control";
 
 // Custom hook for managing toast lifecycle
 function useToast() {
@@ -270,6 +271,8 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StagePr
           </TooltipProvider>
         </div>
       )}
+      {/* Add StreamControlIcon at the bottom right corner of the video box */}
+      <StreamControl />
     </div>
   );
 }
