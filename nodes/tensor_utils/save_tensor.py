@@ -1,11 +1,9 @@
 import torch
 
-from comfystream import tensor_cache
-
-
 class SaveTensor:
     CATEGORY = "tensor_utils"
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("IMAGES",)
+    RETURN_NAMES = ("images",)
     FUNCTION = "execute"
     OUTPUT_NODE = True
 
@@ -22,5 +20,4 @@ class SaveTensor:
         return float("nan")
 
     def execute(self, images: torch.Tensor):
-        tensor_cache.image_outputs.put_nowait(images)
-        return images
+        return (images,)

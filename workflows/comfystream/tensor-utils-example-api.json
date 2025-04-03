@@ -12,7 +12,9 @@
     }
   },
   "2": {
-    "inputs": {},
+    "inputs": {
+      "image": "None"
+    },
     "class_type": "LoadTensor",
     "_meta": {
       "title": "LoadTensor"

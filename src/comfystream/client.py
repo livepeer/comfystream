@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
         config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
+        self.comfy_client = EmbeddedComfyClient(config, max_workers=1)
         self.running_prompts = {} # To be used for cancelling tasks
         self.current_prompts = []
         self.cleanup_lock = asyncio.Lock()

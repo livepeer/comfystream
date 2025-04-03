@@ -1,5 +1,4 @@
-from comfystream import tensor_cache
-
+import os
 
 class LoadTensor:
     CATEGORY = "tensor_utils"
@@ -8,13 +7,16 @@ class LoadTensor:
 
     @classmethod
     def INPUT_TYPES(s):
-        return {}
+        return {
+            "required": {
+                "image": ("IMAGE",),
+            }
+        }
 
     @classmethod
     def IS_CHANGED():
         return float("nan")
 
-    def execute(self):
-        frame = tensor_cache.image_inputs.get(block=True)
-        frame.side_data.skipped = False
-        return (frame.side_data.input,)
+    def execute(self, image):
+        print("PID", os.getpid())
+        return (image,)
