@@ -1,0 +1,79 @@
+ARG BASE_IMAGE=nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
+
+FROM "${BASE_IMAGE}"
+
+# System dependencies
+RUN apt update && apt install -yqq \
+    git \
+    wget \
+    build-essential \
+    cmake \
+    libgflags-dev \
+    libgoogle-glog-dev \
+    libjpeg-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libtbb-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Clone OpenCV repositories
+RUN git clone --depth 1 --branch 4.11.0 https://github.com/opencv/opencv.git && \
+    git clone --depth 1 --branch 4.11.0 https://github.com/opencv/opencv_contrib.git
+
+# Create build directory
+RUN mkdir -p /workspace/opencv/build
+
+# Create a toolchain file
+RUN echo '# Custom toolchain file\n\
+\n\
+# Set system compilers\n\
+set(CMAKE_C_COMPILER "/usr/bin/gcc")\n\
+set(CMAKE_CXX_COMPILER "/usr/bin/g++")\n\
+\n\
+# Set system root directories\n\
+set(CMAKE_FIND_ROOT_PATH "/usr")\n\
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\n\
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)\n\
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)\n\
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)\n\
+\n\
+# Set RPATH settings\n\
+set(CMAKE_SKIP_BUILD_RPATH FALSE)\n\
+set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)\n\
+set(CMAKE_INSTALL_RPATH "/usr/local/lib:/usr/lib/x86_64-linux-gnu")\n\
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)' > /workspace/custom_toolchain.cmake
+
+# Build and install OpenCV with CUDA support
+RUN cd /workspace/opencv/build && \
+    cmake \
+      -D CMAKE_TOOLCHAIN_FILE=/workspace/custom_toolchain.cmake \
+      -D CMAKE_BUILD_TYPE=RELEASE \
+      -D CMAKE_INSTALL_PREFIX=/usr/local \
+      -D WITH_CUDA=ON \
+      -D WITH_CUDNN=ON \
+      -D WITH_CUBLAS=ON \
+      -D WITH_TBB=ON \
+      -D OPENCV_DNN_CUDA=ON \
+      -D OPENCV_ENABLE_NONFREE=ON \
+      -D CUDA_ARCH_LIST="8.0+PTX" \
+      -D CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
+      -D OPENCV_EXTRA_MODULES_PATH=/workspace/opencv_contrib/modules \
+      -D WITH_NVCUVID=OFF \
+      -D WITH_NVCUVENC=OFF \
+      .. && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
+
+# Create output directory and copy built libraries
+RUN mkdir -p /output/lib && mkdir -p /output/lib && \
+    cp -r /workspace/opencv/build/lib /output && \
+    cp -r /usr/local/lib/python3.11/site-packages/cv2 /output
+
+# Set the output directory as the working directory
+WORKDIR /output
+

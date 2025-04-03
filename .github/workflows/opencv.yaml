@@ -1,0 +1,60 @@
+name: Build OpenCV Libraries
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build from'
+        required: true
+        default: 'main'
+        type: string
+
+
+jobs:
+  build-opencv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.CI_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.CI_DOCKERHUB_TOKEN }}
+
+      - name: Build and push OpenCV Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.opencv
+          push: true
+          tags: livepeer/comfystream:opencv
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract OpenCV libraries
+        run: |
+          mkdir -p releases/opencv
+          docker create --name opencv-container livepeer/comfystream:opencv
+          docker cp opencv-container:/output releases/opencv
+          docker rm opencv-container
+
+      - name: Upload OpenCV libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv-libraries
+          path: releases/opencv
+
+      - name: Create release
+        if: ${{ github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: releases/opencv/**
+          make_latest: true
+          generate_release_notes: true 
