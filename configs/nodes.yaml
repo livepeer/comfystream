@@ -72,7 +72,7 @@ nodes:
 
   comfyui-stream-pack:
     name: "ComfyUI Stream Pack"
-    url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
-    branch: "main"
+    url: "https://github.com/JJassonn69/ComfyUI-Stream-Pack"
+    branch: "super-resolution"
     type: "utility"
     
