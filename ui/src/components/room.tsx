@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
+import { StreamControl } from "@/components/stream-control";
 
 interface MediaStreamPlayerProps {
   stream: MediaStream;
@@ -89,9 +90,10 @@ function MediaStreamPlayer({ stream }: MediaStreamPlayerProps) {
 interface StageProps {
   connected: boolean;
   onStreamReady: () => void;
+  backendUrl: string;
 }
 
-function Stage({ connected, onStreamReady }: StageProps) {
+function Stage({ connected, onStreamReady, backendUrl }: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
 
@@ -145,6 +147,8 @@ function Stage({ connected, onStreamReady }: StageProps) {
           </TooltipProvider>
         </div>
       )}
+      {/* Add StreamControlIcon at the bottom right corner of the video box */}
+      <StreamControl backendUrl={backendUrl} />
     </div>
   );
 }
@@ -196,9 +200,9 @@ export const Room = () => {
 
       const id = toast.loading("Starting stream...");
       setLoadingToastId(id);
-
-      connectingRef.current = true;
     }
+
+    connectingRef.current = false;
   }, [config.streamUrl]);
 
   const handleConnected = useCallback(() => {
@@ -232,6 +236,7 @@ export const Room = () => {
                 <Stage
                   connected={isConnected}
                   onStreamReady={onRemoteStreamReady}
+                  backendUrl={config.streamUrl || ""}
                 />
                 {/* Thumbnail (mobile) */}
                 <div className="absolute bottom-[8px] right-[8px] w-[70px] h-[70px] sm:w-[90px] sm:h-[90px] bg-slate-800 block md:hidden">

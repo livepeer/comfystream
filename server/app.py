@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import sys
+import time
+import secrets
 
 import torch
 
@@ -12,7 +14,8 @@ if torch.cuda.is_available():
     torch.cuda.init()
 
 
-from aiohttp import web
+from aiohttp import web, MultipartWriter
+from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiortc import (
     MediaStreamTrack,
     RTCConfiguration,
@@ -20,12 +23,15 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
+# Import HTTP streaming modules
+from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from pipeline import Pipeline
 from twilio.rest import Client
 from utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from metrics import MetricsManager, StreamStatsManager
+from frame_buffer import FrameBuffer
 import time
 
 logger = logging.getLogger(__name__)
@@ -334,7 +340,7 @@ async def set_prompt(request):
     await pipeline.set_prompts(prompt)
 
     return web.Response(content_type="application/json", text="OK")
-
+    
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
@@ -413,6 +419,16 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
+    
+    # Setup CORS
+    cors = setup_cors(app, defaults={
+        "*": ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+            allow_methods=["GET", "POST", "OPTIONS"]
+        )
+    })
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -423,6 +439,12 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
+    
+    # Setup HTTP streaming routes
+    setup_routes(app, cors)
+    
+    # Serve static files from the public directory
+    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
 
     # Add routes for getting stream statistics.
     stream_stats_manager = StreamStatsManager(app)
