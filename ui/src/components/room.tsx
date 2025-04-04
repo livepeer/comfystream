@@ -160,9 +160,10 @@ interface StageProps {
   onStreamReady: () => void;
   onComfyUIReady: () => void;
   resolution: { width: number; height: number };
+  backendUrl: string;
 }
 
-function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StageProps) {
+function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUrl }: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
   // Add state and refs for tracking frames
@@ -272,7 +273,7 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StagePr
         </div>
       )}
       {/* Add StreamControlIcon at the bottom right corner of the video box */}
-      <StreamControl />
+      <StreamControl backendUrl={backendUrl} />
     </div>
   );
 }
@@ -343,9 +344,13 @@ export const Room = () => {
       dismissToast();
     } else {
       setConnect(true);
+
       showToast("Starting stream...", "loading");
-      connectingRef.current = true;
+
+      const id = toast.loading("Starting stream...");
     }
+
+    connectingRef.current = false;
   }, [config.streamUrl, showToast, dismissToast]);
 
   const handleConnected = useCallback(() => {
@@ -389,6 +394,7 @@ export const Room = () => {
                   onStreamReady={onRemoteStreamReady}
                   onComfyUIReady={onComfyUIReady}
                   resolution={config.resolution}
+                  backendUrl={config.streamUrl || ""}
                 />
                 {/* Thumbnail (mobile) */}
                 <div className="absolute bottom-[8px] right-[8px] w-[70px] h-[70px] sm:w-[90px] sm:h-[90px] bg-slate-800 block md:hidden overflow-hidden">
