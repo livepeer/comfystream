@@ -67,11 +67,16 @@ if [ "$1" = "--opencv-cuda" ]; then
   cd /workspace/comfystream
   conda activate comfystream
   
-  # Download and extract OpenCV CUDA build
-  DOWNLOAD_NAME="opencv-cuda-latest.tar.gz"
-  wget -O "$DOWNLOAD_NAME" https://github.com/JJassonn69/ComfyUI_SuperResolution/releases/download/v1/opencv-cuda.tar.gz
-  tar -xzf "$DOWNLOAD_NAME" -C /workspace/comfystream/
-  rm "$DOWNLOAD_NAME"
+  # Check if OpenCV CUDA build already exists
+  if [ ! -f "/workspace/comfystream/opencv-cuda-release.tar.gz" ]; then
+    # Download and extract OpenCV CUDA build
+    DOWNLOAD_NAME="opencv-cuda-release.tar.gz"
+    wget -O "$DOWNLOAD_NAME" https://github.com/JJassonn69/ComfyUI-Stream-Pack/releases/download/v1.0/opencv-cuda-release.tar.gz
+    tar -xzf "$DOWNLOAD_NAME" -C /workspace/comfystream/
+    rm "$DOWNLOAD_NAME"
+  else
+    echo "OpenCV CUDA build already exists, skipping download."
+  fi
 
   # Install required libraries
   apt-get update && apt-get install -y \
@@ -88,7 +93,7 @@ if [ "$1" = "--opencv-cuda" ]; then
   rm -rf "${SITE_PACKAGES_DIR}/cv2"*
 
   # Copy new cv2 package
-  cp -r /workspace/comfystream/opencv-cuda/cv2 "${SITE_PACKAGES_DIR}/"
+  cp -r /workspace/comfystream/cv2 "${SITE_PACKAGES_DIR}/"
 
   # Handle library dependencies
   CONDA_ENV_LIB="/workspace/miniconda3/envs/comfystream/lib"
@@ -98,7 +103,11 @@ if [ "$1" = "--opencv-cuda" ]; then
   cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
 
   # Copy OpenCV libraries
-  cp /workspace/comfystream/opencv-cuda/opencv/build/lib/libopencv_* /usr/lib/x86_64-linux-gnu/
+  cp /workspace/comfystream/opencv/build/lib/libopencv_* /usr/lib/x86_64-linux-gnu/
+
+  # remove the opencv-contrib and cv2 folders
+  rm -rf /workspace/comfystream/opencv_contrib
+  rm -rf /workspace/comfystream/cv2
 
   echo "OpenCV CUDA installation completed"
   shift
