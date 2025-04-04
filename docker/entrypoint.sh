@@ -24,7 +24,6 @@ show_help() {
   echo "  --download-models       Download default models"
   echo "  --build-engines         Build TensorRT engines for default models"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
-  echo "  --opencv-cuda           Setup OpenCV with CUDA support"
   echo "  --server                Start the Comfystream server, UI and ComfyUI"
   echo "  --help                  Show this help message"
   echo ""
