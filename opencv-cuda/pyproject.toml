@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opencv-cuda-sr"
+version = "4.11.0"
+description = "OpenCV with CUDA support"
+dependencies = [
+    "numpy"
+]
+
+[tool.setuptools]
+packages = []
