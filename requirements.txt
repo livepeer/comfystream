@@ -7,3 +7,4 @@ tomli
 websockets
 twilio
 prometheus_client
+torchvision

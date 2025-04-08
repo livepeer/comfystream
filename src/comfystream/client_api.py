@@ -15,11 +15,12 @@ import time
 
 from comfystream import tensor_cache
 from comfystream.utils_api import convert_prompt
+from torchvision.transforms.functional import to_pil_image
 
 logger = logging.getLogger(__name__)
 
 class ComfyStreamClient:
-    def __init__(self, host: str = "127.0.0.1", port: int = 8198, **kwargs):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8188, **kwargs):
         """
         Initialize the ComfyStream client to use the ComfyUI API.
         
@@ -38,11 +39,10 @@ class ComfyStreamClient:
         self.current_prompts = []
         self.running_prompts = {}
         self.cleanup_lock = asyncio.Lock()
-        
+        self.buffer = BytesIO()
         # WebSocket connection
         self._ws_listener_task = None
         self.execution_complete_event = asyncio.Event()
-        self.execution_started = False
         self._prompt_id = None
         
         # Add frame tracking
@@ -219,11 +219,22 @@ class ComfyStreamClient:
             data = json.loads(message)
             message_type = data.get("type", "unknown")
 
-            logger.debug(f"Received message type: {message_type}")
-            logger.debug(f"{data}")
-            
+            # logger.info(f"Received message type: {message_type}")
+            logger.info(f"{data}")
+
+            # Example output
             '''
-            # Handle different message types
+            15:15:58 [INFO] Received message type: executing
+            15:15:58 [INFO] {'type': 'executing', 'data': {'node': '18', 'display_node': '18', 'prompt_id': '6f983049-dca4-4935-9f36-d2bff7b744fa'}}
+            15:15:58 [INFO] Received message type: executed
+            15:15:58 [INFO] {'type': 'executed', 'data': {'node': '18', 'display_node': '18', 'output': {'images': [{'source': 'websocket', 'content-type': 'image/png', 'type': 'output'}]}, 'prompt_id': '6f983049-dca4-4935-9f36-d2bff7b744fa'}}
+            15:15:58 [INFO] Received message type: execution_success
+            15:15:58 [INFO] {'type': 'execution_success', 'data': {'prompt_id': '6f983049-dca4-4935-9f36-d2bff7b744fa', 'timestamp': 1744139758250}}
+            '''
+
+            # Handle different message types to have fun with!
+
+            '''
             if message_type == "status":
                 # Status message with comfy_ui's queue information
                 queue_remaining = data.get("data", {}).get("queue_remaining", 0)
@@ -232,56 +243,60 @@ class ComfyStreamClient:
                     logger.info("Queue empty, no active execution")
                 else:
                     logger.info(f"Queue status: {queue_remaining} items remaining")
-                
-            elif message_type == "progress":
+            '''
+
+            '''
+            if message_type == "progress":
                 if "data" in data and "value" in data["data"]:
                     progress = data["data"]["value"]
                     max_value = data["data"].get("max", 100)
                     # Log the progress for debugging
                     logger.info(f"Progress: {progress}/{max_value}")
-                
-            elif message_type == "execution_start":
-                self.execution_started = True
+            '''
+
+            if message_type == "execution_start":
                 if "data" in data and "prompt_id" in data["data"]:
                     self._prompt_id = data["data"]["prompt_id"]
                     logger.info(f"Execution started for prompt {self._prompt_id}")
-                
-            elif message_type == "executing":
-                self.execution_started = True
+
+                    # Let's queue the next prompt here!
+                    self.execution_complete_event.set()
+
+            '''
+            if message_type == "executing":
                 if "data" in data:
                     if "prompt_id" in data["data"]:
                         self._prompt_id = data["data"]["prompt_id"]
                     if "node" in data["data"]:
                         node_id = data["data"]["node"]
                         logger.info(f"Executing node: {node_id}")
-            
-            elif message_type in ["execution_cached", "execution_error", "execution_complete", "execution_interrupted"]:
-                logger.info(f"{message_type} message received for prompt {self._prompt_id}")
-                # self.execution_started = False
-                
+
+                        # Let's check which node_id is a LoadImageBase64 node
+                    # and set the execution complete event for that node    
+                    for prompt_index, prompt in enumerate(self.current_prompts):
+                        for node_id, node in prompt.items():
+                            if (node_id == executing_node_id and isinstance(node, dict) and node.get("class_type") in ["LoadImageBase64"]):
+                                logger.info(f"Setting execution complete event for LoadImageBase64 node {node_id}")
+                                self.execution_complete_event.set()
+                                break
+            '''
+
+            '''
+            if message_type == "executed":
+                # This is sent when a node is completely done
+                if "data" in data and "node" in data["data"]:
+                    node_id = data["data"]["node"]
+                    logger.info(f"Node execution complete: {node_id}")
+            '''
+
+            '''
+            if message_type in ["execution_cached", "execution_error", "execution_complete", "execution_interrupted"]:
+                logger.info(f"{message_type} message received for prompt {self._prompt_id}")                
                 # Always signal completion for these terminal states
                 # self.execution_complete_event.set()
                 logger.info(f"Set execution_complete_event from {message_type}")
                 pass
             '''
-            
-            if message_type == "executed":
-                # This is sent when a node is completely done
-                if "data" in data and "node_id" in data["data"]:
-                    node_id = data["data"]["node_id"]
-                    logger.info(f"Node execution complete: {node_id}")
-                    
-                    # Check if this is our SaveTensorAPI node
-                    if "SaveTensorAPI" in str(node_id):
-                        logger.info("SaveTensorAPI node executed, checking for tensor data")
-                        # The binary data should come separately via websocket
-                    
-                    # If we've been running for too long without tensor data, force completion
-                    elif self.execution_started and not self.execution_complete_event.is_set():
-                        # Check if this was the last node
-                        if data.get("data", {}).get("remaining", 0) == 0:
-                            # self.execution_complete_event.set()
-                            pass
 
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON message: {message[:100]}...")
@@ -295,7 +310,7 @@ class ComfyStreamClient:
         try:
             # Early return if message is too short
             if len(binary_data) <= 8:
-                self.execution_complete_event.set()
+                # self.execution_complete_event.set()
                 return
             
             # Extract header data only when needed
@@ -306,7 +321,7 @@ class ComfyStreamClient:
             # Quick check for image format
             is_image = data[:2] in [b'\xff\xd8', b'\x89\x50']
             if not is_image:
-                self.execution_complete_event.set()
+                # self.execution_complete_event.set()
                 return
             
             # Process image data directly
@@ -335,15 +350,16 @@ class ComfyStreamClient:
                     tensor_cache.image_outputs.put_nowait(tensor)
                     logger.debug("Added tensor without frame_id to output queue")
                 
-                self.execution_complete_event.set()
+                # We will execute the next prompt from message_type == "execution_start" instead
+                # self.execution_complete_event.set()
                 
             except Exception as img_error:
                 logger.error(f"Error processing image: {img_error}")
-                self.execution_complete_event.set()
+                # self.execution_complete_event.set()
                 
         except Exception as e:
             logger.error(f"Error handling binary message: {e}")
-            self.execution_complete_event.set()
+            # self.execution_complete_event.set()
     
     async def _execute_prompt(self, prompt_index: int):
         try:
@@ -430,25 +446,35 @@ class ComfyStreamClient:
                                 tensor, size=(512, 512), mode='bilinear', align_corners=False
                             )
                             tensor = tensor[0]  # Remove batch dimension
-                            
+
+                            # ====
+                            # PIL method
+                            '''
                             # Direct conversion to PIL without intermediate numpy step for speed
                             tensor_np = (tensor.permute(1, 2, 0).clamp(0, 1) * 255).to(torch.uint8).numpy()
                             img = Image.fromarray(tensor_np)
+                            img.save(self.buffer, format="JPEG", quality=90, optimize=True)
+                            '''
                             
-                            # Fast JPEG encoding with balanced quality
-                            buffer = BytesIO()
-                            img.save(buffer, format="JPEG", quality=90, optimize=True)
-                            buffer.seek(0)
-                            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                            # ====
+                            # torchvision method (more performant - TODO: need to test further)
+                            # Direct conversion to PIL without intermediate numpy step
+                            # Fast JPEG encoding with reduced quality for better performance
+                            tensor_pil = to_pil_image(tensor.clamp(0, 1))
+                            tensor_pil.save(self.buffer, format="JPEG", quality=75, optimize=True)
+                            # ====
+
+                            self.buffer.seek(0)
+                            img_base64 = base64.b64encode(self.buffer.getvalue()).decode('utf-8')
                             
                         except Exception as e:
                             logger.warning(f"Error in tensor processing: {e}, creating fallback image")
                             # Create a standard 512x512 placeholder if anything fails
                             img = Image.new('RGB', (512, 512), color=(100, 149, 237))
-                            buffer = BytesIO()
-                            img.save(buffer, format="JPEG", quality=90)
-                            buffer.seek(0)
-                            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                            self.buffer = BytesIO()
+                            img.save(self.buffer, format="JPEG", quality=90)
+                            self.buffer.seek(0)
+                            img_base64 = base64.b64encode(self.buffer.getvalue()).decode('utf-8')
                         
                         # Add timestamp for cache busting (once, outside the try/except)
                         timestamp = int(time.time() * 1000)
@@ -482,8 +508,6 @@ class ComfyStreamClient:
                             if frame_id is not None:
                                 self._frame_id_mapping[self._prompt_id] = frame_id
                                 logger.info(f"Mapped prompt_id {self._prompt_id} to frame_id {frame_id}")
-                            
-                            self.execution_started = True
                         else:
                             error_text = await response.text()
                             logger.error(f"Error queueing prompt: {response.status} - {error_text}")
