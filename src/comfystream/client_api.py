@@ -496,97 +496,6 @@ class ComfyStreamClient:
             logger.error(f"Error executing prompt: {e}")
             self.execution_complete_event.set()
     
-    async def _send_tensor_via_websocket(self, tensor):
-        """Send tensor data via the websocket connection"""
-        try:
-            if self.ws is None:
-                logger.error("WebSocket not connected, cannot send tensor")
-                self.execution_complete_event.set()  # Prevent hanging
-                return
-            
-            # Convert the tensor to image format for sending
-            if isinstance(tensor, np.ndarray):
-                tensor = torch.from_numpy(tensor).float()
-            
-            # Ensure on CPU and correct format
-            tensor = tensor.detach().cpu().float()
-            
-            # Prepare binary data
-            if len(tensor.shape) == 4:  # BCHW format (batch of images)
-                if tensor.shape[0] > 1:
-                    logger.info(f"Taking first image from batch of {tensor.shape[0]}")
-                    pass
-                tensor = tensor[0]  # Take first image if batch
-            
-            # Ensure CHW format (3 channels)
-            if len(tensor.shape) == 3:
-                if tensor.shape[0] != 3 and tensor.shape[2] == 3:  # HWC format
-                    tensor = tensor.permute(2, 0, 1)  # Convert to CHW
-                elif tensor.shape[0] != 3:
-                    logger.warning(f"Tensor doesn't have 3 channels: {tensor.shape}. Creating standard tensor.")
-                    # Create a standard RGB tensor
-                    tensor = torch.zeros(3, 512, 512)
-            else:
-                logger.warning(f"Tensor has unexpected shape: {tensor.shape}. Creating standard tensor.")
-                # Create a standard RGB tensor
-                tensor = torch.zeros(3, 512, 512)
-            
-            # Check tensor dimensions and log detailed info
-            logger.info(f"Original tensor for WS: shape={tensor.shape}, min={tensor.min().item():.4f}, max={tensor.max().item():.4f}")
-            
-            # Always ensure consistent 512x512 dimensions
-            '''
-            if tensor.shape[1] != 512 or tensor.shape[2] != 512:
-                logger.info(f"Resizing tensor from {tensor.shape} to standard 512x512")
-                import torch.nn.functional as F
-                tensor = tensor.unsqueeze(0)  # Add batch dimension for interpolate
-                tensor = F.interpolate(tensor, size=(512, 512), mode='bilinear', align_corners=False)
-                tensor = tensor.squeeze(0)  # Remove batch dimension after resize
-            '''
-
-            # Check for NaN or Inf values
-            if torch.isnan(tensor).any() or torch.isinf(tensor).any():
-                logger.warning("Tensor contains NaN or Inf values! Replacing with zeros.")
-                tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1.0, neginf=0.0)
-            
-            # Convert to image (HWC for PIL)
-            tensor_np = (tensor.permute(1, 2, 0) * 255).clamp(0, 255).numpy().astype(np.uint8)
-            img = Image.fromarray(tensor_np)
-            
-            logger.info(f"Converted to PIL image with dimensions: {img.size}")
-            
-            # Convert to PNG 
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            buffer.seek(0)
-            img_bytes = buffer.getvalue()
-            
-            # CRITICAL FIX: We need to send the binary data with a proper node ID prefix
-            # LoadTensorAPI node expects this header format to identify the target node
-            # The first 4 bytes are the message type (3 for binary tensor) and the next 4 are the node ID
-            # Since we don't know the exact node ID, we'll use a generic one that will be interpreted as 
-            # "send this to the currently waiting LoadTensorAPI node"
-            
-            # Build header (8 bytes total)
-            header = bytearray()
-            # Message type 3 (custom binary tensor data)
-            header.extend((3).to_bytes(4, byteorder='little'))
-            # Generic node ID (0 means "send to whatever node is waiting")
-            header.extend((0).to_bytes(4, byteorder='little'))
-            
-            # Combine header and image data
-            full_data = header + img_bytes
-            
-            # Send binary data via websocket
-            await self.ws.send(full_data)
-            logger.info(f"Sent tensor as PNG image via websocket with proper header, size: {len(full_data)} bytes, image dimensions: {img.size}")
-            
-        except Exception as e:
-            logger.error(f"Error sending tensor via websocket: {e}")
-            
-            # Signal execution complete in case of error
-            self.execution_complete_event.set()
-    
     async def cleanup(self):
         """Clean up resources"""
         async with self.cleanup_lock:
@@ -642,26 +551,10 @@ class ComfyStreamClient:
         
         logger.info("Tensor queues cleared")
     
-    def put_video_input(self, tensor: Union[torch.Tensor, np.ndarray]):
-        """
-        Put a video TENSOR into the tensor cache for processing.
-        
-        Args:
-            tensor: Video frame as a tensor (or numpy array)
-        """
-        try:
-            # Only remove one frame if the queue is full (like in client.py)
-            if tensor_cache.image_inputs.full():
-                tensor_cache.image_inputs.get_nowait()
-            
-            # Ensure tensor is detached if it's a torch tensor
-            if isinstance(tensor, torch.Tensor):
-                tensor = tensor.detach()
-                
-            tensor_cache.image_inputs.put(tensor)
-            
-        except Exception as e:
-            logger.error(f"Error in put_video_input: {e}")
+    def put_video_input(self, frame):
+        if tensor_cache.image_inputs.full():
+            tensor_cache.image_inputs.get(block=True)
+        tensor_cache.image_inputs.put(frame)
     
     def put_audio_input(self, frame):
         """Put audio frame into tensor cache"""
@@ -685,44 +578,183 @@ class ComfyStreamClient:
     async def get_audio_output(self):
         """Get processed audio frame from tensor cache"""
         return await tensor_cache.audio_outputs.get()
+    
+    async def get_available_nodes(self) -> Dict[int, Dict[str, Any]]:
+        """
+        Retrieves detailed information about the nodes used in the current prompts
+        by querying the ComfyUI /object_info API endpoint.
+
+        Returns:
+            A dictionary where keys are prompt indices and values are dictionaries
+            mapping node IDs to their information, matching the required UI format.
         
-    async def get_available_nodes(self):
-        """Get metadata and available nodes info for current prompts"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"{self.api_base_url}/object_info"
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        # Format node info similar to the embedded client response
-                        all_prompts_nodes_info = {}
-                        
-                        for prompt_index, prompt in enumerate(self.current_prompts):
-                            nodes_info = {}
-                            
-                            for node_id, node in prompt.items():
-                                class_type = node.get('class_type')
-                                if class_type:
-                                    nodes_info[node_id] = {
-                                        'class_type': class_type,
-                                        'inputs': {}
-                                    }
-                                    
-                                    if 'inputs' in node:
-                                        for input_name, input_value in node['inputs'].items():
-                                            nodes_info[node_id]['inputs'][input_name] = {
-                                                'value': input_value,
-                                                'type': 'unknown'  # We don't have type information
-                                            }
-                            
-                            all_prompts_nodes_info[prompt_index] = nodes_info
-                        
-                        return all_prompts_nodes_info
-                        
-                    else:
-                        logger.error(f"Error getting node info: {response.status}")
-                        return {}
-        except Exception as e:
-            logger.error(f"Error getting node info: {str(e)}")
+        The idea of this function is to replicate the functionality of comfy embedded client import_all_nodes_in_workspace
+        TODO: Why not support ckpt_name and lora_name as dropdown selectors on UI?
+        """
+
+        if not self.current_prompts:
+            logger.warning("No current prompts set. Cannot get node info.")
             return {}
+
+        all_prompts_nodes_info: Dict[int, Dict[str, Any]] = {}
+        all_needed_class_types = set()
+
+        # Collect all unique class types across all prompts first
+        for prompt in self.current_prompts:
+            for node in prompt.values():
+                if isinstance(node, dict) and 'class_type' in node:
+                    all_needed_class_types.add(node['class_type'])
+
+        class_info_cache: Dict[str, Any] = {}
+
+        async with aiohttp.ClientSession() as session:
+            fetch_tasks = []
+            for class_type in all_needed_class_types:
+                api_url = f"{self.api_base_url}/object_info/{class_type}"
+                fetch_tasks.append(self._fetch_object_info(session, api_url, class_type))
+
+            results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+            # Populate cache from results
+            for result in results:
+                if isinstance(result, tuple) and len(result) == 2:
+                    class_type, info = result
+                    if info:
+                        class_info_cache[class_type] = info
+                elif isinstance(result, Exception):
+                    logger.error(f"An exception occurred during object_info fetch task: {result}")
+        
+        # Now, build the output structure for each prompt
+        for prompt_index, prompt in enumerate(self.current_prompts):
+            nodes_info: Dict[str, Any] = {}
+            for node_id, node_data in prompt.items():
+                if not isinstance(node_data, dict) or 'class_type' not in node_data:
+                    logger.debug(f"Skipping invalid node data for node_id {node_id} in prompt {prompt_index}")
+                    continue
+
+                class_type = node_data['class_type']
+                # Let's skip the native api i/o nodes for now, subject to change
+                if class_type in ['LoadImageBase64', 'SendImageWebsocket']:
+                    continue
+
+                node_info = {
+                    'class_type': class_type,
+                    'inputs': {}
+                }
+
+                specific_class_info = class_info_cache.get(class_type)
+
+                if specific_class_info and 'input' in specific_class_info:
+                    input_definitions = {}
+                    required_inputs = specific_class_info['input'].get('required', {})
+                    optional_inputs = specific_class_info['input'].get('optional', {})
+
+                    if isinstance(required_inputs, dict):
+                        input_definitions.update(required_inputs)
+                    if isinstance(optional_inputs, dict):
+                        input_definitions.update(optional_inputs)
+
+                    if 'inputs' in node_data and isinstance(node_data['inputs'], dict):
+                        for input_name, input_value in node_data['inputs'].items():
+                            input_def = input_definitions.get(input_name)
+                            
+                            # Format the input value as a tuple if it's a list with node references
+                            if isinstance(input_value, list) and len(input_value) == 2 and isinstance(input_value[0], str) and isinstance(input_value[1], int):
+                                input_value = tuple(input_value)  # Convert [node_id, output_index] to (node_id, output_index)
+
+                            # Create Enum-like objects for certain types
+                            def create_enum_format(type_name):
+                                # Format the type as <IO.TYPE_NAME: 'TYPE_NAME'>
+                                return f"<IO.{type_name}: '{type_name}'>"
+                            
+                            input_details = {
+                                'value': input_value,
+                                'type': 'unknown',  # Default type
+                                'min': None, 
+                                'max': None,
+                                'widget': None  # Default, all widgets should be None to match format
+                            }
+
+                            # Parse the definition tuple/list if valid
+                            if isinstance(input_def, (list, tuple)) and len(input_def) > 0:
+                                config = None
+                                # Check for config dict as the second element
+                                if len(input_def) > 1 and isinstance(input_def[1], dict):
+                                    config = input_def[1]
+
+                                # Check for COMBO type (first element is list/tuple of options)
+                                if input_name in ['ckpt_name', 'lora_name']:
+                                    # For checkpoint and lora names, use STRING type instead of combo list
+                                    input_details['type'] = create_enum_format('STRING')
+                                elif isinstance(input_def[0], (list, tuple)):
+                                    input_details['type'] = input_def[0]  # Type is the list of options
+                                    # Don't set widget for combo
+                                else:
+                                    # Regular type (string or enum)
+                                    input_type_raw = input_def[0]
+                                    # Keep raw type name for certain types to match format
+                                    if hasattr(input_type_raw, 'name'):
+                                        # Special handling for CLIP and STRING to match expected format
+                                        type_name = str(input_type_raw.name)
+                                        if type_name in ('CLIP', 'STRING'):
+                                            # Create Enum-like format that matches format in desired output
+                                            input_details['type'] = create_enum_format(type_name)
+                                        else:
+                                            input_details['type'] = type_name
+                                    else:
+                                        # For non-enum types
+                                        input_details['type'] = str(input_type_raw)
+
+                                    # Extract constraints/widget from config if it exists
+                                    if config:
+                                        for key in ['min', 'max']:  # Only include these, skip widget/step/round
+                                            if key in config:
+                                                input_details[key] = config[key]
+
+                            node_info['inputs'][input_name] = input_details
+                    else:
+                        logger.debug(f"Node {node_id} ({class_type}) has no 'inputs' dictionary.")
+                elif class_type not in class_info_cache:
+                    logger.warning(f"No cached info found for class_type: {class_type} (node_id: {node_id}).")
+                else:
+                    logger.debug(f"Class info for {class_type} does not contain an 'input' key.")
+                    # If class info exists but no 'input' key, still add node with empty inputs dict
+
+                nodes_info[node_id] = node_info
+            
+            # Only add if there are any nodes after filtering
+            if nodes_info:
+                all_prompts_nodes_info[prompt_index] = nodes_info
+
+        return all_prompts_nodes_info
+
+    async def _fetch_object_info(self, session: aiohttp.ClientSession, url: str, class_type: str) -> Optional[tuple[str, Any]]:
+        """Helper function to fetch object info for a single class type."""
+        try:
+            logger.debug(f"Fetching object info for: {class_type} from {url}")
+            async with session.get(url) as response:
+                if response.status == 200:
+                    try:
+                        data = await response.json()
+                        # Extract the actual node info from the nested structure
+                        if class_type in data and isinstance(data[class_type], dict):
+                            node_specific_info = data[class_type]
+                            logger.debug(f"Successfully fetched and extracted info for {class_type}")
+                            return class_type, node_specific_info
+                        else:
+                             logger.error(f"Unexpected response structure for {class_type}. Key missing or not a dict. Response: {data}")
+
+                    except aiohttp.ContentTypeError:
+                         logger.error(f"Failed to decode JSON for {class_type}. Status: {response.status}, Content-Type: {response.headers.get('Content-Type')}, Response: {await response.text()[:200]}...") # Log beginning of text
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON received for {class_type}. Status: {response.status}, Error: {e}, Response: {await response.text()[:200]}...")
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Error fetching info for {class_type}: {response.status} - {error_text[:200]}...")
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP client error fetching info for {class_type} ({url}): {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error fetching info for {class_type} ({url}): {e}")
+
+        # Return class_type and None if any error occurred
+        return class_type, None

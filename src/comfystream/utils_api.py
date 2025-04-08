@@ -2,9 +2,9 @@ import copy
 import random
 
 from typing import Dict, Any
-# from comfy.api.components.schema.prompt import Prompt, PromptDictInput
 
 import logging
+logger = logging.getLogger(__name__)
 
 def create_load_tensor_node():
     return {
@@ -102,7 +102,7 @@ def convert_prompt(prompt):
             # Generate a random seed (same range as JavaScript's Math.random() * 18446744073709552000)
             random_seed = random.randint(0, 18446744073709551615)
             node["inputs"]["seed"] = random_seed
-            print(f"Set random seed {random_seed} for node {key}")
+            logger.debug(f"Set random seed {random_seed} for node {key}")
     
     for key, node in prompt.items():
         class_type = node.get("class_type")

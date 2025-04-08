@@ -173,7 +173,7 @@ class MultiServerPipeline:
             
             # If we've waited too long, skip the missing frame(s)
             if wait_time_ms > self.max_frame_wait_ms:
-                logger.warning(f"Missing frame {self.next_expected_frame_id}, skipping to {oldest_frame_id}")
+                logger.debug(f"Missing frame {self.next_expected_frame_id}, skipping to {oldest_frame_id}")
                 self.next_expected_frame_id = oldest_frame_id
                 await self._release_ordered_frames()
 
@@ -338,7 +338,7 @@ class MultiServerPipeline:
             processed_frame_id, out_tensor = await self.processed_video_frames.get()
             
             if processed_frame_id != frame_id:
-                logger.warning(f"Frame ID mismatch: expected {frame_id}, got {processed_frame_id}")
+                logger.debug(f"Frame ID mismatch: expected {frame_id}, got {processed_frame_id}")
                 pass
             
             # Process the frame
@@ -373,13 +373,14 @@ class MultiServerPipeline:
         processed_frame.sample_rate = frame.sample_rate
         
         return processed_frame
-    
+
     async def get_nodes_info(self) -> Dict[str, Any]:
-        """Get information about nodes from the first client"""
-        if not self.clients:
-            return {}
-        return await self.clients[0].get_available_nodes()
-    
+        """Get information about all nodes in the current prompt including metadata."""
+        # Note that we pull the node info from the first client (as they should all be the same)
+        # TODO: This is just retrofitting the functionality of the comfy embedded client, there could be major improvements here
+        nodes_info = await self.clients[0].get_available_nodes()
+        return nodes_info
+
     async def cleanup(self):
         """Clean up all clients and background tasks"""
         self.running = False
