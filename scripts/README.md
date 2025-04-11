@@ -19,9 +19,6 @@ This repository includes an [Ansible playbook](https://docs.ansible.com/ansible/
    - **CPU**: 4 vCPUs  
    - **Storage**: 100GB
 
-   > [!TIP]
-   > You can use the `spinup_comfystream_tensordock.py --bare-vm` script to create a [compatible VM on TensorDock](https://marketplace.tensordock.com/deploy?gpu=geforcertx4090-pcie-24gb&gpuCount=1&ramAmount=16&vcpuCount=4&storage=100&os=Ubuntu-22.04-LTS)
-
 2. **Open Required Ports**:  
    Ensure the following ports are open **inbound and outbound** on the VM's firewall/security group:
    - **SSH (Port 22)** – Remote access  
@@ -66,51 +63,6 @@ This repository includes an [Ansible playbook](https://docs.ansible.com/ansible/
 > ```bash
 > docker pull livepeer/comfystream:latest
 > ```
-
-### TensorDock Spinup Script (Fully Automated)
-
-The `spinup_comfystream_tensordock.py` script automates VM provisioning, setup, and server launch on [TensorDock](https://tensordock.com/). Follow the steps below:
-
-1. **Create a TensorDock Account**: Sign up at [Tensordock](https://dashboard.tensordock.com/register), add a payment method, and generate API credentials.
-
-2. **Set Up a Python Virtual Environment**:
-   To prevent dependency conflicts, create and activate a virtual environment with [Conda](https://docs.anaconda.com/miniconda/) and install the required dependencies:
-
-    ```bash
-   conda create -n comfystream python=3.8
-   conda activate comfystream
-   pip install -r requirements.txt
-   ```
-
-3. **View Available Script Options** *(Optional)*:  
-   To see all available options, run:
-
-   ```bash
-   python spinup_comfystream_tensordock.py --help
-   ```
-
-4. **Run the Script**:  
-   Execute the following command to provision a VM and set up ComfyStream automatically:
-
-   ```bash
-   python spinup_comfystream_tensordock.py --api-key <API_KEY> --api-token <API_TOKEN>
-   ```
-
-5. **Access the Server**:  
-   Once the setup is complete, the script will display the URLs to access ComfyStream.
-
-6. **Stop & Delete the VM** *(When No Longer Needed)*:
-   To stop and remove the instance, run:
-
-   ```bash
-   python spinup_comfystream_tensordock.py --delete <VM_ID>
-   ```
-
-   Replace `<VM_ID>` with the VM ID found in the script logs or the [TensorDock dashboard](https://dashboard.tensordock.com/instances).
-
-> [!WARNING]
-> If you encounter `max retries exceeded with URL` errors, the VM might have been created but is inaccessible.  
-> Check the [TensorDock dashboard](https://dashboard.tensordock.com/instances), delete the VM manually, wait **2-3 minutes**, then rerun the script.
 
 ### Profiling a Running ComfyStream Server
 
