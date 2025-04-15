@@ -1,6 +1,6 @@
 from .client import ComfyStreamClient
 from .pipeline import Pipeline
-from .server.utils import temporary_log_level
+from .server.utils import set_temporary_log_level
 from .server.app import VideoStreamTrack, AudioStreamTrack
 from .server.utils import FPSMeter
 from .server.metrics import MetricsManager, StreamStatsManager

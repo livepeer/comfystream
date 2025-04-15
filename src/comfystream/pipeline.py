@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, Union, List, Optional
 
 from comfystream.client import ComfyStreamClient
-from comfystream.server.utils import temporary_log_level
+from comfystream.server.utils import set_temporary_log_level
 
 WARMUP_RUNS = 5
 
@@ -163,7 +163,7 @@ class Pipeline:
         Returns:
             The processed video frame
         """
-        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+        async with set_temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_tensor = await self.client.get_video_output()
         frame = await self.video_incoming_frames.get()
         while frame.side_data.skipped:
@@ -183,7 +183,7 @@ class Pipeline:
         """
         frame = await self.audio_incoming_frames.get()
         if frame.samples > len(self.processed_audio_buffer):
-            async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+            async with set_temporary_log_level("comfy", self._comfyui_inference_log_level):
                 out_tensor = await self.client.get_audio_output()
             self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
         out_data = self.processed_audio_buffer[:frame.samples]
