@@ -3,17 +3,19 @@
 set -e
 eval "$(conda shell.bash hook)"
 
-# Handle workspace mounting
-if [ -d "/app" ] && [ ! -d "/app/miniconda3" ]; then
-  echo "Initializing workspace in /app..."
-  cp -r /workspace/* /app
-fi
-
-if [ -d "/app" ] && [ ! -L "/workspace" ]; then
-  echo "Starting from volume mount /app..."
-  cd / && rm -rf /workspace
-  ln -sf /app /workspace
-  cd /workspace/comfystream
+if [ "$1" = "--persist-data" ]; then
+  # Handle workspace mounting
+  if [ -d "/app" ] && [ ! -d "/app/miniconda3" ]; then
+    echo "Initializing workspace in /app..."
+    cp -r /workspace/* /app
+  fi
+  
+  if [ -d "/app" ] && [ ! -L "/workspace" ]; then
+    echo "Starting from volume mount /app..."
+    cd / && rm -rf /workspace
+    ln -sf /app /workspace
+    cd /workspace/comfystream
+  fi
 fi
 
 # Add help command to show usage
@@ -21,6 +23,7 @@ show_help() {
   echo "Usage: entrypoint.sh [OPTIONS]"
   echo ""
   echo "Options:"
+  echo "  --persist-data          Copy workspace to volume mount on first startup"
   echo "  --download-models       Download default models"
   echo "  --build-engines         Build TensorRT engines for default models"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
