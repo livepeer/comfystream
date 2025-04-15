@@ -67,7 +67,7 @@ def add_prefix_to_app_routes(app: web.Application, prefix: str):
 
 
 @asynccontextmanager
-async def temporary_log_level(logger_name: str, level: int):
+async def set_temporary_log_level(logger_name: str, level: int):
     """Temporarily set the log level of a logger.
 
     Args:
