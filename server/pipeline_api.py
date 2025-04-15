@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 from typing import Any, Dict, Union, List, Optional, Deque
 from comfystream.client_api import ComfyStreamClient
+from utils import temporary_log_level
 from config import ComfyConfig
 
 WARMUP_RUNS = 5
@@ -16,7 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 class MultiServerPipeline:
-    def __init__(self, config_path: Optional[str] = None, max_frame_wait_ms: int = 500, **kwargs):
+    def __init__(self, width=512, height=512, comfyui_inference_log_level: int = None, config_path: Optional[str] = None, max_frame_wait_ms: int = 500, **kwargs):
+        """Initialize the pipeline with the given configuration.
+        Args:
+            width: The width of the video frames.
+            height: The height of the video frames.
+            comfyui_inference_log_level: The logging level for ComfyUI inference.
+                Defaults to None, using the global ComfyUI log level.
+            **kwargs: Additional arguments to pass to the ComfyStreamClient
+        """
+                
         # Load server configurations
         self.config = ComfyConfig(config_path)
         self.servers = self.config.get_servers()
@@ -28,6 +38,9 @@ class MultiServerPipeline:
             client_kwargs.update(server_config)
             self.clients.append(ComfyStreamClient(**client_kwargs))
         
+        self.width = kwargs.get("width", 512)
+        self.height = kwargs.get("height", 512)
+
         logger.info(f"Initialized {len(self.clients)} ComfyUI clients")
         
         self.video_incoming_frames = asyncio.Queue()
@@ -48,6 +61,9 @@ class MultiServerPipeline:
         # Audio processing
         self.processed_audio_buffer = np.array([], dtype=np.int16)
         self.last_frame_time = 0
+
+        # ComfyUI inference log level
+        self._comfyui_inference_log_level = comfyui_inference_log_level
 
         # Frame rate limiting
         self.min_frame_interval = 1/30  # Limit to 30 FPS
@@ -178,14 +194,19 @@ class MultiServerPipeline:
                 await self._release_ordered_frames()
 
     async def warm_video(self):
-        """Warm up the video pipeline with dummy frames for each client"""
-        logger.info("Warming up video pipeline...")
+        # Create dummy frame with the CURRENT resolution settings (which might have been updated via control channel)
         
         # Create a properly formatted dummy frame
+        '''
         tensor = torch.rand(1, 3, 512, 512)  # Random values in [0,1]
         dummy_frame = av.VideoFrame(width=512, height=512, format="rgb24")
         dummy_frame.side_data.input = tensor
-        
+        '''
+        dummy_frame = av.VideoFrame()
+        dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+
+        logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
+
         # Warm up each client
         warmup_tasks = []
         for i, client in enumerate(self.clients):
@@ -351,7 +372,7 @@ class MultiServerPipeline:
         except Exception as e:
             logger.error(f"Error in get_processed_video_frame: {str(e)}")
             # Create a black frame as fallback
-            black_frame = av.VideoFrame(width=512, height=512, format='rgb24')
+            black_frame = av.VideoFrame(width=self.width, height=self.height, format='rgb24')
             return black_frame
 
     async def get_processed_audio_frame(self):

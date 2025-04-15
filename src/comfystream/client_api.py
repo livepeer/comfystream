@@ -34,7 +34,6 @@ class ComfyStreamClient:
         self.server_address = f"ws://{host}:{port}/ws"
         self.api_base_url = f"http://{host}:{port}/api"
         self.client_id = kwargs.get('client_id', str(uuid.uuid4()))
-        self.api_version = kwargs.get('api_version', "1.0.0")
         self.ws = None
         self.current_prompts = []
         self.running_prompts = {}
@@ -220,7 +219,7 @@ class ComfyStreamClient:
             message_type = data.get("type", "unknown")
 
             # logger.info(f"Received message type: {message_type}")
-            logger.info(f"{data}")
+            logger.debug(f"{data}")
 
             # Example output
             '''

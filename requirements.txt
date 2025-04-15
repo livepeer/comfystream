@@ -7,4 +7,5 @@ tomli
 websockets
 twilio
 prometheus_client
+librosa
 torchvision

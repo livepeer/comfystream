@@ -221,6 +221,9 @@ async def offer(request):
 
     tracks = {"video": None, "audio": None}
 
+    # Flag to track if we've received resolution update
+    resolution_received = {"value": False}
+
     # Only add video transceiver if video is present in the offer
     if "m=video" in offer.sdp:
         # Prefer h264
@@ -255,6 +258,27 @@ async def offer(request):
                             return
                         await pipeline.update_prompts(params["prompts"])
                         response = {"type": "prompts_updated", "success": True}
+                        channel.send(json.dumps(response))
+                    elif params.get("type") == "update_resolution":
+                        if "width" not in params or "height" not in params:
+                            logger.warning("[Control] Missing width or height in update_resolution message")
+                            return
+                        # Update pipeline resolution for future frames
+                        pipeline.width = params["width"]
+                        pipeline.height = params["height"]
+                        logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
+                        
+                        # Mark that we've received resolution
+                        resolution_received["value"] = True
+                        
+                        # Warm the video pipeline with the new resolution
+                        if "m=video" in pc.remoteDescription.sdp:
+                            await pipeline.warm_video()
+                            
+                        response = {
+                            "type": "resolution_updated",
+                            "success": True
+                        }
                         channel.send(json.dumps(response))
                     else:
                         logger.warning(
@@ -301,10 +325,11 @@ async def offer(request):
 
     await pc.setRemoteDescription(offer)
 
+    # Only warm audio here, video warming happens after resolution update
     if "m=audio" in pc.remoteDescription.sdp:
         await pipeline.warm_audio()
-    if "m=video" in pc.remoteDescription.sdp:
-        await pipeline.warm_video()
+
+    # We no longer warm video here - it will be warmed after receiving resolution
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -345,11 +370,15 @@ async def on_startup(app: web.Application):
         patch_loop_datagram(app["media_ports"])
 
     app["pipeline"] = Pipeline(
-        config_path=app["config_file"],
-        max_frame_wait_ms=app["max_frame_wait"],
+        width=512,
+        height=512,
+        cwd=app["workspace"], 
         disable_cuda_malloc=True, 
         gpu_only=True, 
-        preview_method='none'
+        preview_method='none',
+        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        config_path=app["config_file"],
+        max_frame_wait_ms=app["max_frame_wait"],
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
@@ -371,6 +400,9 @@ if __name__ == "__main__":
         "--media-ports", default=None, help="Set the UDP ports for WebRTC media"
     )
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
+    parser.add_argument(
+        "--workspace", default=None, required=True, help="Set Comfy workspace"
+    )
     parser.add_argument(
         "--log-level", "--log_level",
         dest="log_level",
@@ -402,6 +434,18 @@ if __name__ == "__main__":
         default=500,
         help="Maximum time to wait for a frame in milliseconds before dropping it"
     )
+    parser.add_argument(
+        "--comfyui-log-level",
+        default=None,
+        choices=logging._nameToLevel.keys(),
+        help="Set the global logging level for ComfyUI",
+    )
+    parser.add_argument(
+        "--comfyui-inference-log-level",
+        default=None,
+        choices=logging._nameToLevel.keys(),
+        help="Set the logging level for ComfyUI inference",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -415,6 +459,7 @@ if __name__ == "__main__":
 
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
+    app["workspace"] = args.workspace
     app["config_file"] = args.config_file
     app["max_frame_wait"] = args.max_frame_wait
 
@@ -454,5 +499,12 @@ if __name__ == "__main__":
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
+
+    # Allow overriding of ComyfUI log levels.
+    if args.comfyui_log_level:
+        log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
+        logging.getLogger("comfy").setLevel(log_level)
+    if args.comfyui_inference_log_level:
+        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)
