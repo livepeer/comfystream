@@ -6,10 +6,13 @@ import logging
 import time
 import random
 from collections import OrderedDict
+import collections
+import os
+import socket
 
 from typing import Any, Dict, Union, List, Optional, Deque
 from comfystream.client_api import ComfyStreamClient
-from utils import temporary_log_level
+from utils import temporary_log_level # Not sure exactly what this does
 from config import ComfyConfig
 
 WARMUP_RUNS = 5
@@ -17,31 +20,52 @@ logger = logging.getLogger(__name__)
 
 
 class MultiServerPipeline:
-    def __init__(self, width=512, height=512, comfyui_inference_log_level: int = None, config_path: Optional[str] = None, max_frame_wait_ms: int = 500, **kwargs):
+    def __init__(
+            self, 
+            width: int = 512, 
+            height: int = 512,
+            workers: int = 2, 
+            comfyui_inference_log_level: int = None, 
+            config_path: Optional[str] = None, 
+            max_frame_wait_ms: int = 500, 
+            client_mode: str = "toml", 
+            workspace: str = None
+        ):
         """Initialize the pipeline with the given configuration.
         Args:
             width: The width of the video frames.
             height: The height of the video frames.
+            workers: The number of ComfyUI clients to spin up (if client_mode is "spawn").
             comfyui_inference_log_level: The logging level for ComfyUI inference.
                 Defaults to None, using the global ComfyUI log level.
-            **kwargs: Additional arguments to pass to the ComfyStreamClient
+            config_path: The path to the ComfyUI config toml file (if client_mode is "toml").
+            max_frame_wait_ms: The maximum number of milliseconds to wait for a frame before dropping it.
+            client_mode: The mode to use for the ComfyUI clients.
+                "toml": Use a config file to describe clients.
+                "spawn": Spawn ComfyUI clients as external processes.
         """
-                
-        # Load server configurations
-        self.config = ComfyConfig(config_path)
-        self.servers = self.config.get_servers()
-        
-        # Create client for each server
-        self.clients = []
-        for server_config in self.servers:
-            client_kwargs = kwargs.copy()
-            client_kwargs.update(server_config)
-            self.clients.append(ComfyStreamClient(**client_kwargs))
-        
-        self.width = kwargs.get("width", 512)
-        self.height = kwargs.get("height", 512)
 
-        logger.info(f"Initialized {len(self.clients)} ComfyUI clients")
+        # There are two methods for starting the clients:
+        # 1. client_mode == "toml" -> Use a config file to describe clients.
+        # 2. client_mode == "spawn" -> Spawn ComfyUI clients as external processes.
+
+        self.clients = []
+        self.workspace = workspace
+        self.client_mode = client_mode
+
+        if (client_mode == "toml"):
+            # Load server configurations
+            self.config = ComfyConfig(config_path)
+            self.servers = self.config.get_servers()
+        elif (client_mode == "spawn"):
+            # Set the number of workers to spawn
+            self.workers = workers
+        
+        # Started in /offer
+        # self.start_clients()
+        
+        self.width = width
+        self.height = height
         
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
@@ -72,6 +96,11 @@ class MultiServerPipeline:
         self.running = True
         self.collector_task = asyncio.create_task(self._collect_processed_frames())
 
+        self.output_interval = 1/30  # Start with 30 FPS
+        self.last_output_time = None
+        self.frame_interval_history = collections.deque(maxlen=30)
+        self.output_pacer_task = asyncio.create_task(self._dynamic_output_pacer())
+    
     async def _collect_processed_frames(self):
         """Background task to collect processed frames from all clients"""
         try:
@@ -141,26 +170,15 @@ class MultiServerPipeline:
         await self._release_ordered_frames()
 
     async def _release_ordered_frames(self):
-        """Process ordered frames and put them in the output queue"""
-        # If we don't have a next expected frame yet, can't do anything
         if self.next_expected_frame_id is None:
             return
-            
-        # Check if the next expected frame is in our buffer
-        while self.ordered_frames and self.next_expected_frame_id in self.ordered_frames:
-            # Get the frame
+        if self.ordered_frames and self.next_expected_frame_id in self.ordered_frames:
             timestamp, tensor = self.ordered_frames.pop(self.next_expected_frame_id)
-            
-            # Put it in the output queue
             await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
             logger.info(f"Released frame {self.next_expected_frame_id} to output queue")
-            
-            # Update the next expected frame ID to the next sequential ID if possible
-            # (or the lowest frame ID in our buffer)
             if self.ordered_frames:
                 self.next_expected_frame_id = min(self.ordered_frames.keys())
             else:
-                # If no more frames, keep the last ID + 1 as next expected
                 self.next_expected_frame_id += 1
 
     async def _check_frame_timeouts(self):
@@ -349,12 +367,13 @@ class MultiServerPipeline:
             frame_id, frame = await self.video_incoming_frames.get()
             
             # Skip frames if we're falling behind
+            '''
             while not self.video_incoming_frames.empty():
                 # Get newer frame and mark old one as skipped
                 frame.side_data.skipped = True
                 frame_id, frame = await self.video_incoming_frames.get()
                 logger.info(f"Skipped older frame {frame_id} to catch up")
-            
+            '''
             # Get the processed frame from our output queue
             processed_frame_id, out_tensor = await self.processed_video_frames.get()
             
@@ -422,6 +441,132 @@ class MultiServerPipeline:
         await asyncio.gather(*cleanup_tasks)
         logger.info("All clients cleaned up")
 
+    async def _dynamic_output_pacer(self):
+        while self.running:
+            # Only release if the next expected frame is available
+            if self.next_expected_frame_id is not None and self.next_expected_frame_id in self.ordered_frames:
+                timestamp, tensor = self.ordered_frames.pop(self.next_expected_frame_id)
+                now = time.time()
 
+                # Calculate dynamic interval based on output history
+                if self.last_output_time is not None:
+                    actual_interval = now - self.last_output_time
+                    self.frame_interval_history.append(actual_interval)
+                    avg_interval = sum(self.frame_interval_history) / len(self.frame_interval_history)
+                    self.output_interval = avg_interval
+                self.last_output_time = now
+
+                await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
+                logger.info(f"Released frame {self.next_expected_frame_id} to output queue")
+
+                # Update next expected frame ID
+                if self.ordered_frames:
+                    self.next_expected_frame_id = min(self.ordered_frames.keys())
+                else:
+                    self.next_expected_frame_id += 1
+
+                # Sleep for the dynamic interval, but don't sleep negative time
+                await asyncio.sleep(max(self.output_interval, 0.001))
+            else:
+                # No frame ready, wait a bit and check again
+                await asyncio.sleep(0.005)
+
+    async def start_clients(self):
+        """Start the clients based on the client_mode (TOML or spawn)"""
+        logger.info(f"Starting clients with mode: {self.client_mode}")
+        
+        self.clients = []
+        
+        if hasattr(self, 'client_mode') and self.client_mode == "toml":
+            # Use config file to create clients
+            for server_config in self.servers:
+                client_kwargs = server_config.copy()
+                self.clients.append(ComfyStreamClient(**client_kwargs))
+                
+        elif hasattr(self, 'client_mode') and self.client_mode == "spawn":
+            # Spin up clients as external processes
+            ports = [8195 + i for i in range(self.workers)]
+            
+            for i in range(self.workers):
+                client = ComfyStreamClient(
+                    host="127.0.0.1",
+                    port=ports[i],
+                    spawn=True,
+                    comfyui_path=os.path.join(self.workspace, "main.py"),
+                    workspace=self.workspace,
+                    comfyui_args=[
+                        "--disable-cuda-malloc", 
+                        "--gpu-only", 
+                        "--preview-method", "none", 
+                        "--listen", 
+                        "--cuda-device", "0", 
+                        "--fast", 
+                        "--enable-cors-header", "*", 
+                        "--port", str(ports[i]),
+                        "--disable-xformers", 
+                    ],
+                )
+                self.clients.append(client)
+                
+        else:
+            raise ValueError(f"Unknown client_mode: {getattr(self, 'client_mode', 'None')}")
+            
+        # Start all ComfyUI servers in parallel if in spawn mode
+        if hasattr(self, 'client_mode') and self.client_mode == "spawn":
+            # First, launch all server processes in parallel
+            for client in self.clients:
+                if client.spawn:
+                    client._launch_comfyui_server()
+            
+            # Now create async functions to check server readiness
+            async def check_server_ready(client, timeout=60, check_interval=0.5):
+                """Async version of waiting for server to be ready"""
+                logger.info(f"Waiting for ComfyUI server on port {client.port} to be ready...")
+                
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    # Check if process is still running
+                    if client._comfyui_proc and client._comfyui_proc.poll() is not None:
+                        return_code = client._comfyui_proc.poll()
+                        logger.error(f"ComfyUI process exited with code {return_code} before it was ready")
+                        raise RuntimeError(f"ComfyUI process exited with code {return_code}")
+                        
+                    # Try to connect to the server
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(2)
+                        result = sock.connect_ex((client.host, client.port))
+                        sock.close()
+                        
+                        if result == 0:
+                            logger.info(f"ComfyUI server on port {client.port} is now accepting connections")
+                            return
+                    except Exception:
+                        pass
+                        
+                    # Sleep and try again
+                    await asyncio.sleep(check_interval)
+                    
+                # If we get here, the server didn't start in time
+                logger.error(f"Timed out waiting for ComfyUI server on port {client.port}")
+                if client._comfyui_proc:
+                    client._comfyui_proc.terminate()
+                    client._comfyui_proc = None
+                raise RuntimeError(f"Timed out waiting for ComfyUI server on port {client.port}")
+            
+            # Wait for all servers to be ready in parallel
+            wait_tasks = []
+            for client in self.clients:
+                if client.spawn:
+                    wait_tasks.append(check_server_ready(client))
+            
+            if wait_tasks:
+                logger.info(f"Waiting for {len(wait_tasks)} ComfyUI servers to become ready...")
+                await asyncio.gather(*wait_tasks)
+                logger.info(f"All {len(wait_tasks)} ComfyUI servers are ready")
+                
+        logger.info(f"Initialized {len(self.clients)} clients")
+        return self.clients
+        
 # For backwards compatibility, maintain the original Pipeline name
 Pipeline = MultiServerPipeline

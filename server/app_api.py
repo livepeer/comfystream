@@ -202,8 +202,34 @@ async def offer(request):
     pipeline = request.app["pipeline"]
     pcs = request.app["pcs"]
 
+    # Check if clients are initialized, and initialize them if not
+    if not pipeline.clients:
+        logger.info("Clients not initialized yet, starting clients...")
+        await pipeline.start_clients()
+    # Check if any clients with spawn=True need to have servers started
+    elif pipeline.client_mode == "spawn":
+        start_tasks = []
+        for client in pipeline.clients:
+            if client.spawn and (not hasattr(client, '_comfyui_proc') or client._comfyui_proc is None):
+                start_tasks.append(client.start_server())
+        
+        # Start any servers that need to be started
+        if start_tasks:
+            logger.info(f"Starting ComfyUI servers for new workflow...")
+            await asyncio.gather(*start_tasks)
+            logger.info(f"Started {len(start_tasks)} ComfyUI servers")
+    
+    # Get parameters
     params = await request.json()
-
+    
+    # When a client reconnects after refresh, we need to clear certain pipeline state
+    # but NOT restart the ComfyUI servers/clients
+    # Reset the frame tracking, but keep the servers running
+    pipeline.next_expected_frame_id = None
+    pipeline.ordered_frames.clear()
+    pipeline.next_frame_id = 1  # Reset frame ID counter for new connection
+    pipeline.client_frame_mapping.clear()
+    
     await pipeline.set_prompts(params["prompts"])
 
     offer_params = params["offer"]
@@ -369,17 +395,25 @@ async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
+    # ComfyUI args have been moved to the client constructor
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
-        preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
         config_path=app["config_file"],
         max_frame_wait_ms=app["max_frame_wait"],
+        client_mode=app["client_mode"],
+        workspace=app["workspace"],
+        workers=app["workers"],
     )
+    
+    # Start the clients during initialization
+    # await app["pipeline"].start_clients()
+    
+    # Wait for pipeline startup to complete (which starts the ComfyUI servers)
+    if hasattr(app["pipeline"], "startup_task"):
+        await app["pipeline"].startup_task
+    
     app["pcs"] = set()
     app["video_tracks"] = {}
 
@@ -391,7 +425,6 @@ async def on_shutdown(app: web.Application):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run comfystream server")
@@ -446,6 +479,18 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
+    parser.add_argument(
+        "--client-mode",
+        choices=["toml", "spawn"],
+        default="toml",
+        help="How to create ComfyUI clients: 'toml' (from config file) or 'spawn' (spawn processes directly)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="Number of worker processes to spawn when using --client-mode=spawn"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -462,6 +507,8 @@ if __name__ == "__main__":
     app["workspace"] = args.workspace
     app["config_file"] = args.config_file
     app["max_frame_wait"] = args.max_frame_wait
+    app["client_mode"] = args.client_mode
+    app["workers"] = args.workers
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
