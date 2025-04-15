@@ -480,8 +480,11 @@ class MultiServerPipeline:
         if hasattr(self, 'client_mode') and self.client_mode == "toml":
             # Use config file to create clients
             for server_config in self.servers:
-                client_kwargs = server_config.copy()
-                self.clients.append(ComfyStreamClient(**client_kwargs))
+                self.clients.append(ComfyStreamClient(
+                    host=server_config["host"],
+                    port=server_config["port"],
+                    spawn=False,
+                ))
                 
         elif hasattr(self, 'client_mode') and self.client_mode == "spawn":
             # Spin up clients as external processes
