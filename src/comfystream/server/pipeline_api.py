@@ -24,12 +24,14 @@ class MultiServerPipeline:
             self, 
             width: int = 512, 
             height: int = 512,
-            workers: int = 2, 
             comfyui_inference_log_level: int = None, 
             config_path: Optional[str] = None, 
             max_frame_wait_ms: int = 500, 
             client_mode: str = "toml", 
-            workspace: str = None
+            workspace: str = None,
+            workers: int = 2, 
+            cuda_devices: str = '0',
+            workers_start_port: int = 8195,
         ):
         """Initialize the pipeline with the given configuration.
         Args:
@@ -43,6 +45,8 @@ class MultiServerPipeline:
             client_mode: The mode to use for the ComfyUI clients.
                 "toml": Use a config file to describe clients.
                 "spawn": Spawn ComfyUI clients as external processes.
+            workers_start_port: The starting port number for worker processes (default: 8195).
+            cuda_devices: The list of CUDA devices to use for the ComfyUI clients.
         """
 
         # There are two methods for starting the clients:
@@ -54,14 +58,20 @@ class MultiServerPipeline:
         self.client_mode = client_mode
 
         if (client_mode == "toml"):
+            # TOML Mode: Use a config file to describe existing ComfyUI Instances
+
             # Load server configurations
             self.config = ComfyConfig(config_path)
             self.servers = self.config.get_servers()
         elif (client_mode == "spawn"):
-            # Set the number of workers to spawn
+            # SPAWN Mode: Spawn new ComfyUI Instances automatically
+
             self.workers = workers
+            self.workers_start_port = workers_start_port
+            self.cuda_devices = cuda_devices
         
-        # Started in /offer
+        # Clients started in /offer (this is due to when the page refreshes, the clients automatically close)
+        # TODO: Perhaps a better way would be to keep the the clients alive while the server is alive?
         # self.start_clients()
         
         self.width = width
@@ -488,28 +498,32 @@ class MultiServerPipeline:
                 
         elif hasattr(self, 'client_mode') and self.client_mode == "spawn":
             # Spin up clients as external processes
-            ports = [8195 + i for i in range(self.workers)]
-            
-            for i in range(self.workers):
-                client = ComfyStreamClient(
-                    host="127.0.0.1",
-                    port=ports[i],
-                    spawn=True,
-                    comfyui_path=os.path.join(self.workspace, "main.py"),
-                    workspace=self.workspace,
-                    comfyui_args=[
-                        "--disable-cuda-malloc", 
-                        "--gpu-only", 
-                        "--preview-method", "none", 
-                        "--listen", 
-                        "--cuda-device", "0", 
-                        "--fast", 
-                        "--enable-cors-header", "*", 
-                        "--port", str(ports[i]),
-                        "--disable-xformers", 
-                    ],
-                )
-                self.clients.append(client)
+            ports = []
+            cuda_device_list = [d.strip() for d in str(self.cuda_devices).split(',') if d.strip()]
+            for device_idx, cuda_device in enumerate(cuda_device_list):
+                for worker_idx in range(self.workers):
+                    port = self.workers_start_port + len(ports)
+                    ports.append(port)
+                    client = ComfyStreamClient(
+                        host="127.0.0.1",
+                        port=port,
+                        spawn=True,
+                        comfyui_path=os.path.join(self.workspace, "main.py"),
+                        workspace=self.workspace,
+                        comfyui_args=[
+                            "--disable-cuda-malloc", 
+                            "--gpu-only", 
+                            "--preview-method", "none", 
+                            "--listen", 
+                            "--cuda-device", str(cuda_device), 
+                            "--fast", 
+                            "--enable-cors-header", "*", 
+                            "--port", str(port),
+                            "--disable-xformers", 
+                        ],
+                    )
+                    self.clients.append(client)
+                    logger.info(f"Created worker {worker_idx+1}/{self.workers} for CUDA device {cuda_device} on port {port}")
                 
         else:
             raise ValueError(f"Unknown client_mode: {getattr(self, 'client_mode', 'None')}")

@@ -405,6 +405,8 @@ async def on_startup(app: web.Application):
         client_mode=app["client_mode"],
         workspace=app["workspace"],
         workers=app["workers"],
+        cuda_devices=app["cuda_devices"],
+        workers_start_port=app.get("workers_start_port", 8195),
     )
     
     # Start the clients during initialization
@@ -491,6 +493,18 @@ if __name__ == "__main__":
         default=2,
         help="Number of worker processes to spawn when using --client-mode=spawn"
     )
+    parser.add_argument(
+        "--cuda-devices",
+        type=str,
+        default='0',
+        help="Comma-separated list of CUDA devices to use"
+    )
+    parser.add_argument(
+        "--workers-start-port",
+        type=int,
+        default=8195,
+        help="Starting port number for worker processes"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -509,6 +523,8 @@ if __name__ == "__main__":
     app["max_frame_wait"] = args.max_frame_wait
     app["client_mode"] = args.client_mode
     app["workers"] = args.workers
+    app["cuda_devices"] = args.cuda_devices
+    app["workers_start_port"] = args.workers_start_port
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
