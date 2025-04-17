@@ -3,6 +3,9 @@ comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0
 aiortc
 aiohttp
 toml
+tomli
+websockets
 twilio
 prometheus_client
 librosa
+torchvision
