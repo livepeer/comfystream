@@ -46,23 +46,21 @@ app.registerExtension({
                     fetch('/comfystream/extension_info')
                         .then(response => response.json())
                         .then(data => {
-                            const timestamp = Date.now(); // Add timestamp for cache busting
                             if (data.success) {
                                 // Use the current origin with the static route from extension_info
-                                this.iframe.src = `${window.location.origin}${data.static_route}/index.html?t=${timestamp}`; // Append timestamp
+                                this.iframe.src = `${window.location.origin}${data.static_route}/index.html`; 
                             } else {
                                 console.error("[ComfyStream] Error getting extension info:", data.error);
                                 // Fallback to hardcoded path
                                 const extensionName = "comfystream";
-                                this.iframe.src = `${window.location.origin}/extensions/${extensionName}/static/index.html?t=${timestamp}`; // Append timestamp
+                                this.iframe.src = `${window.location.origin}/extensions/${extensionName}/static/index.html`; 
                             }
                         })
                         .catch(error => {
                             console.error("[ComfyStream] Error fetching extension info:", error);
                             // Fallback to hardcoded path
                             const extensionName = "comfystream";
-                            const timestamp = Date.now(); // Add timestamp for cache busting
-                            this.iframe.src = `${window.location.origin}/extensions/${extensionName}/static/index.html?t=${timestamp}`; // Append timestamp
+                            this.iframe.src = `${window.location.origin}/extensions/${extensionName}/static/index.html`; 
                         });
                 };
                 
