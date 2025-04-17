@@ -76,3 +76,9 @@ nodes:
     url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
     branch: "main"
     type: "utility"
+
+  comfyui-advanced-liveportrait:
+    name: "ComfyUI FasterLivePortrait"
+    url: "https://github.com/pschroedl/ComfyUI-FasterLivePortrait.git"
+    branch: "dockerfile_build_tensorrt"
+    type: "tensorrt"
