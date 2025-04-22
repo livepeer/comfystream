@@ -533,57 +533,49 @@ class ComfyStreamClient:
             self.execution_complete_event.set()
     
     async def cleanup(self):
-        """Clean up resources, including terminating spawned ComfyUI process"""
-        async with self.cleanup_lock:
-            # Cancel all running tasks
-            for task in self.running_prompts.values():
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            self.running_prompts.clear()
-            
-            # Close WebSocket connection
-            if self.ws:
-                try:
-                    await self.ws.close()
-                except Exception as e:
-                    logger.error(f"Error closing WebSocket: {e}")
+        """Clean up resources and reset connection state completely."""
+        logger.info("Performing client cleanup and connection reset")
+        
+        # Cancel the WebSocket listener task
+        if self._ws_listener_task is not None and not self._ws_listener_task.done():
+            self._ws_listener_task.cancel()
+            try:
+                await self._ws_listener_task
+            except asyncio.CancelledError:
+                pass
+            self._ws_listener_task = None
+        
+        # Close WebSocket connection
+        if self.ws is not None:
+            try:
+                await self.ws.close()
+            except Exception as e:
+                logger.error(f"Error closing WebSocket: {e}")
+            finally:
                 self.ws = None
-            
-            # Cancel WebSocket listener task
-            if self._ws_listener_task and not self._ws_listener_task.done():
-                self._ws_listener_task.cancel()
-                try:
-                    await self._ws_listener_task
-                except asyncio.CancelledError:
-                    pass
-                self._ws_listener_task = None
-            
-            await self.cleanup_queues()
-            
-            # Terminate the ComfyUI process if we spawned it
-            if self.spawn and self._comfyui_proc:
-                logger.info(f"Terminating ComfyUI process (PID: {self._comfyui_proc.pid})")
-                try:
-                    self._comfyui_proc.terminate()
-                    try:
-                        # Wait for the process to terminate gracefully
-                        exit_code = self._comfyui_proc.wait(timeout=10)
-                        logger.info(f"ComfyUI process exited with code {exit_code}")
-                    except subprocess.TimeoutExpired:
-                        # If it doesn't terminate gracefully, kill it
-                        logger.warning("ComfyUI process did not terminate gracefully, killing...")
-                        self._comfyui_proc.kill()
-                        self._comfyui_proc.wait()
-                except Exception as e:
-                    logger.error(f"Error terminating ComfyUI process: {e}")
-                finally:
-                    self._comfyui_proc = None
-                    
-            logger.info("Client cleanup complete")
+        
+        # Reset all state variables
+        self._prompt_id = None
+        self._current_frame_id = None
+        self._frame_id_mapping = {}
+        self.current_prompts = []
+        
+        # Cancel any running prompt tasks
+        for task in self.running_prompts.values():
+            if not task.done():
+                task.cancel()
+        self.running_prompts = {}
+        
+        # Reset the execution event
+        self.execution_complete_event.set()
+        
+        # Clean up queues
+        await self.cleanup_queues()
+        
+        # Reset buffer
+        self.buffer = BytesIO()
+        
+        logger.info("Client cleanup completed, connection will be reestablished on next use")
     
     async def cleanup_queues(self):
         """Clean up tensor queues"""

@@ -432,24 +432,80 @@ class MultiServerPipeline:
         return nodes_info
 
     async def cleanup(self):
-        """Clean up all clients and background tasks"""
-        self.running = False
+        """Clean up resources used by the pipeline."""
+        logger.info("Performing complete pipeline cleanup")
         
-        # Cancel collector task
-        if hasattr(self, 'collector_task') and not self.collector_task.done():
-            self.collector_task.cancel()
+        # Cancel the dynamic output pacer task if it exists
+        if hasattr(self, "_pacer_task") and self._pacer_task is not None:
+            self._pacer_task.cancel()
             try:
-                await self.collector_task
+                await self._pacer_task
             except asyncio.CancelledError:
                 pass
+            self._pacer_task = None
         
-        # Clean up all clients
-        cleanup_tasks = []
-        for client in self.clients:
-            cleanup_tasks.append(client.cleanup())
-            
-        await asyncio.gather(*cleanup_tasks)
-        logger.info("All clients cleaned up")
+        # Cancel any frame timeout tasks
+        if hasattr(self, "_timeout_task") and self._timeout_task is not None:
+            self._timeout_task.cancel()
+            try:
+                await self._timeout_task
+            except asyncio.CancelledError:
+                pass
+            self._timeout_task = None
+        
+        # Reset frame tracking state
+        self.next_expected_frame_id = None
+        self.ordered_frames.clear()
+        self.next_frame_id = 1  # Reset frame ID counter for new connection
+        self.client_frame_mapping.clear()
+        
+        # Clear any queued frames
+        while not self.video_incoming_frames.empty():
+            try:
+                self.video_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
+        # Reset client state and connections
+        for i, client in enumerate(self.clients):
+            if client:
+                # Clean up client resources
+                try:
+                    await client.cleanup()
+                except Exception as e:
+                    logger.error(f"Error during client {i} cleanup: {e}")
+                
+                # Reset client connection status
+                if hasattr(client, 'ws_connected'):
+                    client.ws_connected = False
+                
+                # Clear any client-specific execution state
+                if hasattr(client, 'prompt_executing'):
+                    client.prompt_executing = False
+        
+        # Mark clients as needing reinitialization
+        self.clients_initialized = False
+        
+        # Clear any cached prompt mappings
+        if hasattr(self, "_prompt_ids"):
+            self._prompt_ids = {}
+        
+        # Reset warmup state
+        if hasattr(self, "_warmup_complete"):
+            self._warmup_complete = False
+        
+        # Reset any frame buffers
+        if hasattr(self, "_frame_buffer"):
+            self._frame_buffer.clear()
+        
+        # Ensure dynamic state like frame rate trackers are reset
+        if hasattr(self, "_last_frame_time"):
+            self._last_frame_time = None
+        
+        # Reset output counters
+        self.output_counter = 0
+        
+        logger.info("Pipeline cleanup completed, clients will be reinitialized on next connection")
 
     async def _dynamic_output_pacer(self):
         while self.running:

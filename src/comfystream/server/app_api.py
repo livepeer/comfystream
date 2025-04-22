@@ -206,19 +206,7 @@ async def offer(request):
     if not pipeline.clients:
         logger.info("Clients not initialized yet, starting clients...")
         await pipeline.start_clients()
-    # Check if any clients with spawn=True need to have servers started
-    elif pipeline.client_mode == "spawn":
-        start_tasks = []
-        for client in pipeline.clients:
-            if client.spawn and (not hasattr(client, '_comfyui_proc') or client._comfyui_proc is None):
-                start_tasks.append(client.start_server())
-        
-        # Start any servers that need to be started
-        if start_tasks:
-            logger.info(f"Starting ComfyUI servers for new workflow...")
-            await asyncio.gather(*start_tasks)
-            logger.info(f"Started {len(start_tasks)} ComfyUI servers")
-    
+     
     # Get parameters
     params = await request.json()
     
