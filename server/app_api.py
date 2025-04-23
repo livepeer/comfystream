@@ -21,10 +21,11 @@ from aiortc import (
 )
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
-from pipeline_api import Pipeline # TODO: Better integration (Are we replacing pipeline with pipeline_api?)
 from twilio.rest import Client
-from utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
-from metrics import MetricsManager, StreamStatsManager
+
+from comfystream.pipeline_api import Pipeline
+from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+from comfystream.server.metrics import MetricsManager, StreamStatsManager
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)

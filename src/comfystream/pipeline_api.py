@@ -12,8 +12,8 @@ import socket
 
 from typing import Any, Dict, Union, List, Optional, Deque
 from comfystream.client_api import ComfyStreamClient
-from utils import temporary_log_level # Not sure exactly what this does
-from config import ComfyConfig
+from comfystream.server.utils import temporary_log_level # Not sure exactly what this does
+from comfystream.server.utils.config import ComfyConfig
 
 WARMUP_RUNS = 5
 logger = logging.getLogger(__name__)
@@ -592,40 +592,79 @@ class MultiServerPipeline:
                     client._launch_comfyui_server()
             
             # Now create async functions to check server readiness
-            async def check_server_ready(client, timeout=60, check_interval=0.5):
-                """Async version of waiting for server to be ready"""
+            async def check_server_ready(client, timeout=60, check_interval=0.5, max_retries=3):
+                """Async version of waiting for server to be ready with retry logic"""
                 logger.info(f"Waiting for ComfyUI server on port {client.port} to be ready...")
                 
-                start_time = time.time()
-                while time.time() - start_time < timeout:
-                    # Check if process is still running
-                    if client._comfyui_proc and client._comfyui_proc.poll() is not None:
-                        return_code = client._comfyui_proc.poll()
-                        logger.error(f"ComfyUI process exited with code {return_code} before it was ready")
-                        raise RuntimeError(f"ComfyUI process exited with code {return_code}")
-                        
-                    # Try to connect to the server
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(2)
-                        result = sock.connect_ex((client.host, client.port))
-                        sock.close()
-                        
-                        if result == 0:
-                            logger.info(f"ComfyUI server on port {client.port} is now accepting connections")
-                            return
-                    except Exception:
-                        pass
-                        
-                    # Sleep and try again
-                    await asyncio.sleep(check_interval)
+                retries = 0
+                while retries <= max_retries:
+                    start_time = time.time()
+                    while time.time() - start_time < timeout:
+                        # Check if process is still running
+                        if client._comfyui_proc and client._comfyui_proc.poll() is not None:
+                            return_code = client._comfyui_proc.poll()
+                            logger.error(f"ComfyUI process exited with code {return_code} before it was ready")
+                            
+                            # If we still have retries left, restart the process
+                            if retries < max_retries:
+                                retries += 1
+                                logger.info(f"Retrying ComfyUI server on port {client.port} (attempt {retries}/{max_retries})")
+                                
+                                # Kill any zombie process
+                                if client._comfyui_proc:
+                                    try:
+                                        client._comfyui_proc.terminate()
+                                    except Exception:
+                                        pass
+                                
+                                # Start a new process
+                                client._launch_comfyui_server()
+                                await asyncio.sleep(2)  # Give it a moment to start
+                                break  # Break inner loop to restart timeout
+                            else:
+                                # We're out of retries
+                                raise RuntimeError(f"ComfyUI process exited with code {return_code} after {max_retries} retries")
+                                
+                        # Try to connect to the server
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(2)
+                            result = sock.connect_ex((client.host, client.port))
+                            sock.close()
+                            
+                            if result == 0:
+                                logger.info(f"ComfyUI server on port {client.port} is now accepting connections")
+                                return
+                        except Exception:
+                            pass
+                            
+                        # Sleep and try again
+                        await asyncio.sleep(check_interval)
                     
-                # If we get here, the server didn't start in time
-                logger.error(f"Timed out waiting for ComfyUI server on port {client.port}")
-                if client._comfyui_proc:
-                    client._comfyui_proc.terminate()
-                    client._comfyui_proc = None
-                raise RuntimeError(f"Timed out waiting for ComfyUI server on port {client.port}")
+                    # If we break out of the inner loop due to a restart, continue
+                    # If we break out due to timeout, increment retries and try again
+                    if time.time() - start_time >= timeout:
+                        retries += 1
+                        if retries <= max_retries:
+                            logger.info(f"Timed out waiting for ComfyUI server on port {client.port}, retrying (attempt {retries}/{max_retries})")
+                            
+                            # Kill any zombie process
+                            if client._comfyui_proc:
+                                try:
+                                    client._comfyui_proc.terminate()
+                                except Exception:
+                                    pass
+                            
+                            # Start a new process
+                            client._launch_comfyui_server()
+                            await asyncio.sleep(2)  # Give it a moment to start
+                        else:
+                            # We're out of retries
+                            logger.error(f"Timed out waiting for ComfyUI server on port {client.port} after {max_retries} retries")
+                            if client._comfyui_proc:
+                                client._comfyui_proc.terminate()
+                                client._comfyui_proc = None
+                            raise RuntimeError(f"Timed out waiting for ComfyUI server on port {client.port} after {max_retries} retries")
             
             # Wait for all servers to be ready in parallel
             wait_tasks = []

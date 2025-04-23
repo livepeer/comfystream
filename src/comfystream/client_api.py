@@ -396,7 +396,7 @@ class ComfyStreamClient:
                 # Store current frame ID for binary message handler to use
                 self._current_frame_id = frame_id
                 
-                # Find ETN_LoadImageBase64 nodes first
+                # Find LoadImageBase64 nodes first
                 load_image_nodes = []
                 for node_id, node in prompt.items():
                     if isinstance(node, dict) and node.get("class_type") in ["LoadImageBase64"]:
@@ -833,12 +833,14 @@ class ComfyStreamClient:
         else:
             # Only add default arguments if comfyui_args was not provided
             cmd.extend([
+                "--disable-cuda-malloc",  # Helps prevent CUDA memory issues
+                "--gpu-only",             # Use GPU for all operations when possible
+                "--preview-method", "none", # Disable previews to save memory
                 "--listen",
                 "--port", str(self.port),
                 "--fast",
                 "--enable-cors-header", "*",
-                "--disable-xformers",
-                "--preview-method", "none"
+                "--disable-xformers",     # More compatible with some systems
             ])
             
             # Add workspace if provided and not in comfyui_args
@@ -877,8 +879,11 @@ class ComfyStreamClient:
             # Start a thread to log output
             def log_output(stream, level):
                 for line in iter(stream.readline, ''):
-                    # TODO: Handle error logs from comfy
-                    logger.debug(f"ComfyUI[{self.port}]: {line.strip()}")
+                    # Check for known error patterns and log them at appropriate levels
+                    if "error" in line.lower() or "exception" in line.lower():
+                        logger.error(f"ComfyUI[{self.port}]: {line.strip()}")
+                    else:
+                        logger.debug(f"ComfyUI[{self.port}]: {line.strip()}")
 
             import threading
             threading.Thread(target=log_output, args=(self._comfyui_proc.stdout, logging.INFO), daemon=True).start()
