@@ -573,7 +573,7 @@ class MultiServerPipeline:
                             "--listen", 
                             "--cuda-device", str(cuda_device), 
                             "--fast", 
-                            "--enable-cors-header", "*", 
+                            "--enable-cors-header", "\"*\"", 
                             "--port", str(port),
                             "--disable-xformers", 
                         ],

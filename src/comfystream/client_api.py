@@ -839,7 +839,7 @@ class ComfyStreamClient:
                 "--listen",
                 "--port", str(self.port),
                 "--fast",
-                "--enable-cors-header", "*",
+                "--enable-cors-header", "\"*\"",
                 "--disable-xformers",     # More compatible with some systems
             ])
             
