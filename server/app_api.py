@@ -206,7 +206,17 @@ async def offer(request):
     # Check if clients are initialized, and initialize them if not
     if not pipeline.clients:
         logger.info("Clients not initialized yet, starting clients...")
-        await pipeline.start_clients()
+        results = await pipeline.start_clients()
+
+        # Check if there was an error during startup
+        if results is None and hasattr(pipeline, 'startup_error') and pipeline.startup_error:
+            error_message = pipeline.startup_error
+            logger.error(f"Failed to initialize clients: {error_message}")
+            return web.Response(
+                status=500,
+                content_type="application/json",
+                text=json.dumps({"error": f"Failed to start ComfyUI: {error_message}"})
+        )
      
     # Get parameters
     params = await request.json()
@@ -396,7 +406,11 @@ async def on_startup(app: web.Application):
         workers=app["workers"],
         cuda_devices=app["cuda_devices"],
         workers_start_port=app.get("workers_start_port", 8195),
+        comfyui_log_level=app.get("comfyui_log_level", None),
     )
+
+    if (app.get("client_mode") == "spawn" and app.get("comfyui_log_level") is None):
+        print("To see spawned ComfyUI logs, add --comfyui_log_level=DEBUG")
     
     # Start the clients during initialization
     # await app["pipeline"].start_clients()
@@ -553,9 +567,11 @@ if __name__ == "__main__":
         sys.stdout.flush()
 
     # Allow overriding of ComyfUI log levels.
+    # TODO: This will have to pipe to spawn clients
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
+        app["comfyui_log_level"] = args.comfyui_log_level
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 

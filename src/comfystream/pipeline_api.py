@@ -32,6 +32,7 @@ class MultiServerPipeline:
             workers: int = 2, 
             cuda_devices: str = '0',
             workers_start_port: int = 8195,
+            comfyui_log_level: str = None,
         ):
         """Initialize the pipeline with the given configuration.
         Args:
@@ -47,6 +48,7 @@ class MultiServerPipeline:
                 "spawn": Spawn ComfyUI clients as external processes.
             workers_start_port: The starting port number for worker processes (default: 8195).
             cuda_devices: The list of CUDA devices to use for the ComfyUI clients.
+            comfyui_log_level: The logging level for ComfyUI
         """
 
         # There are two methods for starting the clients:
@@ -110,6 +112,8 @@ class MultiServerPipeline:
         self.last_output_time = None
         self.frame_interval_history = collections.deque(maxlen=30)
         self.output_pacer_task = asyncio.create_task(self._dynamic_output_pacer())
+
+        self.comfyui_log_level = comfyui_log_level
     
     async def _collect_processed_frames(self):
         """Background task to collect processed frames from all clients"""
@@ -151,7 +155,7 @@ class MultiServerPipeline:
                                 
                                 # Remove the mapping
                                 self.client_frame_mapping.pop(frame_id, None)
-                                logger.info(f"Collected processed frame from client {i}, frame_id: {frame_id}")
+                                logger.debug(f"Collected processed frame from client {i}, frame_id: {frame_id}")
                             except asyncio.TimeoutError:
                                 # No frame ready yet, continue
                                 pass
@@ -185,7 +189,7 @@ class MultiServerPipeline:
         if self.ordered_frames and self.next_expected_frame_id in self.ordered_frames:
             timestamp, tensor = self.ordered_frames.pop(self.next_expected_frame_id)
             await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
-            logger.info(f"Released frame {self.next_expected_frame_id} to output queue")
+            logger.debug(f"Released frame {self.next_expected_frame_id} to output queue")
             if self.ordered_frames:
                 self.next_expected_frame_id = min(self.ordered_frames.keys())
             else:
@@ -523,7 +527,7 @@ class MultiServerPipeline:
                 self.last_output_time = now
 
                 await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
-                logger.info(f"Released frame {self.next_expected_frame_id} to output queue")
+                logger.debug(f"Released frame {self.next_expected_frame_id} to output queue")
 
                 # Update next expected frame ID
                 if self.ordered_frames:
@@ -542,143 +546,100 @@ class MultiServerPipeline:
         logger.info(f"Starting clients with mode: {self.client_mode}")
         
         self.clients = []
+        self.startup_error = None
         
-        if hasattr(self, 'client_mode') and self.client_mode == "toml":
-            # Use config file to create clients
-            for server_config in self.servers:
-                self.clients.append(ComfyStreamClient(
-                    host=server_config["host"],
-                    port=server_config["port"],
-                    spawn=False,
-                ))
-                
-        elif hasattr(self, 'client_mode') and self.client_mode == "spawn":
-            # Spin up clients as external processes
-            ports = []
-            cuda_device_list = [d.strip() for d in str(self.cuda_devices).split(',') if d.strip()]
-            for device_idx, cuda_device in enumerate(cuda_device_list):
-                for worker_idx in range(self.workers):
-                    port = self.workers_start_port + len(ports)
-                    ports.append(port)
-                    client = ComfyStreamClient(
-                        host="127.0.0.1",
-                        port=port,
-                        spawn=True,
-                        comfyui_path=os.path.join(self.workspace, "main.py"),
-                        workspace=self.workspace,
-                        comfyui_args=[
-                            "--disable-cuda-malloc", 
-                            "--gpu-only", 
-                            "--preview-method", "none", 
-                            "--listen", 
-                            "--cuda-device", str(cuda_device), 
-                            "--fast", 
-                            "--enable-cors-header", "\"*\"", 
-                            "--port", str(port),
-                            "--disable-xformers", 
-                        ],
-                    )
-                    self.clients.append(client)
-                    logger.info(f"Created worker {worker_idx+1}/{self.workers} for CUDA device {cuda_device} on port {port}")
-                
-        else:
-            raise ValueError(f"Unknown client_mode: {getattr(self, 'client_mode', 'None')}")
-            
-        # Start all ComfyUI servers in parallel if in spawn mode
-        if hasattr(self, 'client_mode') and self.client_mode == "spawn":
-            # First, launch all server processes in parallel
-            for client in self.clients:
-                if client.spawn:
-                    client._launch_comfyui_server()
-            
-            # Now create async functions to check server readiness
-            async def check_server_ready(client, timeout=60, check_interval=0.5, max_retries=3):
-                """Async version of waiting for server to be ready with retry logic"""
-                logger.info(f"Waiting for ComfyUI server on port {client.port} to be ready...")
-                
-                retries = 0
-                while retries <= max_retries:
-                    start_time = time.time()
-                    while time.time() - start_time < timeout:
-                        # Check if process is still running
-                        if client._comfyui_proc and client._comfyui_proc.poll() is not None:
-                            return_code = client._comfyui_proc.poll()
-                            logger.error(f"ComfyUI process exited with code {return_code} before it was ready")
-                            
-                            # If we still have retries left, restart the process
-                            if retries < max_retries:
-                                retries += 1
-                                logger.info(f"Retrying ComfyUI server on port {client.port} (attempt {retries}/{max_retries})")
-                                
-                                # Kill any zombie process
-                                if client._comfyui_proc:
-                                    try:
-                                        client._comfyui_proc.terminate()
-                                    except Exception:
-                                        pass
-                                
-                                # Start a new process
-                                client._launch_comfyui_server()
-                                await asyncio.sleep(2)  # Give it a moment to start
-                                break  # Break inner loop to restart timeout
-                            else:
-                                # We're out of retries
-                                raise RuntimeError(f"ComfyUI process exited with code {return_code} after {max_retries} retries")
-                                
-                        # Try to connect to the server
-                        try:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sock.settimeout(2)
-                            result = sock.connect_ex((client.host, client.port))
-                            sock.close()
-                            
-                            if result == 0:
-                                logger.info(f"ComfyUI server on port {client.port} is now accepting connections")
-                                return
-                        except Exception:
-                            pass
-                            
-                        # Sleep and try again
-                        await asyncio.sleep(check_interval)
+        try:
+            if hasattr(self, 'client_mode') and self.client_mode == "toml":
+                # Use config file to create clients
+                for server_config in self.servers:
+                    self.clients.append(ComfyStreamClient(
+                        host=server_config["host"],
+                        port=server_config["port"],
+                        spawn=False,
+                        comfyui_log_level=self.comfyui_log_level,
+                    ))
                     
-                    # If we break out of the inner loop due to a restart, continue
-                    # If we break out due to timeout, increment retries and try again
-                    if time.time() - start_time >= timeout:
-                        retries += 1
-                        if retries <= max_retries:
-                            logger.info(f"Timed out waiting for ComfyUI server on port {client.port}, retrying (attempt {retries}/{max_retries})")
-                            
-                            # Kill any zombie process
-                            if client._comfyui_proc:
-                                try:
-                                    client._comfyui_proc.terminate()
-                                except Exception:
-                                    pass
-                            
-                            # Start a new process
-                            client._launch_comfyui_server()
-                            await asyncio.sleep(2)  # Give it a moment to start
-                        else:
-                            # We're out of retries
-                            logger.error(f"Timed out waiting for ComfyUI server on port {client.port} after {max_retries} retries")
-                            if client._comfyui_proc:
-                                client._comfyui_proc.terminate()
-                                client._comfyui_proc = None
-                            raise RuntimeError(f"Timed out waiting for ComfyUI server on port {client.port} after {max_retries} retries")
-            
-            # Wait for all servers to be ready in parallel
-            wait_tasks = []
-            for client in self.clients:
-                if client.spawn:
-                    wait_tasks.append(check_server_ready(client))
-            
-            if wait_tasks:
-                logger.info(f"Waiting for {len(wait_tasks)} ComfyUI servers to become ready...")
-                await asyncio.gather(*wait_tasks)
-                logger.info(f"All {len(wait_tasks)} ComfyUI servers are ready")
+            elif hasattr(self, 'client_mode') and self.client_mode == "spawn":
+                # Spin up clients as external processes
+                ports = []
+                cuda_device_list = [d.strip() for d in str(self.cuda_devices).split(',') if d.strip()]
+                for device_idx, cuda_device in enumerate(cuda_device_list):
+                    for worker_idx in range(self.workers):
+                        port = self.workers_start_port + len(ports)
+                        ports.append(port)
+                        client = ComfyStreamClient(
+                            host="127.0.0.1",
+                            port=port,
+                            spawn=True,
+                            comfyui_path=os.path.join(self.workspace, "main.py"),
+                            workspace=self.workspace,
+                            comfyui_args=[
+                                "--disable-cuda-malloc", 
+                                "--gpu-only", 
+                                "--preview-method", "none", 
+                                "--listen", 
+                                "--cuda-device", str(cuda_device), 
+                                "--fast", 
+                                "--enable-cors-header", "\"*\"", 
+                                "--port", str(port),
+                                "--disable-xformers", 
+                            ],
+                            comfyui_log_level=self.comfyui_log_level,
+                        )
+                        self.clients.append(client)
+                        logger.info(f"Created worker {worker_idx+1}/{self.workers} for CUDA device {cuda_device} on port {port}")
                 
-        logger.info(f"Initialized {len(self.clients)} clients")
-        return self.clients
-        
+            else:
+                raise ValueError(f"Unknown client_mode: {getattr(self, 'client_mode', 'None')}")
+            
+            # Start all ComfyUI servers in parallel if in spawn mode
+            if hasattr(self, 'client_mode') and self.client_mode == "spawn":
+                try:
+                    # Get all spawn clients
+                    spawn_clients = [client for client in self.clients if client.spawn]
+                    if spawn_clients:
+                        logger.info(f"Starting {len(spawn_clients)} ComfyUI servers in parallel")
+                        
+                        # First validate all clients (keeping original validation logic)
+                        for client in spawn_clients:
+                            # These checks are from the original start_server method
+                            if not client.comfyui_path:
+                                raise ValueError("comfyui_path must be provided when spawn=True")
+                            if not os.path.exists(client.comfyui_path):
+                                raise FileNotFoundError(f"ComfyUI path does not exist: {client.comfyui_path}")
+                        
+                        # Start all server processes WITHOUT waiting for them to be ready
+                        for client in spawn_clients:
+                            client.launch_comfyui_server()
+                        
+                        # Now wait for all servers to be ready in parallel using thread pool
+                        await asyncio.gather(*[
+                            asyncio.to_thread(client.wait_for_server_ready) 
+                            for client in spawn_clients
+                        ])
+                        
+                except Exception as e:
+                    # Clean up any clients that might have started
+                    for client in self.clients:
+                        if hasattr(client, '_comfyui_proc') and client._comfyui_proc:
+                            try:
+                                client._comfyui_proc.terminate()
+                            except:
+                                pass
+                    
+                    self.clients = []
+                    self.startup_error = str(e)
+                    logger.error(f"Failed to start ComfyUI servers: {e}")
+                    return None
+            
+            logger.info(f"Initialized {len(self.clients)} clients")
+            return self.clients
+
+        except Exception as e:
+            self.startup_error = str(e)
+            logger.error(f"Error starting clients: {e}")
+            self.clients = []
+            return None
+
 # For backwards compatibility, maintain the original Pipeline name
 Pipeline = MultiServerPipeline

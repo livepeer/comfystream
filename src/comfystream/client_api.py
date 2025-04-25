@@ -30,7 +30,8 @@ class ComfyStreamClient:
             spawn: bool = False,
             comfyui_path: str = None,
             comfyui_args: list = None,
-            workspace: str = None
+            workspace: str = None,
+            comfyui_log_level: str = None,
         ):
         """
         Initialize the ComfyStream client to use the ComfyUI API.
@@ -42,6 +43,7 @@ class ComfyStreamClient:
             comfyui_path: Path to the ComfyUI main.py file (required if spawn=True)
             comfyui_args: Additional arguments for ComfyUI
             workspace: The workspace directory for ComfyUI
+            comfyui_log_level: The logging level for ComfyUI
         """
         self.host = host
         self.port = port
@@ -67,8 +69,10 @@ class ComfyStreamClient:
         self._prompt_id = None
         self._current_frame_id = None  # Track the current frame being processed
         self._frame_id_mapping = {}    # Map prompt_ids to frame_ids
+
+        self.comfyui_log_level = comfyui_log_level
     
-        logger.info(f"ComfyStreamClient initialized with host: {host}, port: {port}, client_id: {self.client_id}")
+        logger.info(f"[Client[{self.port}]: ComfyStreamClient initialized with host: {host}, port: {port}, client_id: {self.client_id}")
     
     async def set_prompts(self, prompts: List[Dict]):
         """Set prompts and run them (compatible with original interface)"""
@@ -80,7 +84,7 @@ class ComfyStreamClient:
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
             
-        logger.info(f"Set {len(self.current_prompts)} prompts for execution")
+        logger.info(f"[Client[{self.port}]: Set {len(self.current_prompts)} prompts for execution")
     
     async def update_prompts(self, prompts: List[Dict]):
         """Update existing prompts (compatible with original interface)"""
@@ -89,11 +93,11 @@ class ComfyStreamClient:
                 "Number of updated prompts must match the number of currently running prompts."
             )
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-        logger.info(f"Updated {len(self.current_prompts)} prompts")
+        logger.info(f"[Client[{self.port}]: Updated {len(self.current_prompts)} prompts")
     
     async def run_prompt(self, prompt_index: int):
         """Run a prompt continuously, processing new frames as they arrive"""
-        logger.info(f"Running prompt {prompt_index}")
+        logger.info(f"[Client[{self.port}]: Running prompt {prompt_index}")
         
         # Make sure WebSocket is connected
         await self._connect_websocket()
@@ -129,7 +133,7 @@ class ComfyStreamClient:
                     await asyncio.sleep(0.01)  # Short sleep to prevent CPU spinning
                 
         except asyncio.CancelledError:
-            logger.info(f"Prompt {prompt_index} execution cancelled")
+            logger.info(f"[Client[{self.port}]: Prompt {prompt_index} execution cancelled")
             raise
         except Exception as e:
             logger.error(f"Error in run_prompt: {str(e)}")
@@ -149,7 +153,7 @@ class ComfyStreamClient:
                     pass
                 self.ws = None
             
-            logger.info(f"Connecting to WebSocket at {self.server_address}?clientId={self.client_id}")
+            logger.info(f"[Client[{self.port}]: Connecting to WebSocket at {self.server_address}?clientId={self.client_id}")
             
             try:
                 # Connect with proper error handling
@@ -162,12 +166,12 @@ class ComfyStreamClient:
                     ssl=None
                 )
                 
-                logger.info("WebSocket connected successfully")
+                logger.info(f"[Client[{self.port}]: WebSocket connected successfully")
                 
                 # Start the listener task if not already running
                 if self._ws_listener_task is None or self._ws_listener_task.done():
                     self._ws_listener_task = asyncio.create_task(self._ws_listener())
-                    logger.info("Started WebSocket listener task")
+                    logger.info(f"[Client[{self.port}]: Started WebSocket listener task")
                     
                 return self.ws
                 
@@ -190,7 +194,7 @@ class ComfyStreamClient:
     async def _ws_listener(self):
         """Listen for WebSocket messages and process them"""
         try:
-            logger.info(f"WebSocket listener started")
+            logger.info(f"[Client[{self.port}]: WebSocket listener started")
             while True:
                 if self.ws is None:
                     try:
@@ -212,7 +216,7 @@ class ComfyStreamClient:
                         await self._handle_binary_message(message)
                     
                 except websockets.exceptions.ConnectionClosed:
-                    logger.info("WebSocket connection closed")
+                    logger.info(f"[Client[{self.port}]: WebSocket connection closed")
                     self.ws = None
                     await asyncio.sleep(1)
                 except Exception as e:
@@ -220,7 +224,7 @@ class ComfyStreamClient:
                     await asyncio.sleep(1)
                     
         except asyncio.CancelledError:
-            logger.info("WebSocket listener cancelled")
+            logger.info(f"[Client[{self.port}]: WebSocket listener cancelled")
             raise
         except Exception as e:
             logger.error(f"Unexpected error in WebSocket listener: {e}")
@@ -231,8 +235,8 @@ class ComfyStreamClient:
             data = json.loads(message)
             message_type = data.get("type", "unknown")
 
-            # logger.info(f"Received message type: {message_type}")
-            logger.debug(f"{data}")
+            # logger.info(f"[Client[{self.port}]: Received message type: {message_type}")
+            # logger.debug(f"{data}")
 
             # Example output
             '''
@@ -269,7 +273,7 @@ class ComfyStreamClient:
             if message_type == "execution_start":
                 if "data" in data and "prompt_id" in data["data"]:
                     self._prompt_id = data["data"]["prompt_id"]
-                    logger.info(f"Execution started for prompt {self._prompt_id}")
+                    logger.debug(f"[Client[{self.port}]: Execution started for prompt {self._prompt_id}")
 
                     # Let's queue the next prompt here!
                     self.execution_complete_event.set()
@@ -391,7 +395,7 @@ class ComfyStreamClient:
                     # Try to get frame_id from side_data
                     if hasattr(frame_or_tensor.side_data, 'frame_id'):
                         frame_id = frame_or_tensor.side_data.frame_id
-                        logger.info(f"Found frame_id in side_data: {frame_id}")
+                        logger.debug(f"Found frame_id in side_data: {frame_id}")
                 
                 # Store current frame ID for binary message handler to use
                 self._current_frame_id = frame_id
@@ -519,13 +523,13 @@ class ComfyStreamClient:
                             # Map prompt_id to frame_id for later retrieval
                             if frame_id is not None:
                                 self._frame_id_mapping[self._prompt_id] = frame_id
-                                logger.info(f"Mapped prompt_id {self._prompt_id} to frame_id {frame_id}")
+                                logger.debug(f"Mapped prompt_id {self._prompt_id} to frame_id {frame_id}")
                         else:
                             error_text = await response.text()
                             logger.error(f"Error queueing prompt: {response.status} - {error_text}")
                             self.execution_complete_event.set()
             else:
-                logger.info("No tensor in input queue, skipping prompt execution")
+                logger.debug("No tensor in input queue, skipping prompt execution")
                 self.execution_complete_event.set()
                 
         except Exception as e:
@@ -534,7 +538,7 @@ class ComfyStreamClient:
     
     async def cleanup(self):
         """Clean up resources and reset connection state completely."""
-        logger.info("Performing client cleanup and connection reset")
+        logger.info(f"[Client[{self.port}]: Performing client cleanup and connection reset")
         
         # Cancel the WebSocket listener task
         if self._ws_listener_task is not None and not self._ws_listener_task.done():
@@ -575,7 +579,7 @@ class ComfyStreamClient:
         # Reset buffer
         self.buffer = BytesIO()
         
-        logger.info("Client cleanup completed, connection will be reestablished on next use")
+        logger.info(f"[Client[{self.port}]: Client cleanup completed, connection will be reestablished on next use")
     
     async def cleanup_queues(self):
         """Clean up tensor queues"""
@@ -597,7 +601,7 @@ class ComfyStreamClient:
             except:
                 pass
         
-        logger.info("Tensor queues cleared")
+        logger.info(f"[Client[{self.port}]: Tensor queues cleared")
     
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():
@@ -615,12 +619,12 @@ class ComfyStreamClient:
         # Check if the result is a tuple with frame_id
         if isinstance(result, tuple) and len(result) == 2:
             frame_id, tensor = result
-            logger.info(f"Got processed tensor from output queue with frame_id {frame_id}")
+            logger.debug(f"[Client[{self.port}]: Got processed tensor from output queue with frame_id {frame_id}")
             # Return both the frame_id and tensor to help with ordering in the pipeline
             return frame_id, tensor
         else:
             # If it's not a tuple with frame_id, just return the tensor
-            logger.info("Got processed tensor from output queue without frame_id")
+            logger.debug("Got processed tensor from output queue without frame_id")
             return result
     
     async def get_audio_output(self):
@@ -776,16 +780,88 @@ class ComfyStreamClient:
 
         return all_prompts_nodes_info
 
-    async def start_server(self):
-        """Launch the ComfyUI server if spawn is True"""
-        if self.spawn:
-            if not self.comfyui_path:
-                raise ValueError("comfyui_path must be provided when spawn=True")
-            self._launch_comfyui_server()
-            self._wait_for_server_ready()
-            logger.info("ComfyUI server started successfully")
-        else:
-            logger.info("Using existing ComfyUI server (spawn=False)")
+    def launch_comfyui_server(self):
+        """Launch ComfyUI as a subprocess"""
+        logger.info(f"[Client[{self.port}]: Spawning ComfyUI server...")
+        
+        # Start the process
+        try:
+            # Build the command with just the basics
+            cmd = [
+                "python", self.comfyui_path,
+            ]
+            
+            # Add the arguments from comfyui_args (retreived from pipeline_api)
+            '''
+            [
+                "--disable-cuda-malloc", 
+                "--gpu-only", 
+                "--preview-method", "none", 
+                "--listen", 
+                "--cuda-device", str(cuda_device), 
+                "--fast", 
+                "--enable-cors-header", "\"*\"", 
+                "--port", str(port),
+                "--disable-xformers", 
+            ]
+            '''
+            cmd.extend(self.comfyui_args)
+            
+            logger.info(f"[Client[{self.port}]: Starting ComfyUI with command: {' '.join(cmd)}")
+            self._comfyui_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=os.environ.copy(),
+                text=True,
+                bufsize=1,  # Line buffered
+            )
+            
+            # Start a thread to log output
+            def log_output(stream):
+                for line in iter(stream.readline, ''):
+                    # TODO: Handle different log levels?
+                    if self.comfyui_log_level == "DEBUG":
+                        logger.info(f"ComfyUI[{self.port}]: {line.strip()}")
+
+            import threading
+            threading.Thread(target=log_output, args=(self._comfyui_proc.stdout,), daemon=True).start()
+            threading.Thread(target=log_output, args=(self._comfyui_proc.stderr,), daemon=True).start()
+            
+            logger.info(f"[Client[{self.port}]: Started ComfyUI process with PID {self._comfyui_proc.pid}")
+        except Exception as e:
+            logger.error(f"Failed to spawn ComfyUI: {e}")
+            raise
+            
+    def wait_for_server_ready(self, timeout=60, check_interval=0.5):
+        """Wait until the ComfyUI server is accepting connections"""
+        logger.info(f"[Client[{self.port}]: Waiting for ComfyUI server to be ready...")
+        
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            # Check if process is still running
+            if self._comfyui_proc and self._comfyui_proc.poll() is not None:
+                return_code = self._comfyui_proc.poll()
+                logger.error(f"ComfyUI process exited with code {return_code} before it was ready")
+                raise RuntimeError(f"ComfyUI process exited with code {return_code}")
+                
+            # Try to connect to the server
+            try:
+                with socket.create_connection((self.host, self.port), timeout=2):
+                    logger.info(f"[Client[{self.port}]: ComfyUI server is now accepting connections")
+                    return
+            except (ConnectionRefusedError, socket.timeout, OSError):
+                # Sleep and try again
+                time.sleep(check_interval)
+                
+        # If we get here, the server didn't start in time
+        logger.error(f"[Client[{self.port}]: Timed out waiting for ComfyUI server")
+
+        if self._comfyui_proc:
+            self._comfyui_proc.terminate()
+            self._comfyui_proc = None
+
+        raise RuntimeError(f"Timed out waiting for ComfyUI server on port {self.port}")
 
     async def _fetch_object_info(self, session: aiohttp.ClientSession, url: str, class_type: str) -> Optional[tuple[str, Any]]:
         """Helper function to fetch object info for a single class type."""
@@ -817,107 +893,3 @@ class ComfyStreamClient:
 
         # Return class_type and None if any error occurred
         return class_type, None
-
-    def _launch_comfyui_server(self):
-        """Launch ComfyUI as a subprocess"""
-        logger.info(f"Spawning ComfyUI server on port {self.port}...")
-        
-        # Build the command with just the basics
-        cmd = [
-            "python", self.comfyui_path,
-        ]
-        
-        # Add the arguments from comfyui_args if provided
-        if self.comfyui_args:
-            cmd.extend(self.comfyui_args)
-        else:
-            # Only add default arguments if comfyui_args was not provided
-            cmd.extend([
-                "--disable-cuda-malloc",  # Helps prevent CUDA memory issues
-                "--gpu-only",             # Use GPU for all operations when possible
-                "--preview-method", "none", # Disable previews to save memory
-                "--listen",
-                "--port", str(self.port),
-                "--fast",
-                "--enable-cors-header", "\"*\"",
-                "--disable-xformers",     # More compatible with some systems
-            ])
-            
-            # Add workspace if provided and not in comfyui_args
-            if self.workspace:
-                cmd.extend(["--dir", self.workspace])
-            
-            # Check if CUDA is available and add device argument
-            if hasattr(torch, 'cuda') and torch.cuda.is_available():
-                cuda_device = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
-                cmd.extend(["--cuda-device", cuda_device])
-        
-        # Always ensure port is set correctly (override if provided in comfyui_args)
-        # Remove any existing --port argument
-        if "--port" in cmd:
-            port_index = cmd.index("--port")
-            # Remove both the flag and its value
-            if port_index + 1 < len(cmd):
-                cmd.pop(port_index + 1)
-            cmd.pop(port_index)
-        
-        # Add our port
-        cmd.extend(["--port", str(self.port)])
-        
-        # Start the process
-        try:
-            logger.info(f"Starting ComfyUI with command: {' '.join(cmd)}")
-            self._comfyui_proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=os.environ.copy(),
-                text=True,
-                bufsize=1,  # Line buffered
-            )
-            
-            # Start a thread to log output
-            def log_output(stream, level):
-                for line in iter(stream.readline, ''):
-                    # Check for known error patterns and log them at appropriate levels
-                    if "error" in line.lower() or "exception" in line.lower():
-                        logger.error(f"ComfyUI[{self.port}]: {line.strip()}")
-                    else:
-                        logger.debug(f"ComfyUI[{self.port}]: {line.strip()}")
-
-            import threading
-            threading.Thread(target=log_output, args=(self._comfyui_proc.stdout, logging.INFO), daemon=True).start()
-            threading.Thread(target=log_output, args=(self._comfyui_proc.stderr, logging.INFO), daemon=True).start()
-            
-            logger.info(f"Started ComfyUI process with PID {self._comfyui_proc.pid}")
-        except Exception as e:
-            logger.error(f"Failed to spawn ComfyUI: {e}")
-            raise
-            
-    def _wait_for_server_ready(self, timeout=60, check_interval=0.5):
-        """Wait until the ComfyUI server is accepting connections"""
-        logger.info(f"Waiting for ComfyUI server on port {self.port} to be ready...")
-        
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            # Check if process is still running
-            if self._comfyui_proc and self._comfyui_proc.poll() is not None:
-                return_code = self._comfyui_proc.poll()
-                logger.error(f"ComfyUI process exited with code {return_code} before it was ready")
-                raise RuntimeError(f"ComfyUI process exited with code {return_code}")
-                
-            # Try to connect to the server
-            try:
-                with socket.create_connection((self.host, self.port), timeout=2):
-                    logger.info(f"ComfyUI server on port {self.port} is now accepting connections")
-                    return
-            except (ConnectionRefusedError, socket.timeout, OSError):
-                # Sleep and try again
-                time.sleep(check_interval)
-                
-        # If we get here, the server didn't start in time
-        logger.error(f"Timed out waiting for ComfyUI server on port {self.port}")
-        if self._comfyui_proc:
-            self._comfyui_proc.terminate()
-            self._comfyui_proc = None
-        raise RuntimeError(f"Timed out waiting for ComfyUI server on port {self.port}")
