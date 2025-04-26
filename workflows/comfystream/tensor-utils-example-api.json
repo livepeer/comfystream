@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "images": [
+      "bytes": [
         "2",
         0
       ]
@@ -13,7 +13,7 @@
   },
   "2": {
     "inputs": {
-      "image": "None"
+      "bytes": "None"
     },
     "class_type": "LoadTensor",
     "_meta": {
