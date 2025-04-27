@@ -1,27 +1,40 @@
+import av
+import torch
+import base64
 import asyncio
-from typing import List
 import logging
+import numpy as np
+from typing import List, Union
 
-from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
 
-from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
+from comfy.distributed.executors import ProcessPoolExecutor
+from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+
 
 logger = logging.getLogger(__name__)
 
 
 class ComfyStreamClient:
-    def __init__(self, max_workers: int = 1, **kwargs):
+    def __init__(self, max_workers: int = 1, executor_type: str = "process", **kwargs):
         config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=1)
+        executor = ProcessPoolExecutor(max_workers=max_workers) if executor_type == "process" else None
+        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers, executor=executor)
         self.running_prompts = {} # To be used for cancelling tasks
         self.current_prompts = []
         self.cleanup_lock = asyncio.Lock()
 
+        self.video_incoming_frames = asyncio.Queue()
+        self.video_outgoing_frames = asyncio.Queue()
+
+        self.audio_incoming_frames = asyncio.Queue()
+        self.audio_outgoing_frames = asyncio.Queue()
+
+
     async def set_prompts(self, prompts: List[PromptDictInput]):
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        self.current_prompts = prompts
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
@@ -32,12 +45,20 @@ class ComfyStreamClient:
             raise ValueError(
                 "Number of updated prompts must match the number of currently running prompts."
             )
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        self.current_prompts = prompts
 
     async def run_prompt(self, prompt_index: int):
         while True:
+            prompt = self.current_prompts[prompt_index].deepcopy()
             try:
-                await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
+                frame = await self.video_incoming_frames.get()
+                frame_bytes = await self.video_preprocess(frame)
+                prompt["2"]["inputs"]["bytes"] = frame_bytes
+                converted_prompt = convert_prompt(prompt)
+                output = await self.comfy_client.queue_prompt(converted_prompt)
+                output_bytes = output["1"]["results"][0]
+                output_frame = await self.video_postprocess(output_bytes)
+                await self.video_outgoing_frames.put(output_frame)
             except Exception as e:
                 await self.cleanup()
                 logger.error(f"Error running prompt: {str(e)}")
@@ -66,31 +87,46 @@ class ComfyStreamClient:
 
         
     async def cleanup_queues(self):
-        while not tensor_cache.image_inputs.empty():
-            tensor_cache.image_inputs.get()
+        while not self.video_incoming_frames.empty():
+            self.video_incoming_frames.get()
 
-        while not tensor_cache.audio_inputs.empty():
-            tensor_cache.audio_inputs.get()
+        while not self.audio_incoming_frames.empty():
+            self.audio_incoming_frames.get()
 
-        while not tensor_cache.image_outputs.empty():
-            await tensor_cache.image_outputs.get()
+        while not self.video_outgoing_frames.empty():
+            self.video_outgoing_frames.get()
 
-        while not tensor_cache.audio_outputs.empty():
-            await tensor_cache.audio_outputs.get()
+        while not self.audio_outgoing_frames.empty():
+            self.audio_outgoing_frames.get()
 
-    def put_video_input(self, frame):
-        if tensor_cache.image_inputs.full():
-            tensor_cache.image_inputs.get(block=True)
-        tensor_cache.image_inputs.put(frame)
+    async def put_video_input(self, frame):
+        await self.video_incoming_frames.put(frame)
     
-    def put_audio_input(self, frame):
-        tensor_cache.audio_inputs.put(frame)
+    async def put_audio_input(self, frame):
+        await self.audio_incoming_frames.put(frame)
 
     async def get_video_output(self):
-        return await tensor_cache.image_outputs.get()
+        return await self.video_outgoing_frames.get()
     
     async def get_audio_output(self):
-        return await tensor_cache.audio_outputs.get()
+        return await self.audio_outgoing_frames.get()
+    
+    async def video_preprocess(self, frame: av.VideoFrame) -> Union[torch.Tensor, np.ndarray]:
+        frame_np = frame.to_ndarray(format="rgb24").astype(np.float16) / 255.0
+        raw_bytes = base64.b64encode(frame_np.tobytes()).decode("utf-8")
+        return raw_bytes
+    
+    async def audio_preprocess(self, frame: av.AudioFrame) -> Union[torch.Tensor, np.ndarray]:
+        return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
+    
+    async def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
+        output_numpy = np.frombuffer(output, dtype=np.float16).reshape(512, 512, 3)
+        output_numpy = (output_numpy * 255.0).clip(0, 255).astype(np.uint8)
+        return av.VideoFrame.from_ndarray(output_numpy)
+
+
+    async def audio_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.AudioFrame:
+        return av.AudioFrame.from_ndarray(np.repeat(output, 2).reshape(1, -1))
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
