@@ -19,19 +19,14 @@ class Pipeline:
             **kwargs: Additional arguments to pass to the ComfyStreamClient
         """
         self.client = ComfyStreamClient(**kwargs)
-        self.video_incoming_frames = asyncio.Queue()
-        self.audio_incoming_frames = asyncio.Queue()
-
         self.processed_audio_buffer = np.array([], dtype=np.int16)
-
         self._comfyui_inference_log_level = comfyui_inference_log_level
 
     async def warm_video(self):
-        dummy_frame = av.VideoFrame()
-        dummy_frame.side_data.input = torch.randn(1, 512, 512, 3)
+        dummy_frame = av.VideoFrame.from_ndarray(np.random.randn(1, 512, 512, 3))
 
         for _ in range(WARMUP_RUNS):
-            self.client.put_video_input(dummy_frame)
+            await self.client.put_video_input(dummy_frame)
             await self.client.get_video_output()
 
     async def warm_audio(self):
@@ -56,45 +51,15 @@ class Pipeline:
             await self.client.update_prompts([prompts])
 
     async def put_video_frame(self, frame: av.VideoFrame):
-        frame.side_data.input = self.video_preprocess(frame)
-        frame.side_data.skipped = True
-        self.client.put_video_input(frame)
-        await self.video_incoming_frames.put(frame)
+        await self.client.put_video_input(frame)
 
     async def put_audio_frame(self, frame: av.AudioFrame):
-        frame.side_data.input = self.audio_preprocess(frame)
-        frame.side_data.skipped = True
-        self.client.put_audio_input(frame)
-        await self.audio_incoming_frames.put(frame)
-
-    def video_preprocess(self, frame: av.VideoFrame) -> Union[torch.Tensor, np.ndarray]:
-        frame_np = frame.to_ndarray(format="rgb24").astype(np.float32) / 255.0
-        return torch.from_numpy(frame_np).unsqueeze(0)
-    
-    def audio_preprocess(self, frame: av.AudioFrame) -> Union[torch.Tensor, np.ndarray]:
-        return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
-    
-    def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
-        return av.VideoFrame.from_ndarray(
-            (output * 255.0).clamp(0, 255).to(dtype=torch.uint8).squeeze(0).cpu().numpy()
-        )
-
-    def audio_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.AudioFrame:
-        return av.AudioFrame.from_ndarray(np.repeat(output, 2).reshape(1, -1))
+        await self.client.put_audio_input(frame)
     
     async def get_processed_video_frame(self):
         # TODO: make it generic to support purely generative video cases
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
-            out_tensor = await self.client.get_video_output()
-        frame = await self.video_incoming_frames.get()
-        while frame.side_data.skipped:
-            frame = await self.video_incoming_frames.get()
-
-        processed_frame  = self.video_postprocess(out_tensor)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
-        
-        return processed_frame
+            return await self.client.get_video_output()
 
     async def get_processed_audio_frame(self):
         # TODO: make it generic to support purely generative audio cases and also add frame skipping

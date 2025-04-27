@@ -48,16 +48,18 @@ class ComfyStreamClient:
         self.current_prompts = prompts
 
     async def run_prompt(self, prompt_index: int):
+        print("Running prompt", prompt_index)
         while True:
-            prompt = self.current_prompts[prompt_index].deepcopy()
+            prompt = self.current_prompts[prompt_index]
             try:
                 frame = await self.video_incoming_frames.get()
                 frame_bytes = await self.video_preprocess(frame)
                 prompt["2"]["inputs"]["bytes"] = frame_bytes
                 converted_prompt = convert_prompt(prompt)
                 output = await self.comfy_client.queue_prompt(converted_prompt)
-                output_bytes = output["1"]["results"][0]
-                output_frame = await self.video_postprocess(output_bytes)
+                output_frame = await self.video_postprocess(output["1"]["results"][0])
+                output_frame.pts = frame.pts
+                output_frame.time_base = frame.time_base
                 await self.video_outgoing_frames.put(output_frame)
             except Exception as e:
                 await self.cleanup()
@@ -88,16 +90,16 @@ class ComfyStreamClient:
         
     async def cleanup_queues(self):
         while not self.video_incoming_frames.empty():
-            self.video_incoming_frames.get()
+            await self.video_incoming_frames.get()
 
         while not self.audio_incoming_frames.empty():
-            self.audio_incoming_frames.get()
+            await self.audio_incoming_frames.get()
 
         while not self.video_outgoing_frames.empty():
-            self.video_outgoing_frames.get()
+            await self.video_outgoing_frames.get()
 
         while not self.audio_outgoing_frames.empty():
-            self.audio_outgoing_frames.get()
+            await self.audio_outgoing_frames.get()
 
     async def put_video_input(self, frame):
         await self.video_incoming_frames.put(frame)
@@ -112,7 +114,7 @@ class ComfyStreamClient:
         return await self.audio_outgoing_frames.get()
     
     async def video_preprocess(self, frame: av.VideoFrame) -> Union[torch.Tensor, np.ndarray]:
-        frame_np = frame.to_ndarray(format="rgb24").astype(np.float16) / 255.0
+        frame_np = np.expand_dims(frame.to_ndarray(format="rgb24"), axis=0).astype(np.float16) / 255.0
         raw_bytes = base64.b64encode(frame_np.tobytes()).decode("utf-8")
         return raw_bytes
     
@@ -120,7 +122,8 @@ class ComfyStreamClient:
         return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
     
     async def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
-        output_numpy = np.frombuffer(output, dtype=np.float16).reshape(512, 512, 3)
+        output_numpy = np.frombuffer(base64.b64decode(output), dtype=np.float16).reshape(1, 512, 512, 3)
+        output_numpy = output_numpy.squeeze(0)
         output_numpy = (output_numpy * 255.0).clip(0, 255).astype(np.uint8)
         return av.VideoFrame.from_ndarray(output_numpy)
 
