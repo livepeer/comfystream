@@ -64,7 +64,6 @@ models:
             - "--onnx-path"
             - "{model_path}"
             - "--use-fp32"
-            - "false"
 
   depth-anything-v2-large-onnx:
     name: "DepthAnything V2 Large ONNX"
@@ -82,7 +81,6 @@ models:
             - "--onnx-path"
             - "{model_path}"
             - "--use-fp32"
-            - "false"
 
   # TAESD models
   taesd:
