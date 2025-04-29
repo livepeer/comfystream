@@ -807,22 +807,38 @@ class ComfyStreamClient:
             '''
             cmd.extend(self.comfyui_args)
             
+            # Set up environment with proper encoding and ANSI support
+            env = os.environ.copy()
+            env.update({
+                'PYTHONIOENCODING': 'utf-8',
+                'PYTHONLEGACYWINDOWSSTDIO': 'utf-8',
+                'FORCE_COLOR': '1'
+            })
+            
             logger.info(f"[Client[{self.port}]: Starting ComfyUI with command: {' '.join(cmd)}")
             self._comfyui_proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=os.environ.copy(),
+                env=env,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 bufsize=1,  # Line buffered
             )
             
-            # Start a thread to log output
             def log_output(stream):
                 for line in iter(stream.readline, ''):
-                    # TODO: Handle different log levels?
-                    if self.comfyui_log_level == "DEBUG":
-                        logger.info(f"ComfyUI[{self.port}]: {line.strip()}")
+                    try:
+                        if self.comfyui_log_level == "DEBUG":
+                            # Strip ANSI codes if they cause problems
+                            message = line.strip()
+                            # Optional: Remove ANSI codes if they still cause issues
+                            # import re
+                            # message = re.sub(r'\033\[[0-9;]*[mGKH]', '', message)
+                            logger.info(f"ComfyUI[{self.port}]: {message}")
+                    except Exception as e:
+                        logger.error(f"Error logging output: {e}")
 
             import threading
             threading.Thread(target=log_output, args=(self._comfyui_proc.stdout,), daemon=True).start()
