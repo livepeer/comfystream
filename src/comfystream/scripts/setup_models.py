@@ -6,12 +6,13 @@ import yaml
 import argparse
 import subprocess
 import sys
+from rich import print
 
 # Assuming utils is importable via standard mechanisms
 from utils import get_config_path, load_model_config
 
 # --- Constants ---
-COMFYSTREAM_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+COMFYSTREAM_ROOT = Path(__file__).parents[3]
 DEFAULT_WORKSPACE = os.environ.get('COMFY_UI_WORKSPACE', os.path.expanduser('~/comfyui'))
 
 def parse_args():
@@ -22,15 +23,11 @@ def parse_args():
     parser.add_argument('--build-engines',
                         action='store_true',
                         help='Build TensorRT engines for configured models after downloading.')
-    # Add argument for config path, default relative to script location
-    parser.add_argument('--config',
-                        default=None,
-                        help='Path to the models.yaml config file.')
     return parser.parse_args()
 
 def download_file(url, destination, description=None):
     """Download a file with progress bar"""
-    print(f"Attempting to download from {url} to {destination}")
+    print(f"[blue]Attempting to download from {url} to {destination}[/blue]")
     try:
         response = requests.get(url, stream=True, timeout=30, allow_redirects=True)
         response.raise_for_status() # Raise an exception for bad status codes
@@ -43,17 +40,14 @@ def download_file(url, destination, description=None):
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         with open(destination, 'wb') as file:
-            for data in response.iter_content(chunk_size=8192): # Increased chunk size
+            for data in response.iter_content(chunk_size=8192):
                 size = file.write(data)
                 progress_bar.update(size)
         progress_bar.close()
-        if total_size != 0 and progress_bar.n != total_size:
-             print(f"Error: Downloaded size ({progress_bar.n}) does not match expected size ({total_size}) for {desc}")
-             # Decide if this should be fatal? For now just print warning.
-        print(f"Successfully downloaded {desc}")
+        print(f"[blue]Successfully downloaded {desc}[/blue]")
         return True
     except requests.exceptions.RequestException as e:
-        print(f"Error downloading {description or url}: {e}")
+        print(f"[red]Error downloading {description or url}: {e}[/red]")
         if destination and Path(destination).exists():
              # Clean up partial download
              try:
@@ -62,7 +56,7 @@ def download_file(url, destination, description=None):
                  pass
         return False
     except Exception as e:
-        print(f"An unexpected error occurred during download of {description or url}: {e}")
+        print(f"[red]An unexpected error occurred during download of {description or url}: {e}[/red]")
         if destination and Path(destination).exists():
              try:
                  Path(destination).unlink()
@@ -74,43 +68,43 @@ def download_file(url, destination, description=None):
 def build_tensorrt_engine(workspace_dir: Path, model_path: Path, engine_config: dict):
     """Builds a single TensorRT engine based on the provided config."""
     script_path_str = engine_config.get('script')
-    engine_rel_path = engine_config.get('engine_path')
+    engine_path_str = engine_config.get('engine_path')
     args_template = engine_config.get('args', [])
-    cwd_rel_path = engine_config.get('cwd') # Get optional CWD from config
 
-    if not script_path_str or not engine_rel_path:
-        print(f"Error: Invalid engine config for model {model_path.name}. Missing 'script' or 'engine_path'. Config: {engine_config}")
-        return False
+    assert script_path_str, f"[red]Error: Invalid engine config for model {model_path.name}. Missing 'script' field in model config.[/red]"
+    assert engine_path_str, f"[red]Error: Invalid engine config for model {model_path.name}. Missing 'engine_path' in model config.[/red]"
 
     # Let's try resolving relative to workspace first, then comfystream root.
     script_path_ws = workspace_dir / script_path_str
     script_path_cs = COMFYSTREAM_ROOT / script_path_str
+    script_path = None 
 
     if script_path_ws.exists():
-        script_path = script_path_ws
+        script_path = script_path_ws.resolve()
     elif script_path_cs.exists():
-        script_path = script_path_cs
+        script_path = script_path_cs.resolve()
     else:
-        print(f"Error: Build script not found at {script_path_ws} or {script_path_cs}")
+        print(f"[red]Error: Build script not found at {script_path_ws} or {script_path_cs}[/red]")
         return False
 
-    # Resolve engine path relative to workspace/models
-    if '/' in engine_rel_path and Path(engine_rel_path).parts[0] == 'output':
-        engine_full_path = (workspace_dir / engine_rel_path).resolve()
+    # Determine the correct working directory from the script's location
+    absolute_cwd = script_path.parent
+    if not absolute_cwd.is_dir():
+         # This should theoretically not happen if the script exists, but good practice
+         print(f"[red]Error: Determined CWD '{absolute_cwd}' is not a valid directory.[/red]")
+         return False
+
+    # Resolve engine path relative to workspace/models or output/
+    if '/' in engine_path_str and Path(engine_path_str).parts[0] == 'output':
+        engine_full_path = (workspace_dir / engine_path_str).resolve()
     else:
-        engine_full_path = (workspace_dir / "models" / engine_rel_path).resolve()
+        engine_full_path = (workspace_dir / "models" / engine_path_str).resolve()
 
     # Ensure parent directory exists before creating engine file
     engine_full_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Resolve CWD if specified in config, relative to workspace
-    absolute_cwd = (workspace_dir / cwd_rel_path).resolve() if cwd_rel_path else None
-    if absolute_cwd and not absolute_cwd.is_dir():
-        print(f"Warning: Specified CWD '{absolute_cwd}' does not exist or is not a directory. Ignoring CWD.")
-        absolute_cwd = None
-
     if engine_full_path.exists():
-        print(f"Skipping build, engine already exists: {engine_full_path}")
+        print(f"[blue]Skipping build, engine already exists: {engine_full_path}[/blue]")
         return True
 
     # Format arguments
@@ -122,42 +116,41 @@ def build_tensorrt_engine(workspace_dir: Path, model_path: Path, engine_config: 
                     model_path=model_path.resolve(),
                     engine_path=engine_full_path,
                     workspace_dir=workspace_dir.resolve(),
-                    # Add more placeholders if needed
                 )
             )
     except KeyError as e:
-        print(f"Error formatting arguments for {script_path.name}: Missing placeholder {e}")
+        print(f"[red]Error formatting arguments for {script_path.name}: Missing placeholder {e}[/red]")
         return False
     except Exception as e:
-         print(f"Error formatting arguments for {script_path.name}: {e}. Args: {args_template}")
+         print(f"[red]Error formatting arguments for {script_path.name}: {e}. Args: {args_template}[/red]")
          return False
 
     # Construct command
     command = [sys.executable, str(script_path)] + formatted_args
-    print(f"\nBuilding engine: {' '.join(command)}")
-    if absolute_cwd:
-        print(f"Running in directory: {absolute_cwd}")
+    print(f"\n[blue]Building engine: {' '.join(map(str, command))}[/blue]")
+    # Always print the CWD being used now
+    print(f"[blue]Running in directory: {absolute_cwd}[/blue]")
 
     try:
         # Use subprocess.run to execute the build script
         # Inherit environment, capture output
-        # Let the build script's output stream directly to the console
-        result = subprocess.run(command, cwd=absolute_cwd, check=True, env=os.environ) 
+        # Ensure absolute_cwd is passed correctly
+        result = subprocess.run(command, cwd=str(absolute_cwd), check=True, env=os.environ) 
         if not engine_full_path.exists():
-             print(f"Error: Build command completed but engine file not found at {engine_full_path}")
+             print(f"[red]Error: Build command completed but engine file not found at {engine_full_path}[/red]")
              return False
-        print(f"Successfully built engine: {engine_full_path}")
+        print(f"[blue]Successfully built engine: {engine_full_path}[/blue]")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error building engine with script {script_path.name}:")
-        print(f"Command: {' '.join(e.cmd)}")
-        print(f"Return Code: {e.returncode}")
+        print(f"[red]Error building engine with script {script_path.name}:[/red]")
+        print(f"[red]Command: {' '.join(map(str, e.cmd))}[/red]")
+        print(f"[red]Return Code: {e.returncode}[/red]")
         return False
     except FileNotFoundError:
-        print(f"Error: Python executable '{sys.executable}' or script '{script_path}' not found.")
+        print(f"[red]Error: Python executable '{sys.executable}' or script '{script_path}' not found.[/red]")
         return False
     except Exception as e:
-        print(f"An unexpected error occurred during engine build: {e}")
+        print(f"[red]An unexpected error occurred during engine build: {e}[/red]")
         return False
 
 
@@ -166,10 +159,10 @@ def setup_model_files(workspace_dir: Path, config_path: Path, build_engines_flag
     try:
         config = load_model_config(config_path)
     except FileNotFoundError:
-        print(f"Error: Model config file not found at {config_path}")
+        print(f"[red]Error: Model config file not found at {config_path}[/red]")
         return
     except yaml.YAMLError as e:
-        print(f"Error parsing model config file: {e}")
+        print(f"[red]Error parsing model config file: {e}[/red]")
         return
 
     models_path = workspace_dir / "models"
@@ -186,13 +179,7 @@ def setup_model_files(workspace_dir: Path, config_path: Path, build_engines_flag
     for model_key, model_info in config['models'].items():
         # Determine the full path for the main model file
         path_str = model_info['path']
-        if '/' in path_str and Path(path_str).parts[0] == 'custom_nodes':
-            # custom_nodes paths are relative to workspace_dir (base_path)
-            full_path = (base_path / path_str).resolve()
-        else:
-            # Paths with subdirectories (e.g. controlnet/) are relative to models_path
-            # Also handles paths without '/' assuming they belong in models_path root (though less likely)
-            full_path = (models_path / path_str).resolve()
+        full_path = (models_path / path_str).resolve()
 
         model_name = model_info.get('name', model_key)
         downloaded_main_file = False
@@ -201,7 +188,7 @@ def setup_model_files(workspace_dir: Path, config_path: Path, build_engines_flag
         full_path.parent.mkdir(parents=True, exist_ok=True)
 
         if not full_path.exists():
-            print(f"\nProcessing model: {model_name}")
+            print(f"\n[blue]Processing model: {model_name}[/blue]")
             if 'url' in model_info:
                  if download_file(model_info['url'], full_path, f"Downloading {model_name}"):
                      download_success_count += 1
@@ -209,44 +196,40 @@ def setup_model_files(workspace_dir: Path, config_path: Path, build_engines_flag
                  else:
                      download_fail_count += 1
             else:
-                 print(f"Warning: No URL specified for {model_name}, skipping download.")
+                 print(f"[yellow]Warning: No URL specified for {model_name}, skipping download.[/yellow]")
         else:
-            print(f"\nModel exists: {model_name} at {full_path}")
+            print(f"\n[blue]Model exists: {model_name} at {full_path}[/blue]")
             downloaded_main_file = True # Treat existing file as successfully "downloaded" for build logic
 
         # Handle any extra files (like configs)
         if 'extra_files' in model_info:
             for extra in model_info['extra_files']:
                 extra_path_str = extra['path']
-                # Resolve extra file paths similarly
-                if '/' in extra_path_str and Path(extra_path_str).parts[0] == 'custom_nodes':
-                     extra_full_path = (base_path / extra_path_str).resolve()
-                else:
-                     extra_full_path = (models_path / extra_path_str).resolve()
+                extra_full_path = (models_path / extra_path_str).resolve()
 
                 # Ensure parent directory exists before downloading extra file
                 extra_full_path.parent.mkdir(parents=True, exist_ok=True)
 
                 if not extra_full_path.exists():
                      if 'url' in extra:
-                         print(f"Downloading extra file for {model_name}: {Path(extra_path_str).name}")
+                         print(f"[blue]Downloading extra file for {model_name}: {Path(extra_path_str).name}[/blue]")
                          if download_file(extra['url'], extra_full_path, f"Downloading {Path(extra_path_str).name}"):
                              download_success_count += 1
                          else:
                              download_fail_count += 1
                      else:
-                          print(f"Warning: No URL for extra file {extra_path_str}, skipping.")
+                          print(f"[yellow]Warning: No URL for extra file {extra_path_str}, skipping.[/yellow]")
                 else:
-                     print(f"Extra file exists: {extra_full_path}")
+                     print(f"[blue]Extra file exists: {extra_full_path}[/blue]")
 
         # --- Build TensorRT Engines ---
         if build_engines_flag and downloaded_main_file and 'tensorrt' in model_info:
             tensorrt_config = model_info['tensorrt']
             if tensorrt_config.get('build'):
-                print(f"\nAttempting to build TensorRT engines for {model_name}...")
+                print(f"\n[blue]Attempting to build TensorRT engines for {model_name}...[/blue]")
                 engines_to_build = tensorrt_config.get('engines', [])
                 if not engines_to_build:
-                     print(f"Warning: 'tensorrt: build: true' but no 'engines' listed for {model_name}")
+                     print(f"[yellow]Warning: 'tensorrt: build: true' but no 'engines' listed for {model_name}[/yellow]")
                      continue
 
                 for engine_conf in engines_to_build:
@@ -255,13 +238,13 @@ def setup_model_files(workspace_dir: Path, config_path: Path, build_engines_flag
                      else:
                          build_fail_count += 1
             else:
-                 print(f"Skipping TensorRT build for {model_name} (build flag is false in config)")
+                 print(f"[blue]Skipping TensorRT build for {model_name} (build flag is false in config)[/blue]")
 
     print("\n--- Summary ---")
-    print(f"Model Downloads: {download_success_count} succeeded, {download_fail_count} failed.")
+    print(f"Model Downloads: {'[green]' + str(download_success_count) + '[/green]'} succeeded, {'[red]' + str(download_fail_count) + '[/red]'} failed.")
     if build_engines_flag:
-        print(f"TensorRT Builds: {build_success_count} succeeded, {build_fail_count} failed.")
-    print("Setup process finished!")
+        print(f"TensorRT Builds: {'[green]' + str(build_success_count) + '[/green]'} succeeded, {'[red]' + str(build_fail_count) + '[/red]'} failed.")
+    print("[green]Setup process finished![/green]")
 
 
 def main():
@@ -269,23 +252,19 @@ def main():
     workspace_dir = Path(args.workspace).resolve() # Resolve workspace path
 
     # Create base workspace and output/tensorrt directories if they don't exist
-    # Model subdirs are created on demand in setup_model_files
     workspace_dir.mkdir(parents=True, exist_ok=True)
     (workspace_dir / "output" / "tensorrt").mkdir(parents=True, exist_ok=True)
 
     # Determine config path
-    if args.config:
-        config_path = Path(args.config).resolve()
-    else:
-        # Default to configs/models.yaml relative to COMFYSTREAM_ROOT
-        config_path = COMFYSTREAM_ROOT / 'configs' / 'models.yaml'
+    config_path = COMFYSTREAM_ROOT / 'configs' / 'models.yaml'
+    assert config_path.exists(), f"[red]Model config file not found at {config_path}. Please check the path.[/red]"
 
-    print(f"Using workspace: {workspace_dir}")
-    print(f"Using model config: {config_path}")
+    print(f"[blue]Using workspace: {workspace_dir}[/blue]")
+    print(f"[blue]Using model config: {config_path}[/blue]")
     if args.build_engines:
-        print("TensorRT engine building is ENABLED.")
+        print("[blue]TensorRT engine building is ENABLED.[/blue]")
     else:
-        print("TensorRT engine building is DISABLED (use --build-engines to enable).")
+        print("[blue]TensorRT engine building is DISABLED (use --build-engines to enable).[/blue]")
 
     setup_model_files(workspace_dir, config_path, args.build_engines)
 

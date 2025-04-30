@@ -57,7 +57,6 @@ models:
       engines:
         - script: "custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py"
           engine_path: "tensorrt/depth-anything/depth_anything_vitl14-fp16.engine"
-          cwd: "custom_nodes/ComfyUI-Depth-Anything-Tensorrt"
           args: 
             - "--trt-path"
             - "{engine_path}"
@@ -73,7 +72,6 @@ models:
       engines:
         - script: "custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py"
           engine_path: "tensorrt/depth-anything/depth_anything_v2_vitl-fp16.engine"
-          cwd: "custom_nodes/ComfyUI-Depth-Anything-Tensorrt"
           args:
             - "--trt-path"
             - "{engine_path}"
