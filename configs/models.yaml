@@ -97,13 +97,13 @@ models:
   warping_spade:
     name: "WarpingSpadeModel"
     url: "https://huggingface.co/KwaiVGI/LivePortrait/resolve/main/liveportrait_onnx/warping_spade-fix.onnx"
-    path: "liveportrait_onnx/warping_spade-fix.onnx"
+    path: "liveportrait/warping_spade-fix.onnx"
     type: "onnx"
 
   motion_extractor:
     name: "MotionExtractorModel"
     url: "https://huggingface.co/KwaiVGI/LivePortrait/resolve/main/liveportrait_onnx/motion_extractor.onnx"
-    path: "liveportrait_onnx/motion_extractor.onnx"
+    path: "liveportrait/motion_extractor.onnx"
     type: "onnx"
 
   landmark:
