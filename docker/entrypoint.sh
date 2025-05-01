@@ -44,6 +44,7 @@ if [ "$1" = "--download-models" ]; then
 fi
 
 DEPTH_ANYTHING_DIR="/workspace/ComfyUI/models/tensorrt/depth-anything"
+FASTERLIVEPORTRAIT_DIR="/workspace/ComfyUI/models/liveportrait_onnx"
 
 if [ "$1" = "--build-engines" ]; then
   cd /workspace/comfystream
@@ -80,6 +81,15 @@ if [ "$1" = "--build-engines" ]; then
     python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py --trt-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl-fp16.engine" --onnx-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl.onnx"
   else
     echo "Engine for DepthAnything2 (large) already exists, skipping..."
+  fi
+  shift
+
+    # Build Engines for FasterLivePortrait
+  if [ ! -f "$FASTERLIVEPORTRAIT_DIR/depth_anything_v2_vitl-fp16.engine" ]; then
+    cd "$FASTERLIVEPORTRAIT_DIR"
+    bash /workspace/ComfyUI/custom_nodes/ComfyUI-FasterLivePortrait/scripts/build_fasterliveportrait_trt.sh  /workspace/ComfyUI/models/liveportrait_onnx
+  else
+    echo "Engines for FasterLivePortrait already exists, skipping..."
   fi
   shift
 fi
