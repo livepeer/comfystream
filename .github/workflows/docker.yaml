@@ -1,6 +1,11 @@
 name: Docker build and push images
 
 on:
+  workflow_run:
+    workflows:
+      - comfyui-base
+    types:
+      - completed
   pull_request:
     branches:
       - main
@@ -15,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  base-build:
     name: docker builds
     if: ${{ github.repository == 'livepeer/comfystream' }}
     permissions:
@@ -69,3 +74,5 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=registry,ref=${{ github.repository }}:build-cache
           cache-to: type=registry,mode=max,ref=${{ github.repository }}:build-cache
+          build-args: |
+            BASE_IMAGE=livepeer/comfyui-base@sha256:${{ github.event.workflow_run.head_sha }}
