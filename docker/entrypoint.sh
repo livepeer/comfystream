@@ -84,10 +84,10 @@ if [ "$1" = "--build-engines" ]; then
   fi
   shift
 
-    # Build Engines for FasterLivePortrait
-  if [ ! -f "$FASTERLIVEPORTRAIT_DIR/depth_anything_v2_vitl-fp16.engine" ]; then
+  # Build Engines for FasterLivePortrait
+  if [ ! -f "$FASTERLIVEPORTRAIT_DIR/warping_spade-fix.trt" ]; then
     cd "$FASTERLIVEPORTRAIT_DIR"
-    bash /workspace/ComfyUI/custom_nodes/ComfyUI-FasterLivePortrait/scripts/build_fasterliveportrait_trt.sh  /workspace/ComfyUI/models/liveportrait_onnx
+    bash /workspace/ComfyUI/custom_nodes/ComfyUI-FasterLivePortrait/scripts/build_fasterliveportrait_trt.sh "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}"
   else
     echo "Engines for FasterLivePortrait already exists, skipping..."
   fi
