@@ -2,37 +2,38 @@ name: Docker build and push images
 
 on:
   workflow_run:
-    workflows:
-      - comfyui-base
+    workflows: ["Build and push comfyui-base docker image"]
     types:
       - completed
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  base-build:
-    name: docker builds
-    if: ${{ github.repository == 'livepeer/comfystream' }}
+  build-comfystream:
+    name: Build and push comfystream image
+    if: ${{ github.repository == 'livepeer/comfystream' && github.event.workflow_run.conclusion == 'success' }}
     permissions:
       packages: write
       contents: read
     runs-on: [self-hosted, linux, amd64]
     steps:
+      - name: Download Commit Hash
+        uses: actions/download-artifact@v4
+        with:
+          name: commit-hash
+          path: .
+
+      - name: Read Commit Hash
+        id: read-commit
+        run: echo "COMMIT_HASH=$(cat commit-hash.txt)" >> $GITHUB_ENV
+
       - name: Check out code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -61,7 +62,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push livepeer docker image
+      - name: Build and push comfystream image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -75,4 +76,4 @@ jobs:
           cache-from: type=registry,ref=${{ github.repository }}:build-cache
           cache-to: type=registry,mode=max,ref=${{ github.repository }}:build-cache
           build-args: |
-            BASE_IMAGE=livepeer/comfyui-base@sha256:${{ github.event.workflow_run.head_sha }}
+            BASE_IMAGE=livepeer/comfyui-base:sha-${{ env.COMMIT_HASH }}
