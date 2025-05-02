@@ -75,23 +75,23 @@ models:
     type: "text_encoder"
 
   # JoyVASA models for ComfyUI-FasterLivePortrait
-  # joyvasa_motion_generator:
-  #   name: "JoyVASA Motion Generator"
-  #   url: "https://huggingface.co/jdh-algo/JoyVASA/blob/main/motion_generator/motion_generator_hubert_chinese.pt"
-  #   path: "liveportrait_onnx/joyvasa_models/motion_generator_hubert_chinese.pt"
-  #   type: "torch"
+  joyvasa_motion_generator:
+    name: "JoyVASA Motion Generator"
+    url: "https://huggingface.co/jdh-algo/JoyVASA/resolve/main/motion_generator/motion_generator_hubert_chinese.pt?download=true"
+    path: "liveportrait_onnx/joyvasa_models/motion_generator_hubert_chinese.pt"
+    type: "torch"
 
-  # joyvasa_audio_model:
-  #   name: "JoyVASA Hubert Chinese"
-  #   url: "https://huggingface.co/TencentGameMate/chinese-hubert-base/blob/main/chinese-hubert-base-fairseq-ckpt.pt"
-  #   path: "liveportrait_onnx/joyvasa_models/chinese-hubert-base-fairseq-ckpt.pt
-  #   type: "archive"
+  joyvasa_audio_model:
+    name: "JoyVASA Hubert Chinese"
+    url: "https://huggingface.co/TencentGameMate/chinese-hubert-base/resolve/main/chinese-hubert-base-fairseq-ckpt.pt?download=true"
+    path: "liveportrait_onnx/joyvasa_models/chinese-hubert-base-fairseq-ckpt.pt"
+    type: "torch"
 
-  # joyvasa_motion_template:
-  #   name: "JoyVASA Motion Template"
-  #   url: "https://huggingface.co/jdh-algo/JoyVASA/resolve/main/motion_template.pkl"
-  #   path: "liveportrait_onnx/joyvasa_models/motion_template.pkl"
-  #   type: "pickle"
+  joyvasa_motion_template:
+    name: "JoyVASA Motion Template"
+    url: "https://huggingface.co/jdh-algo/JoyVASA/resolve/main/motion_template/motion_template.pkl?download=true"
+    path: "liveportrait_onnx/joyvasa_models/motion_template.pkl"
+    type: "pickle"
   
 # LivePortrait ONNX models - only necessary to build TRT engines
   warping_spade:
