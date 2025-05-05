@@ -87,7 +87,7 @@ class Pipeline:
         else:
             await self.client.update_prompts([prompts])
 
-    async def put_video_frame(self, frame: av.VideoFrame):
+    async def put_video_frame(self, frame: av.VideoFrame, request_id: Optional[str] = None):
         """Queue a video frame for processing.
         
         Args:
@@ -95,10 +95,11 @@ class Pipeline:
         """
         frame.side_data.input = self.video_preprocess(frame)
         frame.side_data.skipped = True
+        frame.side_data.request_id = request_id
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
 
-    async def put_audio_frame(self, frame: av.AudioFrame):
+    async def put_audio_frame(self, frame: av.AudioFrame, request_id: Optional[str] = None):
         """Queue an audio frame for processing.
         
         Args:
@@ -106,6 +107,7 @@ class Pipeline:
         """
         frame.side_data.input = self.audio_preprocess(frame)
         frame.side_data.skipped = True
+        frame.side_data.request_id = request_id
         self.client.put_audio_input(frame)
         await self.audio_incoming_frames.put(frame)
 
@@ -172,6 +174,7 @@ class Pipeline:
         processed_frame = self.video_postprocess(out_tensor)
         processed_frame.pts = frame.pts
         processed_frame.time_base = frame.time_base
+        processed_frame.side_data.request_id = frame.side_data.request_id
         
         return processed_frame
 
