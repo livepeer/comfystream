@@ -358,14 +358,9 @@ class ComfyStreamClient:
                     frame_id = self._current_frame_id
                     logger.debug(f"Using current frame_id {frame_id}")
                 
-                # Add to output queue - include frame_id if available
-                if frame_id is not None:
-                    tensor_cache.image_outputs.put_nowait((frame_id, tensor))
-                    logger.debug(f"Added tensor with frame_id {frame_id} to output queue")
-                else:
-                    tensor_cache.image_outputs.put_nowait(tensor)
-                    logger.debug("Added tensor without frame_id to output queue")
-                
+                tensor_cache.image_outputs.put_nowait((frame_id, tensor))
+                logger.debug(f"Added tensor with frame_id {frame_id} to output queue")
+            
                 # We will execute the next prompt from message_type == "execution_start" instead
                 # self.execution_complete_event.set()
                 
@@ -385,20 +380,24 @@ class ComfyStreamClient:
             # Check if we have a frame waiting to be processed
             if not tensor_cache.image_inputs.empty():
                 # Get the most recent frame only
-                frame_or_tensor = None
+                frame = None
                 while not tensor_cache.image_inputs.empty():
-                    frame_or_tensor = tensor_cache.image_inputs.get_nowait()
-                
-                # Extract frame ID if available in side_data
-                frame_id = None
-                if hasattr(frame_or_tensor, 'side_data'):
-                    # Try to get frame_id from side_data
-                    if hasattr(frame_or_tensor.side_data, 'frame_id'):
-                        frame_id = frame_or_tensor.side_data.frame_id
-                        logger.debug(f"Found frame_id in side_data: {frame_id}")
-                
-                # Store current frame ID for binary message handler to use
-                self._current_frame_id = frame_id
+                    frame = tensor_cache.image_inputs.get_nowait()
+
+                self._current_frame_id = getattr(frame.side_data, 'frame_id', None)
+
+                if self._current_frame_id is None:
+                    logger.error("No frame_id found in side_data")
+                    self.execution_complete_event.set()
+                    return
+
+                if not (hasattr(frame, 'side_data') and hasattr(frame.side_data, 'input')):
+                    logger.error(
+                        "Frame object from queue ('tensor_cache.image_inputs') is not structured as "
+                        "expected (missing side_data.input). Skipping processing for this frame."
+                    )
+                    self.execution_complete_event.set()  # Allow next cycle
+                    return
                 
                 # Find LoadImageBase64 nodes first
                 load_image_nodes = []
@@ -413,87 +412,72 @@ class ComfyStreamClient:
                 
                 # Process the tensor ONLY if we have nodes to send it to
                 try:
-                    # Get the actual tensor data - handle different input types
-                    tensor = None
-                    
-                    # Handle different input types efficiently
-                    if hasattr(frame_or_tensor, 'side_data') and hasattr(frame_or_tensor.side_data, 'input'):
-                        tensor = frame_or_tensor.side_data.input
-                    elif isinstance(frame_or_tensor, torch.Tensor):
-                        tensor = frame_or_tensor
-                    elif isinstance(frame_or_tensor, np.ndarray):
-                        tensor = torch.from_numpy(frame_or_tensor).float()
-                    elif hasattr(frame_or_tensor, 'to_ndarray'):
-                        frame_np = frame_or_tensor.to_ndarray(format="rgb24").astype(np.float32) / 255.0
-                        tensor = torch.from_numpy(frame_np).unsqueeze(0)
-                    
+                    tensor = getattr(frame.side_data, 'input', None)
+
                     if tensor is None:
-                        logger.error("Failed to get valid tensor data from input")
+                        logger.error("No tensor found in side_data")
                         self.execution_complete_event.set()
                         return
-                    
-                    # Process tensor format only once - streamlined for speed and reliability
-                    with torch.no_grad():
-                        # Fast tensor normalization to ensure consistent output
-                        try:
-                            # TODO: Why is the UI sending different sizes? Should be fixed no? This breaks tensorrt
-                            #       I'm sometimes seeing (BCHW): torch.Size([1, 384, 384, 3]), H=384, W=3
-                            # Ensure minimum size of 512x512
 
-                            # Handle batch dimension if present
-                            if len(tensor.shape) == 4:  # BCHW format
-                                tensor = tensor[0]  # Take first image from batch
-                            
-                            # Normalize to CHW format consistently
-                            if len(tensor.shape) == 3 and tensor.shape[2] == 3:  # HWC format
-                                tensor = tensor.permute(2, 0, 1)  # Convert to CHW
-                            
-                            # Handle single-channel case
-                            if len(tensor.shape) == 3 and tensor.shape[0] == 1:
-                                tensor = tensor.repeat(3, 1, 1)  # Convert grayscale to RGB
-                            
-                            # Ensure tensor is on CPU
-                            if tensor.is_cuda:
-                                tensor = tensor.cpu()
-                            
-                            # Always resize to 512x512 for consistency (faster than checking dimensions first)
-                            tensor = tensor.unsqueeze(0)  # Add batch dim for interpolate
-                            tensor = torch.nn.functional.interpolate(
-                                tensor, size=(512, 512), mode='bilinear', align_corners=False
-                            )
-                            tensor = tensor[0]  # Remove batch dimension
+                    try:
+                        # TODO: Why is the UI sending different sizes? Should be fixed no? This breaks tensorrt
+                        #       I'm sometimes seeing (BCHW): torch.Size([1, 384, 384, 3]), H=384, W=3
+                        # Ensure minimum size of 512x512
 
-                            # ====
-                            # PIL method
-                            '''
-                            # Direct conversion to PIL without intermediate numpy step for speed
-                            tensor_np = (tensor.permute(1, 2, 0).clamp(0, 1) * 255).to(torch.uint8).numpy()
-                            img = Image.fromarray(tensor_np)
-                            img.save(self.buffer, format="JPEG", quality=90, optimize=True)
-                            '''
-                            
-                            # ====
-                            # torchvision method (more performant - TODO: need to test further)
-                            # Direct conversion to PIL without intermediate numpy step
-                            # Fast JPEG encoding with reduced quality for better performance
-                            tensor_pil = to_pil_image(tensor.clamp(0, 1))
-                            tensor_pil.save(self.buffer, format="JPEG", quality=75, optimize=True)
-                            # ====
-
-                            self.buffer.seek(0)
-                            img_base64 = base64.b64encode(self.buffer.getvalue()).decode('utf-8')
-                            
-                        except Exception as e:
-                            logger.warning(f"Error in tensor processing: {e}, creating fallback image")
-                            # Create a standard 512x512 placeholder if anything fails
-                            img = Image.new('RGB', (512, 512), color=(100, 149, 237))
-                            self.buffer = BytesIO()
-                            img.save(self.buffer, format="JPEG", quality=90)
-                            self.buffer.seek(0)
-                            img_base64 = base64.b64encode(self.buffer.getvalue()).decode('utf-8')
+                        # Handle batch dimension if present
+                        if len(tensor.shape) == 4:  # BCHW format
+                            tensor = tensor[0]  # Take first image from batch
                         
-                        # Add timestamp for cache busting (once, outside the try/except)
-                        timestamp = int(time.time() * 1000)
+                        # Normalize to CHW format consistently
+                        if len(tensor.shape) == 3 and tensor.shape[2] == 3:  # HWC format
+                            tensor = tensor.permute(2, 0, 1)  # Convert to CHW
+                        
+                        # Handle single-channel case
+                        if len(tensor.shape) == 3 and tensor.shape[0] == 1:
+                            tensor = tensor.repeat(3, 1, 1)  # Convert grayscale to RGB
+                        
+                        # Ensure tensor is on CPU
+                        if tensor.is_cuda:
+                            tensor = tensor.cpu()
+                        
+                        # Always resize to 512x512 for consistency (faster than checking dimensions first)
+                        tensor = tensor.unsqueeze(0)  # Add batch dim for interpolate
+                        tensor = torch.nn.functional.interpolate(
+                            tensor, size=(512, 512), mode='bilinear', align_corners=False
+                        )
+                        tensor = tensor[0]  # Remove batch dimension
+
+                        # ====
+                        # PIL method
+                        '''
+                        # Direct conversion to PIL without intermediate numpy step for speed
+                        tensor_np = (tensor.permute(1, 2, 0).clamp(0, 1) * 255).to(torch.uint8).numpy()
+                        img = Image.fromarray(tensor_np)
+                        img.save(self.buffer, format="JPEG", quality=90, optimize=True)
+                        '''
+                        
+                        # ====
+                        # torchvision method (more performant - TODO: need to test further)
+                        # Direct conversion to PIL without intermediate numpy step
+                        # Fast JPEG encoding with reduced quality for better performance
+                        tensor_pil = to_pil_image(tensor.clamp(0, 1))
+                        tensor_pil.save(self.buffer, format="JPEG", quality=75, optimize=True)
+                        # ====
+
+                        self.buffer.seek(0)
+                        img_base64 = base64.b64encode(self.buffer.getvalue()).decode('utf-8')
+                        
+                    except Exception as e:
+                        logger.warning(f"Error in tensor processing: {e}, creating fallback image")
+                        # Create a standard 512x512 placeholder if anything fails
+                        img = Image.new('RGB', (512, 512), color=(100, 149, 237))
+                        self.buffer = BytesIO()
+                        img.save(self.buffer, format="JPEG", quality=90)
+                        self.buffer.seek(0)
+                        img_base64 = base64.b64encode(self.buffer.getvalue()).decode('utf-8')
+                    
+                    # Add timestamp for cache busting (once, outside the try/except)
+                    timestamp = int(time.time() * 1000)
                     
                     # Update all nodes with the SAME base64 string
                     for node_id in load_image_nodes:
@@ -520,10 +504,9 @@ class ComfyStreamClient:
                             result = await response.json()
                             self._prompt_id = result.get("prompt_id")
                             
-                            # Map prompt_id to frame_id for later retrieval
-                            if frame_id is not None:
-                                self._frame_id_mapping[self._prompt_id] = frame_id
-                                logger.debug(f"Mapped prompt_id {self._prompt_id} to frame_id {frame_id}")
+                            self._frame_id_mapping[self._prompt_id] = self._current_frame_id
+                            # logger.debug(f"Mapped prompt_id {self._prompt_id} to frame_id {self._current_frame_id}")
+
                         else:
                             error_text = await response.text()
                             logger.error(f"Error queueing prompt: {response.status} - {error_text}")
@@ -614,18 +597,10 @@ class ComfyStreamClient:
         
     async def get_video_output(self):
         """Get processed video frame from tensor cache"""
-        result = await tensor_cache.image_outputs.get()
-        
-        # Check if the result is a tuple with frame_id
-        if isinstance(result, tuple) and len(result) == 2:
-            frame_id, tensor = result
-            logger.debug(f"[Client[{self.port}]: Got processed tensor from output queue with frame_id {frame_id}")
-            # Return both the frame_id and tensor to help with ordering in the pipeline
-            return frame_id, tensor
-        else:
-            # If it's not a tuple with frame_id, just return the tensor
-            logger.debug("Got processed tensor from output queue without frame_id")
-            return result
+        frame_id, tensor = await tensor_cache.image_outputs.get()
+        logger.debug(f"[Client[{self.port}]: Got processed tensor from output queue with frame_id {frame_id}")
+        # Return both the frame_id and tensor to help with ordering in the pipeline
+        return frame_id, tensor
     
     async def get_audio_output(self):
         """Get processed audio frame from tensor cache"""
@@ -814,7 +789,7 @@ class ComfyStreamClient:
                 'PYTHONLEGACYWINDOWSSTDIO': 'utf-8',
                 'FORCE_COLOR': '1'
             })
-            
+
             logger.info(f"[Client[{self.port}]: Starting ComfyUI with command: {' '.join(cmd)}")
             self._comfyui_proc = subprocess.Popen(
                 cmd,

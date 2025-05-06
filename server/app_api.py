@@ -158,7 +158,6 @@ class AudioStreamTrack(MediaStreamTrack):
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
 
-
 def force_codec(pc, sender, forced_codec):
     kind = forced_codec.split("/")[0]
     codecs = RTCRtpSender.getCapabilities(kind).codecs
@@ -398,10 +397,9 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
         config_path=app["config_file"],
         max_frame_wait_ms=app["max_frame_wait"],
-        client_mode=app["client_mode"],
+        client_mode=app["client_mode"], 
         workspace=app["workspace"],
         workers=app["workers"],
         cuda_devices=app["cuda_devices"],
@@ -517,6 +515,7 @@ if __name__ == "__main__":
     )
 
     # Set logger level based on command line arguments
+    print(f"Setting log level to {args.log_level.upper()}")
     logger.setLevel(getattr(logging, args.log_level.upper()))
 
     app = web.Application()
@@ -567,12 +566,11 @@ if __name__ == "__main__":
         sys.stdout.flush()
 
     # Allow overriding of ComyfUI log levels.
-    # TODO: This will have to pipe to spawn clients
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
         app["comfyui_log_level"] = args.comfyui_log_level
     if args.comfyui_inference_log_level:
-        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+        app["comfyui_inference_log_level"] = args.comfyui_inference_log_level
 
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)

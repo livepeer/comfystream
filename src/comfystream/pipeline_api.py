@@ -4,16 +4,16 @@ import numpy as np
 import asyncio
 import logging
 import time
-import random
 from collections import OrderedDict
 import collections
 import os
-import socket
+import fractions
 
 from typing import Any, Dict, Union, List, Optional, Deque
 from comfystream.client_api import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level # Not sure exactly what this does
 from comfystream.server.utils.config import ComfyConfig
+from comfystream.frame_logging import log_frame_timing
 
 WARMUP_RUNS = 5
 logger = logging.getLogger(__name__)
@@ -24,7 +24,6 @@ class MultiServerPipeline:
             self, 
             width: int = 512, 
             height: int = 512,
-            comfyui_inference_log_level: int = None, 
             config_path: Optional[str] = None, 
             max_frame_wait_ms: int = 500, 
             client_mode: str = "toml", 
@@ -39,8 +38,6 @@ class MultiServerPipeline:
             width: The width of the video frames.
             height: The height of the video frames.
             workers: The number of ComfyUI clients to spin up (if client_mode is "spawn").
-            comfyui_inference_log_level: The logging level for ComfyUI inference.
-                Defaults to None, using the global ComfyUI log level.
             config_path: The path to the ComfyUI config toml file (if client_mode is "toml").
             max_frame_wait_ms: The maximum number of milliseconds to wait for a frame before dropping it.
             client_mode: The mode to use for the ComfyUI clients.
@@ -86,6 +83,7 @@ class MultiServerPipeline:
         self.processed_video_frames = asyncio.Queue()
         
         # Track which client gets each frame (round-robin)
+        self.last_frame_time = 0
         self.current_client_index = 0
         self.client_frame_mapping = {}  # Maps frame_id -> client_index
         
@@ -96,10 +94,6 @@ class MultiServerPipeline:
         
         # Audio processing
         self.processed_audio_buffer = np.array([], dtype=np.int16)
-        self.last_frame_time = 0
-
-        # ComfyUI inference log level
-        self._comfyui_inference_log_level = comfyui_inference_log_level
 
         # Frame rate limiting
         self.min_frame_interval = 1/30  # Limit to 30 FPS
@@ -123,39 +117,21 @@ class MultiServerPipeline:
                     try:
                         # Non-blocking check if client has output ready
                         if hasattr(client, '_prompt_id') and client._prompt_id is not None:
-                            # Get frame without waiting
                             try:
                                 # Use wait_for with small timeout to avoid blocking
-                                result = await asyncio.wait_for(
+                                frame_id, out_tensor = await asyncio.wait_for(
                                     client.get_video_output(), 
-                                    timeout=0.01
+                                    timeout=0.001
                                 )
                                 
-                                # Check if result is already a tuple with frame_id
-                                if isinstance(result, tuple) and len(result) == 2:
-                                    frame_id, out_tensor = result
-                                    logger.debug(f"Got result with embedded frame_id: {frame_id}")
-                                else:
-                                    out_tensor = result
-                                    # Find which original frame this corresponds to using our mapping
-                                    frame_ids = [frame_id for frame_id, client_idx in 
-                                              self.client_frame_mapping.items() if client_idx == i]
-                                    
-                                    if frame_ids:
-                                        # Use the oldest frame ID for this client
-                                        frame_id = min(frame_ids)
-                                    else:
-                                        # If no mapping found, log warning and continue
-                                        logger.warning(f"No frame_id mapping found for tensor from client {i}")
-                                        continue
-                                
                                 # Store frame with timestamp for ordering
-                                timestamp = time.time()
-                                await self._add_frame_to_ordered_buffer(frame_id, timestamp, out_tensor)
+                                current_time = time.time()
+                                await self._add_frame_to_ordered_buffer(frame_id, current_time, out_tensor)
                                 
                                 # Remove the mapping
                                 self.client_frame_mapping.pop(frame_id, None)
-                                logger.debug(f"Collected processed frame from client {i}, frame_id: {frame_id}")
+
+                                # logger.debug(f"Collected processed frame from client {i}, frame_id: {frame_id}")
                             except asyncio.TimeoutError:
                                 # No frame ready yet, continue
                                 pass
@@ -186,14 +162,14 @@ class MultiServerPipeline:
     async def _release_ordered_frames(self):
         if self.next_expected_frame_id is None:
             return
-        if self.ordered_frames and self.next_expected_frame_id in self.ordered_frames:
+        
+        # Only release frames in strict sequential order
+        while self.ordered_frames and self.next_expected_frame_id in self.ordered_frames:
             timestamp, tensor = self.ordered_frames.pop(self.next_expected_frame_id)
             await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
             logger.debug(f"Released frame {self.next_expected_frame_id} to output queue")
-            if self.ordered_frames:
-                self.next_expected_frame_id = min(self.ordered_frames.keys())
-            else:
-                self.next_expected_frame_id += 1
+            # Always increment to next sequential frame ID
+            self.next_expected_frame_id += 1
 
     async def _check_frame_timeouts(self):
         """Check for frames that have waited too long and handle them"""
@@ -208,8 +184,11 @@ class MultiServerPipeline:
             wait_time_ms = (current_time - timestamp) * 1000
             
             if wait_time_ms > self.max_frame_wait_ms:
-                logger.warning(f"Frame {self.next_expected_frame_id} exceeded max wait time, releasing anyway")
-                await self._release_ordered_frames()
+                # logger.warning(f"Frame {self.next_expected_frame_id} exceeded max wait time, releasing anyway")
+                # await self._release_ordered_frames()
+                
+                # Remove frame
+                self.ordered_frames.pop(self.next_expected_frame_id)
                 
         # Check if we're missing the next expected frame and it's been too long
         elif self.ordered_frames:
@@ -227,15 +206,11 @@ class MultiServerPipeline:
 
     async def warm_video(self):
         # Create dummy frame with the CURRENT resolution settings (which might have been updated via control channel)
-        
-        # Create a properly formatted dummy frame
-        '''
+ 
         tensor = torch.rand(1, 3, 512, 512)  # Random values in [0,1]
         dummy_frame = av.VideoFrame(width=512, height=512, format="rgb24")
         dummy_frame.side_data.input = tensor
-        '''
-        dummy_frame = av.VideoFrame()
-        dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+        dummy_frame.side_data.frame_received_time = time.time()
 
         logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
 
@@ -251,6 +226,11 @@ class MultiServerPipeline:
     async def _warm_client_video(self, client, client_index, dummy_frame):
         """Warm up a single client"""
         logger.info(f"Warming up client {client_index}")
+
+        # Set frame input as dummyframe with side_data.input set to a random tensor
+        dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+        dummy_frame.side_data.frame_id = -1
+
         for i in range(WARMUP_RUNS):
             logger.info(f"Client {client_index} warmup iteration {i+1}/{WARMUP_RUNS}")
             client.put_video_input(dummy_frame)
@@ -283,6 +263,7 @@ class MultiServerPipeline:
         # Set prompts for each client
         tasks = []
         for client in self.clients:
+            logger.info(f"Setting prompts for client {client.port}")
             tasks.append(client.set_prompts(prompts))
             
         await asyncio.gather(*tasks)
@@ -302,11 +283,15 @@ class MultiServerPipeline:
         logger.info(f"Updated prompts for {len(self.clients)} clients")
 
     async def put_video_frame(self, frame: av.VideoFrame):
-        """Distribute video frames among clients using round-robin"""
+        ''' Put a video frame into the pipeline round-robin to all clients '''
         current_time = time.time()
+
+        '''
         if current_time - self.last_frame_time < self.min_frame_interval:
+            print(f"Skipping frame due to rate limiting: {current_time - self.last_frame_time} seconds since last frame")
             return  # Skip frame if too soon
-            
+        '''
+
         self.last_frame_time = current_time
         
         # Generate a unique frame ID - use sequential IDs for better ordering
@@ -316,28 +301,28 @@ class MultiServerPipeline:
         frame_id = self.next_frame_id
         self.next_frame_id += 1
 
-        frame.side_data.frame_id = frame_id
-        
-        # Preprocess the frame
-        frame.side_data.input = self.video_preprocess(frame)
-        frame.side_data.skipped = False
-        
         # Select the next client in round-robin fashion
         client_index = self.current_client_index
         self.current_client_index = (self.current_client_index + 1) % len(self.clients)
         
         # Store mapping of which client is processing this frame
         self.client_frame_mapping[frame_id] = client_index
+
+        # Set side data for the frame
+        frame.side_data.input = self.video_preprocess(frame)
+        frame.side_data.frame_id = frame_id
+        frame.side_data.skipped = False
+        frame.side_data.frame_received_time = time.time()
+        frame.side_data.client_index = client_index
         
         # Send frame to the selected client
         self.clients[client_index].put_video_input(frame)
+        await self.video_incoming_frames.put(frame)
         
-        # Also add to the incoming queue for reference
-        await self.video_incoming_frames.put((frame_id, frame))
-        
-        logger.debug(f"Sent frame {frame_id} to client {client_index}")
-
     async def put_audio_frame(self, frame: av.AudioFrame):
+        ''' Not implemented yet '''
+        return
+
         # For now, only use the first client for audio
         if not self.clients:
             return
@@ -351,16 +336,16 @@ class MultiServerPipeline:
         return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
     
     def video_preprocess(self, frame: av.VideoFrame) -> Union[torch.Tensor, np.ndarray]:
-        # Convert directly to tensor, avoiding intermediate numpy array when possible
-        if hasattr(frame, 'to_tensor'):
-            tensor = frame.to_tensor()
-        else:
-            # If direct tensor conversion not available, use numpy
-            frame_np = frame.to_ndarray(format="rgb24")
-            tensor = torch.from_numpy(frame_np)
+        """Preprocess a video frame before processing.
         
-        # Normalize to [0,1] range and add batch dimension
-        return tensor.float().div(255.0).unsqueeze(0)
+        Args:
+            frame: The video frame to preprocess
+            
+        Returns:
+            The preprocessed frame as a tensor or numpy array
+        """
+        frame_np = frame.to_ndarray(format="rgb24").astype(np.float32) / 255.0
+        return torch.from_numpy(frame_np).unsqueeze(0)
 
     def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
         return av.VideoFrame.from_ndarray(
@@ -377,28 +362,23 @@ class MultiServerPipeline:
 
     async def get_processed_video_frame(self):
         try:
-            # Get the original frame from the incoming queue first to maintain timing
-            frame_id, frame = await self.video_incoming_frames.get()
+            frame = await self.video_incoming_frames.get()
             
-            # Skip frames if we're falling behind
-            '''
-            while not self.video_incoming_frames.empty():
-                # Get newer frame and mark old one as skipped
-                frame.side_data.skipped = True
-                frame_id, frame = await self.video_incoming_frames.get()
-                logger.info(f"Skipped older frame {frame_id} to catch up")
-            '''
             # Get the processed frame from our output queue
             processed_frame_id, out_tensor = await self.processed_video_frames.get()
-            
-            if processed_frame_id != frame_id:
-                logger.debug(f"Frame ID mismatch: expected {frame_id}, got {processed_frame_id}")
-                pass
             
             # Process the frame
             processed_frame = self.video_postprocess(out_tensor)
             processed_frame.pts = frame.pts
             processed_frame.time_base = frame.time_base
+
+            # Log frame timing asynchronously
+            log_frame_timing(
+                frame_id=processed_frame_id,
+                frame_received_time=frame.side_data.frame_received_time,
+                frame_processed_time=time.time(),
+                client_index=frame.side_data.client_index,
+            )
             
             return processed_frame
             
@@ -406,6 +386,12 @@ class MultiServerPipeline:
             logger.error(f"Error in get_processed_video_frame: {str(e)}")
             # Create a black frame as fallback
             black_frame = av.VideoFrame(width=self.width, height=self.height, format='rgb24')
+            
+            # Set timestamps to avoid TypeError during encoding
+            # Use default values that work with the aiortc encoding pipeline
+            black_frame.pts = 0
+            black_frame.time_base = fractions.Fraction(1, 90000)  # Standard video timebase
+            
             return black_frame
 
     async def get_processed_audio_frame(self):
@@ -529,11 +515,8 @@ class MultiServerPipeline:
                 await self.processed_video_frames.put((self.next_expected_frame_id, tensor))
                 logger.debug(f"Released frame {self.next_expected_frame_id} to output queue")
 
-                # Update next expected frame ID
-                if self.ordered_frames:
-                    self.next_expected_frame_id = min(self.ordered_frames.keys())
-                else:
-                    self.next_expected_frame_id += 1
+                # Always increment to next sequential frame ID
+                self.next_expected_frame_id += 1
 
                 # Sleep for the dynamic interval, but don't sleep negative time
                 await asyncio.sleep(max(self.output_interval, 0.001))
