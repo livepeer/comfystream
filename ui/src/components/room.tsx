@@ -334,10 +334,8 @@ export const Room = () => {
   }, []);
 
   const onRemoteStreamReady = useCallback(() => {
-    if (!isComfyUIReady) {
-      
-    }
-  }, [showToast, isComfyUIReady]);
+    
+  }, []);
 
   // Add a handler for when ComfyUI is ready (will be passed to Stage component)
   const onComfyUIReady = useCallback(() => {
@@ -505,7 +503,7 @@ export const Room = () => {
     console.log('[Room] outputStream state changed:', outputStream);
   }, [outputStream]);
 
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
 
   return (
     <main className="fixed inset-0 overflow-hidden overscroll-none">
@@ -582,7 +580,7 @@ export const Room = () => {
               {/* Gear/settings button (only when streaming) */}
               {isConnected && isComfyUIReady && localStream && (
                 <button
-                  onClick={() => setIsSettingsOpen(true)}
+                  onClick={() => setIsControlPanelOpen(true)}
                   className="h-12 w-12 rounded-full bg-gray-800 text-white shadow-lg flex items-center justify-center hover:bg-gray-900"
                   title="Settings"
                 >
@@ -662,8 +660,8 @@ export const Room = () => {
 
             {isConnected && isComfyUIReady && 
             <ControlPanelsContainer
-              isOpen={isSettingsOpen}
-              onOpenChange={setIsSettingsOpen}
+              isOpen={isControlPanelOpen}
+              onOpenChange={setIsControlPanelOpen}
             />}
 
             <StreamSettings
