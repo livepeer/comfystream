@@ -105,7 +105,7 @@ class MultiServerPipeline:
         self.output_interval = 1/30  # Start with 30 FPS
         self.last_output_time = None
         self.frame_interval_history = collections.deque(maxlen=30)
-        self.output_pacer_task = asyncio.create_task(self._dynamic_output_pacer())
+        # self.output_pacer_task = asyncio.create_task(self._dynamic_output_pacer())
 
         self.comfyui_log_level = comfyui_log_level
     
@@ -312,9 +312,21 @@ class MultiServerPipeline:
         frame.side_data.input = self.video_preprocess(frame)
         frame.side_data.frame_id = frame_id
         frame.side_data.skipped = False
-        frame.side_data.frame_received_time = time.time()
+
+        # Set receive time 
+        frame.side_data.frame_received_time = current_time
         frame.side_data.client_index = client_index
-        
+
+        # Log frame at input time to properly track input FPS
+        log_frame_timing(
+            frame_id=frame_id,
+            frame_received_time=current_time,
+            frame_process_start_time=None,
+            frame_processed_time=None,
+            client_index=client_index,
+            csv_path="frame_logs.csv"
+        )
+
         # Send frame to the selected client
         self.clients[client_index].put_video_input(frame)
         await self.video_incoming_frames.put(frame)
@@ -363,23 +375,42 @@ class MultiServerPipeline:
     async def get_processed_video_frame(self):
         try:
             frame = await self.video_incoming_frames.get()
-            
+
+            # Set process start time just before processing
+            frame.side_data.frame_process_start_time = time.time()
+
             # Get the processed frame from our output queue
             processed_frame_id, out_tensor = await self.processed_video_frames.get()
-            
-            # Process the frame
+
+            # if (processed_frame_id != frame.side_data.frame_id):
+            #    logger.warning(f"Processed frame ID {processed_frame_id} does not match expected frame ID {frame.side_data.frame_id}")
+
+            # The processed frame and the video_incoming_frame is never the same
+            '''
+            Processed frame ID 45 does not match expected frame ID 6
+            Processed frame ID 47 does not match expected frame ID 7
+            Processed frame ID 49 does not match expected frame ID 8
+            '''
+            # What does this mean?
+
+            # Record the time when processing is complete
+            frame_processed_time = time.time()
+
+            # Process the frame (post-processing)
             processed_frame = self.video_postprocess(out_tensor)
             processed_frame.pts = frame.pts
             processed_frame.time_base = frame.time_base
 
-            # Log frame timing asynchronously
+            # Log frame timing with simplified metrics
             log_frame_timing(
                 frame_id=processed_frame_id,
                 frame_received_time=frame.side_data.frame_received_time,
-                frame_processed_time=time.time(),
+                frame_process_start_time=frame.side_data.frame_process_start_time,
+                frame_processed_time=frame_processed_time,
                 client_index=frame.side_data.client_index,
+                csv_path="frame_logs.csv"
             )
-            
+
             return processed_frame
             
         except Exception as e:
@@ -497,6 +528,8 @@ class MultiServerPipeline:
         
         logger.info("Pipeline cleanup completed, clients will be reinitialized on next connection")
 
+    # This may not be needed anymore - more work is req to balance frame timing
+    '''
     async def _dynamic_output_pacer(self):
         while self.running:
             # Only release if the next expected frame is available
@@ -523,6 +556,7 @@ class MultiServerPipeline:
             else:
                 # No frame ready, wait a bit and check again
                 await asyncio.sleep(0.005)
+    '''
 
     async def start_clients(self):
         """Start the clients based on the client_mode (TOML or spawn)"""
