@@ -23,38 +23,67 @@ class FPSMeter:
         self._running_event = asyncio.Event()
         self._metrics_manager = metrics_manager
         self.track_id = track_id
+        self._fps_task = None
+        self._stop_event = asyncio.Event()
 
-        asyncio.create_task(self._calculate_fps_loop())
+        self._fps_task = asyncio.create_task(self._calculate_fps_loop())
 
     async def _calculate_fps_loop(self):
         """Loop to calculate FPS periodically."""
-        await self._running_event.wait()
-        self._fps_loop_start_time = time.monotonic()
-        while True:
-            async with self._lock:
-                current_time = time.monotonic()
-                if self._last_fps_calculation_time is not None:
-                    time_diff = current_time - self._last_fps_calculation_time
-                    self._fps = (
-                        self._fps_interval_frame_count / time_diff
-                        if time_diff > 0
-                        else 0.0
-                    )
-                    self._fps_measurements.append(
-                        {
-                            "timestamp": current_time - self._fps_loop_start_time,
-                            "fps": self._fps,
-                        }
-                    )  # Store the FPS measurement with timestamp
+        try:
+            # Wait for first frame with timeout
+            try:
+                await asyncio.wait_for(self._running_event.wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.warning("FPS meter timed out waiting for first frame")
+                return
 
-                # Reset tracking variables for the next interval.
-                self._last_fps_calculation_time = current_time
-                self._fps_interval_frame_count = 0
+            self._fps_loop_start_time = time.monotonic()
+            while not self._stop_event.is_set():
+                try:
+                    async with self._lock:
+                        current_time = time.monotonic()
+                        if self._last_fps_calculation_time is not None:
+                            time_diff = current_time - self._last_fps_calculation_time
+                            self._fps = (
+                                self._fps_interval_frame_count / time_diff
+                                if time_diff > 0
+                                else 0.0
+                            )
+                            self._fps_measurements.append(
+                                {
+                                    "timestamp": current_time - self._fps_loop_start_time,
+                                    "fps": self._fps,
+                                }
+                            )
 
-            # Update Prometheus metrics if enabled.
-            self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
+                        # Reset tracking variables for the next interval.
+                        self._last_fps_calculation_time = current_time
+                        self._fps_interval_frame_count = 0
 
-            await asyncio.sleep(1)  # Calculate FPS every second.
+                    # Update Prometheus metrics if enabled.
+                    self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
+
+                    await asyncio.sleep(1)  # Calculate FPS every second.
+                except Exception as e:
+                    logger.error(f"Error in FPS calculation loop: {e}")
+                    await asyncio.sleep(1)  # Wait before retrying
+        except asyncio.CancelledError:
+            logger.info("FPS calculation loop cancelled")
+        except Exception as e:
+            logger.error(f"Fatal error in FPS calculation loop: {e}")
+        finally:
+            self._stop_event.set()
+
+    async def cleanup(self):
+        """Clean up resources and stop the FPS calculation loop."""
+        if self._fps_task:
+            self._stop_event.set()
+            try:
+                await asyncio.wait_for(self._fps_task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.warning("FPS task cleanup timed out or was cancelled")
+            self._fps_task = None
 
     async def increment_frame_count(self):
         """Increment the frame count to calculate FPS."""

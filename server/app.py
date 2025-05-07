@@ -96,6 +96,7 @@ class VideoStreamTrack(MediaStreamTrack):
             logger.error(f"Unexpected error in frame collection: {str(e)}")
         finally:
             await self.pipeline.cleanup()
+            await self.fps_meter.cleanup()
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
