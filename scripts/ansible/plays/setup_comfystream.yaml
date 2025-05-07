@@ -11,13 +11,13 @@
     ###################################################################
     - block:
         # TODO: Uncomment when tensordock cloud-init is fixed.
-        # - name: Ensure cloud-init has completed successfully
-        #   command: cloud-init status --wait
-        #   register: cloud_init_result
-        #   retries: 30
-        #   delay: 30
-        #   changed_when: false
-        #   failed_when: cloud_init_result.rc != 0
+        - name: Ensure cloud-init has completed successfully
+          command: cloud-init status --wait
+          register: cloud_init_result
+          retries: 30
+          delay: 30
+          changed_when: false
+          failed_when: cloud_init_result.rc != 0
         - name: Wait for apt to be available
           apt:
             update_cache: yes
@@ -214,10 +214,9 @@
     ###################################################################
     - block:
         - name: Check if NVIDIA Container Toolkit is installed
-          shell: dpkg -l | grep nvidia-container-toolkit
+          stat:
+            path: /usr/bin/nvidia-container-toolkit
           register: nvidia_toolkit_installed
-          ignore_errors: yes
-          changed_when: false
         - name: Check if NVIDIA runtime is configured in Docker
           shell: docker info | grep -i nvidia
           register: nvidia_runtime_configured
@@ -228,19 +227,19 @@
             url: https://nvidia.github.io/libnvidia-container/gpgkey
             keyring: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
             state: present
-          when: nvidia_toolkit_installed.rc != 0
+          when: not nvidia_toolkit_installed.stat.exists
         - name: Add NVIDIA repo list
           get_url:
             url: https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list
             dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
             mode: "0644"
-          when: nvidia_toolkit_installed.rc != 0
+          when: not nvidia_toolkit_installed.stat.exists
         - name: Patch NVIDIA repo to use signed key
           replace:
             path: /etc/apt/sources.list.d/nvidia-container-toolkit.list
             regexp: "^deb https://"
             replace: "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://"
-          when: nvidia_toolkit_installed.rc != 0
+          when: not nvidia_toolkit_installed.stat.exists
         - name: Install NVIDIA Container Toolkit
           apt:
             name: nvidia-container-toolkit
@@ -250,7 +249,7 @@
           delay: 30
           register: nvidia_toolkit_result
           until: nvidia_toolkit_result is success
-          when: nvidia_toolkit_installed.rc != 0
+          when: not nvidia_toolkit_installed.stat.exists
         - name: Configure Docker to use NVIDIA runtime
           command: nvidia-ctk runtime configure --runtime=docker
           register: nvidia_ctk_result
