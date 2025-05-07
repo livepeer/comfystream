@@ -39,7 +39,6 @@ COPY ./configs /workspace/comfystream/configs
 
 # Copy ComfyStream files into ComfyUI
 COPY . /workspace/comfystream
-COPY ./ui /workspace/comfystream/configs/ui
 
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/

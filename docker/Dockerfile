@@ -44,6 +44,8 @@ RUN	npm run build
 RUN touch /workspace/comfystream/nodes/web/static/.gitkeep
 
 WORKDIR	/workspace/comfystream
+COPY --chmod=0755	docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+
 EXPOSE	8188	8889	3000
 EXPOSE	1024-65535/udp
 
