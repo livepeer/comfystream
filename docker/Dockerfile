@@ -36,6 +36,10 @@ RUN touch /workspace/comfystream/nodes/web/static/.gitkeep
 
 WORKDIR	/workspace/comfystream
 
+WORKDIR	/workspace/comfystream/ui
+RUN npm install
+RUN	npm run build
+
 EXPOSE	8188	8889	3000
 EXPOSE	1024-65535/udp
 
