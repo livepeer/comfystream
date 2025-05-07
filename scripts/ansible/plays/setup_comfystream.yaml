@@ -220,8 +220,8 @@
         - name: Check if NVIDIA runtime is configured in Docker
           shell: docker info | grep -i nvidia
           register: nvidia_runtime_configured
-          ignore_errors: yes
           changed_when: false
+          failed_when: false
         - name: Add NVIDIA repo key
           apt_key:
             url: https://nvidia.github.io/libnvidia-container/gpgkey
