@@ -79,34 +79,6 @@ export const ControlPanelsContainer = ({ isOpen, onOpenChange }: ControlPanelsCo
       direction="bottom"
       shouldScaleBackground={false}
     >
-      {/* This is a hack to remove the background color of the overlay so the screen is not dimmed when the drawer is open */}
-      <style>
-        {`
-          [data-vaul-overlay] {
-            background-color: transparent !important;
-            background: transparent !important;
-          }
-          
-          /* Custom scrollbar styling */
-          #control-panel-drawer ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-          }
-          
-          #control-panel-drawer ::-webkit-scrollbar-track {
-            background: transparent;
-          }
-          
-          #control-panel-drawer ::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 4px;
-          }
-          
-          #control-panel-drawer ::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
-          }
-        `}
-      </style>
       <DrawerContent
         id="control-panel-drawer"
         className="max-h-[50vh] min-h-[200px] bg-background/90 backdrop-blur-md border-t shadow-lg overflow-hidden"
