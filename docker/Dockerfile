@@ -29,6 +29,10 @@ COPY	docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 WORKDIR	/workspace/comfystream
 COPY --chmod=0755	docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
 
+WORKDIR	/workspace/comfystream/ui
+RUN npm install
+RUN	npm run build
+
 EXPOSE	8188	8889	3000
 EXPOSE	1024-65535/udp
 
