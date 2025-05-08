@@ -9,6 +9,7 @@ import torch
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
+    torch.cuda.empty_cache()
 
 from aiohttp import web
 from aiortc import (
@@ -375,6 +376,7 @@ async def on_startup(app: web.Application):
         gpu_only=True, 
         preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        frame_log_file=app.get("frame_log_file", None),
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
@@ -427,6 +429,12 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
+    parser.add_argument(
+        "--frame-log-file",
+        type=str,
+        default=None,
+        help="Filename for frame timing log (optional)"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -438,6 +446,8 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
+    app["frame_log_file"] = args.frame_log_file
+
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

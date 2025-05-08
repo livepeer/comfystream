@@ -3,10 +3,12 @@ import torch
 import numpy as np
 import asyncio
 import logging
+import time
 from typing import Any, Dict, Union, List, Optional
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+from comfystream.frame_logging import log_frame_timing
 
 WARMUP_RUNS = 5
 
@@ -22,7 +24,7 @@ class Pipeline:
     """
     
     def __init__(self, width: int = 512, height: int = 512, 
-                 comfyui_inference_log_level: Optional[int] = None, **kwargs):
+                 comfyui_inference_log_level: Optional[int] = None, frame_log_file: Optional[str] = None, **kwargs):
         """Initialize the pipeline with the given configuration.
         
         Args:
@@ -42,6 +44,16 @@ class Pipeline:
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
+
+        # Add a queue for frame log entries
+        self.running = True
+        self.next_expected_frame_id = 0
+        self.frame_log_file = frame_log_file
+        self.frame_log_queue = None  # Initialize to None by default
+
+        if self.frame_log_file:
+            self.frame_log_queue = asyncio.Queue()
+            self.frame_logger_task = asyncio.create_task(self._process_frame_logs())
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -93,8 +105,25 @@ class Pipeline:
         Args:
             frame: The video frame to process
         """
+        current_time = time.time()
         frame.side_data.input = self.video_preprocess(frame)
         frame.side_data.skipped = True
+        frame.side_data.frame_received_time = current_time
+        frame.side_data.frame_id = self.next_expected_frame_id
+        frame.side_data.client_index = -1
+        self.next_expected_frame_id += 1
+
+        # Log frame at input time to properly track input FPS
+        if self.frame_log_file:
+            await self.frame_log_queue.put({
+                'frame_id': frame.side_data.frame_id,
+                'frame_received_time': frame.side_data.frame_received_time,
+                'frame_process_start_time': None,
+                'frame_processed_time': None,
+                'client_index': frame.side_data.client_index,
+                'csv_path': self.frame_log_file
+            })
+
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
 
@@ -163,6 +192,8 @@ class Pipeline:
         Returns:
             The processed video frame
         """
+        frame_process_start_time = time.time()
+
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_tensor = await self.client.get_video_output()
         frame = await self.video_incoming_frames.get()
@@ -172,6 +203,19 @@ class Pipeline:
         processed_frame = self.video_postprocess(out_tensor)
         processed_frame.pts = frame.pts
         processed_frame.time_base = frame.time_base
+
+        frame_processed_time = time.time()
+
+        # Log frame timing with simplified metrics
+        if self.frame_log_file:
+            await self.frame_log_queue.put({
+                'frame_id': frame.side_data.frame_id,
+                'frame_received_time': frame.side_data.frame_received_time,
+                'frame_process_start_time': frame_process_start_time,
+                'frame_processed_time': frame_processed_time,
+                'client_index': frame.side_data.client_index,
+                'csv_path': self.frame_log_file
+            })
         
         return processed_frame
 
@@ -207,4 +251,28 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+
+        # Cancel frame logger task if it exists
+        if hasattr(self, 'frame_logger_task') and self.frame_logger_task:
+            self.frame_logger_task.cancel()
+            try:
+                await self.frame_logger_task
+            except asyncio.CancelledError:
+                pass
+
+        await self.client.cleanup()
+
+    async def _process_frame_logs(self):
+        """Background task to process frame logs from queue"""
+        while self.running:
+            try:
+                # Get log entry from queue
+                log_entry = await self.frame_log_queue.get()
+                log_frame_timing(**log_entry)
+                
+                # Mark task as done
+                self.frame_log_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in frame logging: {e}")
