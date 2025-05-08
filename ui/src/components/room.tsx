@@ -16,6 +16,7 @@ import { ControlPanelsContainer } from "@/components/control-panels-container";
 import fixWebmDuration from 'webm-duration-fix';
 import { set, get, del, keys } from 'idb-keyval';
 import { Drawer, DrawerContent, DrawerTitle } from "./ui/drawer";
+import * as Tabs from '@radix-ui/react-tabs';
 
 // Custom hook for managing toast lifecycle
 function useToast() {
@@ -629,22 +630,46 @@ export const Room = () => {
                     <div className="text-gray-500">No recordings yet.</div>
                   ) : (
                     <div className="flex flex-col gap-4">
-                      {recordings.slice().reverse().map(rec => (
-                        <div key={rec.id} className="border rounded-lg p-3 bg-gray-50 flex flex-col gap-2">
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold">{rec.filename}</span>
-                            <button
-                              onClick={() => deleteRecording(rec.id)}
-                              className="text-red-500 hover:text-red-700 text-lg ml-2"
-                              title="Delete"
-                            >🗑️</button>
+                      {recordings.slice().reverse().map(rec => {
+                        // Find the matching input recording for this output (by filename timestamp)
+                        const base = rec.filename.replace(/^recording_(input|output)_/, '');
+                        const inputRec = recordings.find(r => r.type === 'input' && r.filename.replace(/^recording_(input|output)_/, '') === base);
+                        const outputRec = recordings.find(r => r.type === 'output' && r.filename.replace(/^recording_(input|output)_/, '') === base);
+                        return (
+                          <div key={rec.id} className="border rounded-lg p-3 bg-gray-50 flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold">{rec.filename}</span>
+                              <button
+                                onClick={() => deleteRecording(rec.id)}
+                                className="text-red-500 hover:text-red-700 text-lg ml-2"
+                                title="Delete"
+                              >🗑️</button>
+                            </div>
+                            <Tabs.Root defaultValue={outputRec ? 'output' : 'input'} className="w-full">
+                              <Tabs.List className="flex gap-2">
+                                {outputRec && <Tabs.Trigger value="output" className="px-3 py-1 rounded-t bg-slate-100 text-slate-700 data-[state=active]:bg-slate-700 data-[state=active]:text-white transition-colors">Output</Tabs.Trigger>}
+                                {inputRec && <Tabs.Trigger value="input" className="px-3 py-1 rounded-t bg-gray-100 text-gray-700 data-[state=active]:bg-gray-700 data-[state=active]:text-white transition-colors">Input</Tabs.Trigger>}
+                              </Tabs.List>
+                              {outputRec && (
+                                <Tabs.Content value="output">
+                                  <video src={outputRec.url} controls className="w-full rounded" preload="metadata" />
+                                  <div className="flex gap-2 mt-1 justify-end">
+                                    <a href={outputRec.url} download={outputRec.filename} className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-800 transition-colors text-sm">Download</a>
+                                  </div>
+                                </Tabs.Content>
+                              )}
+                              {inputRec && (
+                                <Tabs.Content value="input">
+                                  <video src={inputRec.url} controls className="w-full rounded" preload="metadata" />
+                                  <div className="flex gap-2 mt-1 justify-end">
+                                    <a href={inputRec.url} download={inputRec.filename} className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-800 transition-colors text-sm">Download</a>
+                                  </div>
+                                </Tabs.Content>
+                              )}
+                            </Tabs.Root>
                           </div>
-                          <video src={rec.url} controls className="w-full rounded" preload="metadata" />
-                          <div className="flex gap-2 mt-1">
-                            <a href={rec.url} download={rec.filename} className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Download</a>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
