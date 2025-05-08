@@ -10,6 +10,7 @@ import torch
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
+    torch.cuda.empty_cache()
 
 from aiohttp import web
 from aiortc import (
@@ -405,11 +406,9 @@ async def on_startup(app: web.Application):
         cuda_devices=app["cuda_devices"],
         workers_start_port=app.get("workers_start_port", 8195),
         comfyui_log_level=app.get("comfyui_log_level", None),
+        frame_log_file=app.get("frame_log_file", None),
     )
 
-    if (app.get("client_mode") == "spawn" and app.get("comfyui_log_level") is None):
-        print("To see spawned ComfyUI logs, add --comfyui_log_level=DEBUG")
-    
     # Start the clients during initialization
     # await app["pipeline"].start_clients()
     
@@ -440,8 +439,7 @@ if __name__ == "__main__":
         "--workspace", default=None, required=True, help="Set Comfy workspace"
     )
     parser.add_argument(
-        "--log-level", "--log_level",
-        dest="log_level",
+        "--log-level",
         default="WARNING",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level",
@@ -506,6 +504,12 @@ if __name__ == "__main__":
         default=8195,
         help="Starting port number for worker processes"
     )
+    parser.add_argument(
+        "--frame-log-file",
+        type=str,
+        default=None,
+        help="Filename for frame timing log (optional)"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -513,10 +517,6 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
-
-    # Set logger level based on command line arguments
-    print(f"Setting log level to {args.log_level.upper()}")
-    logger.setLevel(getattr(logging, args.log_level.upper()))
 
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
@@ -527,6 +527,7 @@ if __name__ == "__main__":
     app["workers"] = args.workers
     app["cuda_devices"] = args.cuda_devices
     app["workers_start_port"] = args.workers_start_port
+    app["frame_log_file"] = args.frame_log_file
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -573,4 +574,20 @@ if __name__ == "__main__":
     if args.comfyui_inference_log_level:
         app["comfyui_inference_log_level"] = args.comfyui_inference_log_level
 
+    print("\n\nComfystream Options:")
+
+    print(f"Client Mode: {app.get('client_mode')}")
+    print(f"Log Level: {args.log_level.upper()}")
+    if (app.get("client_mode") == "spawn" and app.get("comfyui_log_level") is None):
+        print("To see spawned ComfyUI logs, add --comfyui_log_level=DEBUG")
+    else:
+        print(f"ComfyUI Log Level: {app.get('comfyui_log_level')}")
+    if (app.get("frame_log_file") is None):
+        print("To set a frame log file, add --frame_log_file=filename.csv")
+    else:
+        print(f"Frame Log File: {app.get('frame_log_file')}")
+    print("\n\n")
+
+    logger.setLevel(getattr(logging, args.log_level.upper()))
+    
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)

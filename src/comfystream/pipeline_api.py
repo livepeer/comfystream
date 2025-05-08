@@ -32,6 +32,7 @@ class MultiServerPipeline:
             cuda_devices: str = '0',
             workers_start_port: int = 8195,
             comfyui_log_level: str = None,
+            frame_log_file: Optional[str] = None,
         ):
         """Initialize the pipeline with the given configuration.
         Args:
@@ -46,8 +47,9 @@ class MultiServerPipeline:
             workers_start_port: The starting port number for worker processes (default: 8195).
             cuda_devices: The list of CUDA devices to use for the ComfyUI clients.
             comfyui_log_level: The logging level for ComfyUI
+            frame_log_file: The filename for the frame timing log (optional).
         """
-
+        
         # There are two methods for starting the clients:
         # 1. client_mode == "toml" -> Use a config file to describe clients.
         # 2. client_mode == "spawn" -> Spawn ComfyUI clients as external processes.
@@ -108,7 +110,15 @@ class MultiServerPipeline:
         # self.output_pacer_task = asyncio.create_task(self._dynamic_output_pacer())
 
         self.comfyui_log_level = comfyui_log_level
-    
+        
+        # Add a queue for frame log entries
+        self.frame_log_file = frame_log_file
+        self.frame_log_queue = None  # Initialize to None by default
+
+        if self.frame_log_file:
+            self.frame_log_queue = asyncio.Queue()
+            self.frame_logger_task = asyncio.create_task(self._process_frame_logs())
+        
     async def _collect_processed_frames(self):
         """Background task to collect processed frames from all clients"""
         try:
@@ -235,7 +245,7 @@ class MultiServerPipeline:
             logger.info(f"Client {client_index} warmup iteration {i+1}/{WARMUP_RUNS}")
             client.put_video_input(dummy_frame)
             try:
-                await asyncio.wait_for(client.get_video_output(), timeout=5.0)
+                await asyncio.wait_for(client.get_video_output(), timeout=30)
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout waiting for warmup frame from client {client_index}")
             except Exception as e:
@@ -318,14 +328,15 @@ class MultiServerPipeline:
         frame.side_data.client_index = client_index
 
         # Log frame at input time to properly track input FPS
-        log_frame_timing(
-            frame_id=frame_id,
-            frame_received_time=current_time,
-            frame_process_start_time=None,
-            frame_processed_time=None,
-            client_index=client_index,
-            csv_path="frame_logs.csv"
-        )
+        if self.frame_log_file:
+            await self.frame_log_queue.put({
+                'frame_id': frame_id,
+                'frame_received_time': frame.side_data.frame_received_time,
+                'frame_process_start_time': None,
+                'frame_processed_time': None,
+                'client_index': frame.side_data.client_index,
+                'csv_path': self.frame_log_file
+            })
 
         # Send frame to the selected client
         self.clients[client_index].put_video_input(frame)
@@ -377,7 +388,7 @@ class MultiServerPipeline:
             frame = await self.video_incoming_frames.get()
 
             # Set process start time just before processing
-            frame.side_data.frame_process_start_time = time.time()
+            frame_process_start_time = time.time()
 
             # Get the processed frame from our output queue
             processed_frame_id, out_tensor = await self.processed_video_frames.get()
@@ -402,14 +413,15 @@ class MultiServerPipeline:
             processed_frame.time_base = frame.time_base
 
             # Log frame timing with simplified metrics
-            log_frame_timing(
-                frame_id=processed_frame_id,
-                frame_received_time=frame.side_data.frame_received_time,
-                frame_process_start_time=frame.side_data.frame_process_start_time,
-                frame_processed_time=frame_processed_time,
-                client_index=frame.side_data.client_index,
-                csv_path="frame_logs.csv"
-            )
+            if self.frame_log_file:
+                await self.frame_log_queue.put({
+                    'frame_id': processed_frame_id,
+                    'frame_received_time': frame.side_data.frame_received_time,
+                    'frame_process_start_time': frame_process_start_time,
+                    'frame_processed_time': frame_processed_time,
+                    'client_index': frame.side_data.client_index,
+                    'csv_path': self.frame_log_file
+                })
 
             return processed_frame
             
@@ -525,6 +537,14 @@ class MultiServerPipeline:
         
         # Reset output counters
         self.output_counter = 0
+        
+        # Cancel frame logger task if it exists
+        if hasattr(self, 'frame_logger_task') and self.frame_logger_task:
+            self.frame_logger_task.cancel()
+            try:
+                await self.frame_logger_task
+            except asyncio.CancelledError:
+                pass
         
         logger.info("Pipeline cleanup completed, clients will be reinitialized on next connection")
 
@@ -657,6 +677,22 @@ class MultiServerPipeline:
             logger.error(f"Error starting clients: {e}")
             self.clients = []
             return None
+
+    async def _process_frame_logs(self):
+        """Background task to process frame logs from queue"""
+        while self.running:
+            try:
+                # Get log entry from queue
+                log_entry = await self.frame_log_queue.get()
+                
+                log_frame_timing(**log_entry)
+                
+                # Mark task as done
+                self.frame_log_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in frame logging: {e}")
 
 # For backwards compatibility, maintain the original Pipeline name
 Pipeline = MultiServerPipeline
