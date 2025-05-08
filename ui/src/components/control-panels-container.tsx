@@ -82,6 +82,7 @@ export const ControlPanelsContainer = ({ isOpen, onOpenChange }: ControlPanelsCo
       <DrawerContent
         id="control-panel-drawer"
         className="max-h-[50vh] min-h-[200px] bg-background/90 backdrop-blur-md border-t shadow-lg overflow-hidden"
+        style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50 }}
       >
         <DrawerTitle className="sr-only">Control Panels</DrawerTitle>
 
