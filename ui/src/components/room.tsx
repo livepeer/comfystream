@@ -642,13 +642,6 @@ export const Room = () => {
                           <video src={rec.url} controls className="w-full rounded" preload="metadata" />
                           <div className="flex gap-2 mt-1">
                             <a href={rec.url} download={rec.filename} className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Download</a>
-                            <button
-                              onClick={async () => {
-                                const { blob } = await get(rec.id);
-                                shareRecording(rec.filename, blob);
-                              }}
-                              className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
-                            >Share</button>
                           </div>
                         </div>
                       ))}
