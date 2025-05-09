@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
+import { StreamControl } from "@/components/stream-control";
 
 // Custom hook for managing toast lifecycle
 function useToast() {
@@ -159,9 +160,10 @@ interface StageProps {
   onStreamReady: () => void;
   onComfyUIReady: () => void;
   resolution: { width: number; height: number };
+  backendUrl: string;
 }
 
-function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StageProps) {
+function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUrl }: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
   // Add state and refs for tracking frames
@@ -270,6 +272,8 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution }: StagePr
           </TooltipProvider>
         </div>
       )}
+      {/* Add StreamControlIcon at the bottom right corner of the video box */}
+      <StreamControl backendUrl={backendUrl} />
     </div>
   );
 }
@@ -384,6 +388,7 @@ export const Room = () => {
                 <Stage
                   connected={isConnected}
                   onStreamReady={onRemoteStreamReady}
+                  backendUrl={config.streamUrl || ""}
                   onComfyUIReady={onComfyUIReady}
                   resolution={config.resolution}
                 />
