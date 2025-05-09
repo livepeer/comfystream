@@ -23,8 +23,7 @@ show_help() {
   echo "Usage: entrypoint.sh [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  --download-models       Download default models"
-  echo "  --build-engines         Build TensorRT engines for default models"
+  echo "  --download-models       Download default models and build required TensorRT engines"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
   echo "  --server                Start the Comfystream server, UI and ComfyUI"
   echo "  --help                  Show this help message"
@@ -39,48 +38,9 @@ fi
 if [ "$1" = "--download-models" ]; then
   cd /workspace/comfystream
   conda activate comfystream
-  python src/comfystream/scripts/setup_models.py --workspace /workspace/ComfyUI
-  shift
-fi
-
-DEPTH_ANYTHING_DIR="/workspace/ComfyUI/models/tensorrt/depth-anything"
-
-if [ "$1" = "--build-engines" ]; then
-  cd /workspace/comfystream
-  conda activate comfystream
-
-  # Build Static Engine for Dreamshaper
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine
-
-  # Build Dynamic Engine for Dreamshaper
-  python src/comfystream/scripts/build_trt.py \
-                --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors \
-                --out-engine /workspace/ComfyUI/output/tensorrt/dynamic-dreamshaper8_SD15_\$dyn-b-1-4-2-h-448-704-512-w-448-704-512_00001_.engine \
-                --width 512 \
-                --height 512 \
-                --min-width 448 \
-                --min-height 448 \
-                --max-width 704 \
-                --max-height 704
-
-  # Build Engine for Depth Anything V2
-  if [ ! -f "$DEPTH_ANYTHING_DIR/depth_anything_vitl14-fp16.engine" ]; then
-    if [ ! -d "$DEPTH_ANYTHING_DIR" ]; then
-      mkdir -p "$DEPTH_ANYTHING_DIR"
-    fi
-    cd "$DEPTH_ANYTHING_DIR"
-    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py
-  else
-    echo "Engine for DepthAnything2 already exists, skipping..."
-  fi
-
-  # Build Engine for Depth Anything2 (large)
-  if [ ! -f "$DEPTH_ANYTHING_DIR/depth_anything_v2_vitl-fp16.engine" ]; then
-    cd "$DEPTH_ANYTHING_DIR"
-    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py --trt-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl-fp16.engine" --onnx-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl.onnx"
-  else
-    echo "Engine for DepthAnything2 (large) already exists, skipping..."
-  fi
+  
+  # Now also builds engines configured in models.yaml
+  python src/comfystream/scripts/setup_models.py --workspace /workspace/ComfyUI --build-engines
   shift
 fi
 
