@@ -8,7 +8,7 @@ show_help() {
   echo "Usage: entrypoint.sh [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  --persistent-volume     Initialize persistent volume mount"
+  echo "  --use-volume     Initialize persistent volume mount"
   echo "  --download-models       Download default models"
   echo "  --build-engines         Build TensorRT engines for default models"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
@@ -29,7 +29,7 @@ MODELS_DIR="$COMFYUI_DIR/models"
 OUTPUT_DIR="$COMFYUI_DIR/output"
 
 # Map persistent volume mount for models and engines using symlinks
-if [ "$1" = "--persistent-volume" ] && [ -d "$WORKSPACE_STORAGE" ]; then
+if [ "$1" = "--use-volume" ] && [ -d "$WORKSPACE_STORAGE" ]; then
   echo "Initializing persistent volume mount..."
   if [ ! -L "$MODELS_DIR" ]; then
       rm -rf "$MODELS_DIR"
