@@ -32,14 +32,16 @@ OUTPUT_DIR="$COMFYUI_DIR/output"
 if [ "$1" = "--persistent-volume" ] && [ -d "$WORKSPACE_STORAGE" ]; then
   echo "Initializing persistent volume mount..."
   if [ ! -L "$MODELS_DIR" ]; then
-      ln -s $WORKSPACE_STORAGE/models "$MODELS_DIR"
+      rm -rf "$MODELS_DIR"
+      ln -s $WORKSPACE_STORAGE/ComfyUI--models "$MODELS_DIR"
       echo "created symlink for models at $MODELS_DIR"
   else
       echo "symlink for models already exists at $MODELS_DIR"
   fi
 
   if [ ! -L "$OUTPUT_DIR" ]; then
-      ln -s $WORKSPACE_STORAGE/output "$OUTPUT_DIR"
+      rm -rf "$OUTPUT_DIR"
+      ln -s $WORKSPACE_STORAGE/ComfyUI--output "$OUTPUT_DIR"
       echo "created symlink for output at $OUTPUT_DIR"
   else
       echo "symlink for output already exists at $OUTPUT_DIR"
