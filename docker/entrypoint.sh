@@ -23,7 +23,7 @@ if [ "$1" = "--help" ]; then
 fi
 
 # Define reusable paths
-WORKSPACE_STORAGE="/workspace/storage"
+WORKSPACE_STORAGE="/app/storage"
 COMFYUI_DIR="/workspace/ComfyUI"
 MODELS_DIR="$COMFYUI_DIR/models"
 OUTPUT_DIR="$COMFYUI_DIR/output"
