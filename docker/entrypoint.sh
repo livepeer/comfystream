@@ -42,6 +42,9 @@ if [ "$1" = "--use-volume" ] && [ -d "$WORKSPACE_STORAGE" ]; then
   if [ ! -L "$OUTPUT_DIR" ]; then
       rm -rf "$OUTPUT_DIR"
       ln -s $WORKSPACE_STORAGE/ComfyUI--output "$OUTPUT_DIR"
+      if [ ! -d "$WORKSPACE_STORAGE/ComfyUI--output/tensorrt" ]; then
+          mkdir -p "$WORKSPACE_STORAGE/ComfyUI--output/tensorrt"
+      fi
       echo "created symlink for output at $OUTPUT_DIR"
   else
       echo "symlink for output already exists at $OUTPUT_DIR"
