@@ -5,9 +5,9 @@ import logging
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
 
-from comfy.api.components.schema.prompt import PromptDictInput
-from comfy.cli_args_types import Configuration
-from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+from hiddenswitch_comfy.api.components.schema.prompt import PromptDictInput
+from hiddenswitch_comfy.cli_args_types import Configuration
+from hiddenswitch_comfy.client.embedded_comfy_client import EmbeddedComfyClient
 
 logger = logging.getLogger(__name__)
 
