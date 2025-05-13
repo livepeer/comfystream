@@ -120,6 +120,79 @@ if [ "$1" = "--build-engines" ]; then
   shift
 fi
 
+if [ "$1" = "--opencv-cuda-build-blackwell" ]; then
+  cd /workspace/comfystream
+  conda activate comfystream
+
+  #BUILD OPENCV
+  # Install required libraries
+  apt-get update && apt-get install -y \
+    build-essential cmake git-core libtool pkg-config wget unzip \
+    python3.12-dev \
+    libgflags-dev libgoogle-glog-dev \
+    libtbbmalloc2 libtbb-dev libjpeg-dev libpng-dev libtiff-dev libv4l-dev v4l-utils qv4l2 \
+    ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+  # Remove existing cv2 package
+  SITE_PACKAGES_DIR="/workspace/miniconda3/envs/comfystream/lib/python3.11/site-packages"
+  rm -rf "${SITE_PACKAGES_DIR}/cv2"*
+  
+  # https://gist.github.com/raulqf/f42c718a658cddc16f9df07ecc627be7
+  # Download and extract OpenCV CUDA build
+  git clone --depth 1 https://github.com/opencv/opencv
+  git clone --depth 1 https://github.com/opencv/opencv_contrib
+  
+  #wget -O opencv.zip https://github.com/opencv/opencv/archive/refs/tags/4.11.0.zip
+  #wget -O opencv_contrib.zip https://github.com/opencv/opencv_contrib/archive/refs/tags/4.11.0.zip
+  #unzip opencv.zip
+  #unzip opencv_contrib.zip
+  #rm opencv.zip
+  #rm opencv_contrib.zip
+  
+  cd opencv
+  mkdir build
+  cd build
+
+  cmake -D WITH_CUDA=ON \
+	-D WITH_TBB=ON \
+    -D WITH_CUDNN=ON \
+	-D WITH_CUBLAS=ON \
+    -D OPENCV_DNN_CUDA=ON \
+	-D CUDA_ARCH_BIN="12.0" \
+	-D CUDA_ARCH_PTX="" \
+	-D OPENCV_GENERATE_PKGCONFIG=ON \
+	-D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
+	-D BUILD_opencv_python3=ON \
+	-D BUILD_TESTS=OFF \
+	-D BUILD_PERF_TESTS=OFF \
+	-D BUILD_EXAMPLES=OFF \
+	-D CMAKE_BUILD_TYPE=RELEASE \
+	-D CMAKE_INSTALL_PREFIX=/usr/local \
+    -D OPENCV_PYTHON3_INSTALL_PATH=/workspace/miniconda3/envs/comfystream/lib/python3.11/site-packages \
+    -D PYTHON_EXECUTABLE=/workspace/miniconda3/envs/comfystream/bin/python \
+    -D PYTHON3_LIBRARY=/workspace/miniconda3/envs/comfystream/lib/libpython3.11.so \
+    -D PYTHON3_INCLUDE_DIRS=/workspace/miniconda3/envs/comfystream/include/python3.11 \
+    ..
+  
+  make -j$(nproc)
+  make install
+  cp /usr/local/lib/libopencv* /workspace/miniconda3/envs/comfystream/lib/
+  # Handle library dependencies
+  CONDA_ENV_LIB="/workspace/miniconda3/envs/comfystream/lib"
+  
+  # Remove existing libstdc++ and copy system one
+  rm -f "${CONDA_ENV_LIB}/libstdc++.so"*
+  cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
+
+  # remove the opencv-contrib and cv2 folders
+  rm -rf /workspace/comfystream/opencv_contrib
+  rm -rf /workspace/comfystream/opencv
+
+  echo "OpenCV CUDA installation completed"
+  shift
+fi
+
 if [ "$1" = "--opencv-cuda" ]; then
   cd /workspace/comfystream
   conda activate comfystream
