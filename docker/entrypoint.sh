@@ -55,12 +55,12 @@ if [ "$1" = "--build-engines" ]; then
   # Build Dynamic Engine for Dreamshaper
   python src/comfystream/scripts/build_trt.py \
                 --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors \
-                --out-engine /workspace/ComfyUI/output/tensorrt/dynamic-dreamshaper8_SD15_\$dyn-b-1-4-2-h-448-704-512-w-448-704-512_00001_.engine \
-                --width 512 \
-                --height 512 \
-                --min-width 448 \
-                --min-height 448 \
-                --max-width 704 \
+                --out-engine /workspace/ComfyUI/output/tensorrt/dynamic-dreamshaper8_SD15_$dyn-b-1-4-2-h-512-640-704-w-320-384-448_00001_.engine \
+                --width 384 \
+                --height 640 \
+                --min-width 320 \
+                --min-height 512 \
+                --max-width 448 \
                 --max-height 704
 
   # Build Engine for Depth Anything V2
