@@ -17,7 +17,7 @@ nodes:
   comfyui-fasterliveportrait:
     name: "ComfyUI FasterLivePortrait"
     url: "https://github.com/pschroedl/ComfyUI-FasterLivePortrait.git"
-    branch: "main"
+    branch: "vb/standard_flp"
     type: "tensorrt"
 
   comfyui-streamdiffusion:
