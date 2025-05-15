@@ -98,8 +98,17 @@ class ComfyStreamClient:
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
 
-    async def update_resolution(self, width: int= 512, height: int= 512):
-        await self.warm_video(width, height, 1)
+    async def update_resolution(self, width: int= 512, height: int= 512, warmup_runs: int = 5):
+        """Runs warmup runs to warm up the video processing pipeline.
+        
+        Args:
+            width: Width of the dummy frames
+            height: Height of the dummy frames
+            warmup_runs: Number of warmup runs to perform
+        """
+        logger.info(f"Updating resolution to {width}x{height}")
+
+        await self.warm_video(width, height, warmup_runs)
         
     async def warm_video(self, width: int = 512, height: int = 512, num_runs: int = 5):
         """Warm up the video processing pipeline with dummy frames.
