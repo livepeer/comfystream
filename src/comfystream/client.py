@@ -1,6 +1,8 @@
 import asyncio
 from typing import List
 import logging
+import torch
+import av
 
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
@@ -33,6 +35,10 @@ class ComfyStreamClient:
                 "Number of updated prompts must match the number of currently running prompts."
             )
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+    
+    async def update_prompt(self, prompt_index: int, prompt: PromptDictInput):
+        self.current_prompts[prompt_index] = convert_prompt(prompt)
+
 
     async def run_prompt(self, prompt_index: int):
         while True:
@@ -91,6 +97,37 @@ class ComfyStreamClient:
     
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
+
+    async def update_resolution(self, width: int= 512, height: int= 512):
+        await self.warm_video(width, height, 1)
+        
+    async def warm_video(self, width: int = 512, height: int = 512, num_runs: int = 5):
+        """Warm up the video processing pipeline with dummy frames.
+        
+        Args:
+            width: Width of the dummy frames
+            height: Height of the dummy frames
+            num_runs: Number of warmup runs to perform
+        """
+        
+        logger.info(f"Warming video pipeline with resolution {width}x{height}")
+        
+        # Create dummy frame
+        dummy_frame = av.VideoFrame()
+        dummy_frame.side_data.input = torch.randn(1, height, width, 3)
+        
+        # Process frames through the queue system
+        for _ in range(num_runs):
+            try:
+                # Put frame in input queue
+                self.put_video_input(dummy_frame)
+                
+                # Get processed frame from output queue
+                await self.get_video_output()
+                    
+            except Exception as e:
+                logger.error(f"Error during video warmup: {str(e)}")
+                raise
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
