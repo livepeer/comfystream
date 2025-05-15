@@ -176,7 +176,8 @@ class Pipeline:
         processed_frame = self.video_postprocess(out_tensor)
         processed_frame.pts = frame.pts
         processed_frame.time_base = frame.time_base
-        processed_frame.side_data.request_id = frame.side_data.request_id
+        if frame.side_data.request_id is not None:
+            processed_frame.side_data.request_id = frame.side_data.request_id
         
         return processed_frame
 
@@ -198,6 +199,8 @@ class Pipeline:
         processed_frame.pts = frame.pts
         processed_frame.time_base = frame.time_base
         processed_frame.sample_rate = frame.sample_rate
+        if frame.side_data.request_id is not None:
+            processed_frame.side_data.request_id = frame.side_data.request_id
         
         return processed_frame
     
