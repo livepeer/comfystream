@@ -95,7 +95,8 @@ class Pipeline:
         """
         frame.side_data.input = self.video_preprocess(frame)
         frame.side_data.skipped = True
-        frame.side_data.request_id = request_id
+        if request_id is not None:
+            frame.side_data.request_id = request_id
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
 
@@ -107,7 +108,8 @@ class Pipeline:
         """
         frame.side_data.input = self.audio_preprocess(frame)
         frame.side_data.skipped = True
-        frame.side_data.request_id = request_id
+        if request_id is not None:
+            frame.side_data.request_id = request_id
         self.client.put_audio_input(frame)
         await self.audio_incoming_frames.put(frame)
 
