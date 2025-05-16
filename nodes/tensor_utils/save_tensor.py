@@ -1,7 +1,8 @@
+from comfystream import tensor_cache
+
 class SaveTensor:
     CATEGORY = "tensor_utils"
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("bytes",)
+    RETURN_TYPES = ()
     FUNCTION = "execute"
     OUTPUT_NODE = True
 
@@ -9,7 +10,7 @@ class SaveTensor:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "bytes": ("STRING",),
+                "strs": ("STRING",),
             }
         }
 
@@ -17,5 +18,6 @@ class SaveTensor:
     def IS_CHANGED(s):
         return float("nan")
 
-    def execute(self, bytes: str):
-        return {"ui": {"results": [bytes]}}
+    def execute(self, strs: str):
+        tensor_cache.image_outputs.put(strs)
+        return strs

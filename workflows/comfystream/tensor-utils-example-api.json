@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "bytes": [
+      "strs": [
         "2",
         0
       ]
@@ -12,9 +12,7 @@
     }
   },
   "2": {
-    "inputs": {
-      "bytes": "None"
-    },
+    "inputs": {},
     "class_type": "LoadTensor",
     "_meta": {
       "title": "LoadTensor"
