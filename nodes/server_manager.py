@@ -34,15 +34,18 @@ class ComfyStreamServerBase(ABC):
         self.host = host
         self.port = port
         self.is_running = False
+        self.enable_metrics = False
         logging.info(f"Initializing {self.__class__.__name__}")
     
     @abstractmethod
-    async def start(self, port=None, host=None) -> bool:
+    async def start(self, port=None, host=None, enable_metrics=None) -> bool:
         """Start the ComfyStream server
         
         Args:
             port: Optional port to use. If None, implementation should choose a port.
             host: Optional host to use. If None, implementation should use the default host.
+            enable_metrics: Optional flag to enable metrics endpoint. If None, use the
+                current setting.
             
         Returns:
             bool: True if server started successfully, False otherwise
@@ -76,22 +79,32 @@ class ComfyStreamServerBase(ABC):
         """
         pass
     
-    async def restart(self, port=None, host=None) -> bool:
-        """Restart the ComfyStream server
+    async def restart(self, port=None, host=None, enable_metrics=None) -> bool:
+        """Restart the ComfyStream server.
         
         Args:
             port: Optional port to use. If None, use the current port.
             host: Optional host to use. If None, use the current host.
+            enable_metrics: Optional flag to enable metrics endpoint. If None, use the
+                current setting.
             
         Returns:
-            bool: True if server restarted successfully, False otherwise
+            bool: True if server restarted successfully, False otherwise.
         """
         logging.info("Restarting ComfyStream server...")
         # Use provided values or current values
         port_to_use = port if port is not None else self.port
         host_to_use = host if host is not None else self.host
+        enable_metrics = (
+            enable_metrics if enable_metrics is not None else self.enable_metrics
+        )
+
         await self.stop()
-        return await self.start(port=port_to_use, host=host_to_use)
+        return await self.start(
+            port=port_to_use,
+            host=host_to_use,
+            enable_metrics=enable_metrics
+        )
 
 class LocalComfyStreamServer(ComfyStreamServerBase):
     """Local ComfyStream server implementation"""
@@ -136,8 +149,18 @@ class LocalComfyStreamServer(ComfyStreamServerBase):
         for line in iter(pipe.readline, b''):
             logging.log(level, line.decode().strip())
 
-    async def start(self, port=None, host=None):
-        """Start the ComfyStream server"""
+    async def start(self, port=None, host=None, enable_metrics=None):
+        """Start the ComfyStream server.
+        
+        Args:
+            port: Optional port to use. If None, find an available port.
+            host: Optional host to use. If None, use the current host.
+            enable_metrics: Optional flag to enable metrics endpoint. If None, use the
+                current setting.
+
+        Returns:
+            bool: True if server started successfully, False otherwise.
+        """
         if self.is_running:
             logging.info("Server is already running")
             return False
@@ -146,7 +169,9 @@ class LocalComfyStreamServer(ComfyStreamServerBase):
             self.port = port or self.find_available_port()
             if host is not None:
                 self.host = host
-            
+            if enable_metrics is not None:
+                self.enable_metrics = enable_metrics
+
             # Get the path to the ComfyStream server directory and script
             server_dir = Path(__file__).parent.parent / "server"
             server_script = server_dir / "app.py"
@@ -161,6 +186,8 @@ class LocalComfyStreamServer(ComfyStreamServerBase):
                   "--port", str(self.port),
                   "--host", str(self.host),
                   "--workspace", str(comfyui_workspace)]
+            if self.enable_metrics:
+                cmd.append("--monitor")
             
             logging.info(f"Starting server with command: {' '.join(cmd)}")
             

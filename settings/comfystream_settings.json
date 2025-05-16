@@ -5,13 +5,16 @@
     {
       "name": "RunPod",
       "host": "0.0.0.0",
-      "port": 8889
+      "port": 8889,
+      "enableMetrics": false
     },
     {
       "name": "Localhost",
       "host": "localhost",
-      "port": 8889
+      "port": 8889,
+      "enableMetrics": false
     }
   ],
-  "selectedConfigIndex": 1
+  "selectedConfigIndex": 1,
+  "enableMetrics": false
 }

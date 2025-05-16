@@ -90,6 +90,7 @@ if hasattr(PromptServer.instance, 'routes') and hasattr(PromptServer.instance.ro
             # Extract host and port from settings if provided
             host = settings.get("host") if settings else None
             port = settings.get("port") if settings else None
+            enable_metrics = settings.get("enableMetrics") if settings else None
             
             if action == "status":
                 # Simply return the current server status
@@ -98,7 +99,11 @@ if hasattr(PromptServer.instance, 'routes') and hasattr(PromptServer.instance.ro
                     "status": server_manager.get_status()
                 })
             elif action == "start":
-                success = await server_manager.start(port=port, host=host)
+                success = await server_manager.start(
+                    port=port,
+                    host=host,
+                    enable_metrics=enable_metrics
+                )
                 return web.json_response({
                     "success": success,
                     "status": server_manager.get_status()
@@ -120,7 +125,11 @@ if hasattr(PromptServer.instance, 'routes') and hasattr(PromptServer.instance.ro
                         "message": "Forced server shutdown due to error"
                     })
             elif action == "restart":
-                success = await server_manager.restart(port=port, host=host)
+                success = await server_manager.restart(
+                    port=port,
+                    host=host,
+                    enable_metrics=enable_metrics
+                )
                 return web.json_response({
                     "success": success,
                     "status": server_manager.get_status()
@@ -178,10 +187,16 @@ if hasattr(PromptServer.instance, 'routes') and hasattr(PromptServer.instance.ro
                 name = data.get("name")
                 host = data.get("host")
                 port = data.get("port")
+                enable_metrics = data.get("enableMetrics")
                 if not name or not host or not port:
                     return web.json_response({"error": "Missing required parameters"}, status=400)
                 
-                success = settings_storage.add_configuration(name, host, port)
+                success = settings_storage.add_configuration(
+                    name, 
+                    host, 
+                    port, 
+                    enable_metrics
+                )
                 return web.json_response({
                     "success": success,
                     "settings": settings_storage.load_settings()
@@ -214,4 +229,3 @@ if hasattr(PromptServer.instance, 'routes') and hasattr(PromptServer.instance.ro
         except Exception as e:
             logging.error(f"Error managing configuration: {str(e)}")
             return web.json_response({"error": str(e)}, status=500)
-
