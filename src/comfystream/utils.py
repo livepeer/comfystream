@@ -49,7 +49,7 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
             num_primary_inputs += 1
         elif class_type in ["LoadImage", "LoadTensor", "LoadAudioTensor"]:
             num_inputs += 1
-        elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor"]:
+        elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor", "SaveTextTensor"]:
             num_outputs += 1
 
     # Only handle single primary input
@@ -60,9 +60,12 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     if num_primary_inputs == 0 and num_inputs > 1:
         raise Exception("too many inputs in prompt")
 
-    # Only handle single output for now
-    if num_outputs > 1:
-        raise Exception("too many outputs in prompt")
+    # # Only handle single output for now
+    # if num_outputs > 1:
+    #     raise Exception("too many outputs in prompt")
+    
+    if num_outputs == 0:
+        raise Exception("missing output")
 
     if num_primary_inputs + num_inputs == 0:
         raise Exception("missing input")
