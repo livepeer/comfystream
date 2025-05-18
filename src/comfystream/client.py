@@ -78,6 +78,9 @@ class ComfyStreamClient:
         while not tensor_cache.audio_outputs.empty():
             await tensor_cache.audio_outputs.get()
 
+        while not tensor_cache.text_outputs.empty():
+            await tensor_cache.text_outputs.get()
+
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():
             tensor_cache.image_inputs.get(block=True)
@@ -91,6 +94,9 @@ class ComfyStreamClient:
     
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
+    
+    async def get_text_output(self):
+        return await tensor_cache.text_outputs.get()
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
