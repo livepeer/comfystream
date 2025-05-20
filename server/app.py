@@ -108,6 +108,7 @@ class VideoStreamTrack(MediaStreamTrack):
 
         return processed_frame
 
+
 class AudioStreamTrack(MediaStreamTrack):
     kind = "audio"
 
@@ -116,16 +117,18 @@ class AudioStreamTrack(MediaStreamTrack):
         self.track = track
         self.pipeline = pipeline
         self.running = True
-        self.audio_task = asyncio.create_task(self.collect_audio_frames())
-        self.text_task = asyncio.create_task(self.forward_text_frames())
-
+        self.collect_task = asyncio.create_task(self.collect_frames())
+        
+        # Add cleanup when track ends
         @track.on("ended")
         async def on_ended():
             logger.info("Source audio track ended, stopping collection")
-            await self.stop_tasks()
+            await cancel_collect_frames(self)
 
-    async def collect_audio_frames(self):
-        """Collect audio frames from the underlying track and pass them to the processing pipeline."""
+    async def collect_frames(self):
+        """Collect audio frames from the underlying track and pass them to
+        the processing pipeline. Stops when track ends or connection closes.
+        """
         try:
             while self.running:
                 try:
@@ -141,51 +144,17 @@ class AudioStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting audio frames: {str(e)}")
                     self.running = False
                     break
+            
+            # Perform cleanup outside the exception handler
             logger.info("Audio frame collection stopped")
         except asyncio.CancelledError:
-            logger.info("Audio frame collection task cancelled")
+            logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
         finally:
             await self.pipeline.cleanup()
 
-    async def forward_text_frames(self):
-        """Forward text frames (e.g., transcription results) asynchronously."""
-        try:
-            while self.running:
-                try:
-                    text = await self.pipeline.get_text_output()
-                    if text:
-                        logger.info(f"Text data received: {text}")
-                        # Handle text data (e.g., send it to a client or log it)
-                except asyncio.CancelledError:
-                    logger.info("Text frame forwarding cancelled")
-                    break
-                except Exception as e:
-                    logger.error(f"Error forwarding text frames: {str(e)}")
-        except asyncio.CancelledError:
-            logger.info("Text frame forwarding task cancelled")
-        except Exception as e:
-            logger.error(f"Unexpected error in text frame forwarding: {str(e)}")
-
-    async def stop_tasks(self):
-        """Stop all running tasks for audio and text frame collection."""
-        self.running = False
-        if hasattr(self, 'audio_task') and not self.audio_task.done():
-            self.audio_task.cancel()
-            try:
-                await self.audio_task
-            except asyncio.CancelledError:
-                logger.info("Audio task cancelled")
-        if hasattr(self, 'text_task') and not self.text_task.done():
-            self.text_task.cancel()
-            try:
-                await self.text_task
-            except asyncio.CancelledError:
-                logger.info("Text task cancelled")
-
     async def recv(self):
-        """Receive a processed audio frame from the pipeline."""
         return await self.pipeline.get_processed_audio_frame()
 
 def force_codec(pc, sender, forced_codec):
@@ -319,17 +288,16 @@ async def offer(request):
                 except Exception as e:
                     logger.error(f"[Server] Error processing message: {str(e)}")
 
-        elif channel.label == "text":
+        elif channel.label == "data":
             async def forward_text():
                 try:
                     while True:
                         text = await pipeline.get_text_output()
-                        # Send as JSON string for extensibility
+                        # Send as JSON string for extensibility.
                         channel.send(json.dumps({"type": "text", "data": text}))
                 except Exception as e:
                     logger.error(f"[TextChannel] Error forwarding text: {e}")
 
-            # Start the task
             asyncio.create_task(forward_text())
     
 
