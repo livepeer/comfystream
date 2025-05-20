@@ -43,7 +43,7 @@ if [ "$1" = "--download-models" ]; then
   shift
 fi
 
-TENSORRT_DIR="/workspace/ComfyUI/models/tensorrt"
+TENSORRT_DIR="/workspace/ComfyUI/models/tensorrt/"
 
 if [ "$1" = "--build-engines" ]; then
   cd /workspace/comfystream
@@ -83,10 +83,6 @@ if [ "$1" = "--build-engines" ]; then
   fi
   shift
 
-
-fi
-
-if [ "$1" = "--streamdiffusion" ]; then
   # Build Engine for StreamDiffusion
   if [ ! -f "$TENSORRT_DIR/StreamDiffusion-engines/stream_diffusion_v2_1_fp16.engine" ]; then #TODO: fix relevant file to check
     cd /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion
