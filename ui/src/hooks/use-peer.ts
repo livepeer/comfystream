@@ -16,6 +16,7 @@ export function usePeer(props: PeerProps): Peer {
   const [controlChannel, setControlChannel] = useState<RTCDataChannel | null>(
     null,
   );
+  const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
 
   const connectionStateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -95,49 +96,75 @@ export function usePeer(props: PeerProps): Peer {
         pc.addTrack(track, localStream);
       });
 
-      // Create control channel for both negotiation and control
-      const channel = pc.createDataChannel("control");
+      // Create control channel for negotiation and control
+      const control = pc.createDataChannel("control");
+      setControlChannel(control);
 
-      channel.onopen = () => {
-        console.log(
-          "[usePeer] Control channel opened, readyState:",
-          channel.readyState,
-        );
-        setControlChannel(channel);
-        
+      control.onopen = () => {
+        console.log("[usePeer] Control channel opened, readyState:", control.readyState);
+
         // Send resolution configuration to server if available
         if (props.resolution) {
-          // Add a small delay to ensure the channel is fully established
           setTimeout(() => {
             const resolution = props.resolution!;
             const resolutionMessage = {
               type: "update_resolution",
               width: resolution.width,
-              height: resolution.height
+              height: resolution.height,
             };
-            channel.send(JSON.stringify(resolutionMessage));
+            control.send(JSON.stringify(resolutionMessage));
             console.log("[usePeer] Sent resolution configuration:", resolutionMessage);
           }, 200);
         }
       };
 
-      channel.onclose = () => {
+      control.onclose = () => {
         console.log("[usePeer] Control channel closed");
         setControlChannel(null);
+      };
+
+      control.onmessage = (event) => {
+        console.log("Received message on control channel:", event.data);
+      };
+
+      control.onerror = (error) => {
+        console.error("Control channel error:", error);
+      };
+
+      // Create data channel for transcription or other data
+      const data = pc.createDataChannel("data");
+      setDataChannel(data);
+
+      data.onopen = () => {
+        console.log("[usePeer] Data channel opened, readyState:", data.readyState);
+      };
+
+      data.onclose = () => {
+        console.log("[usePeer] Data channel closed");
+        setDataChannel(null);
+      };
+
+      data.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "text") {
+            console.log("[usePeer] Received text data:", message.data);
+          } else {
+            console.warn("[usePeer] Unknown message type:", message.type);
+          }
+        } catch (error) {
+          console.error("[usePeer] Error parsing data channel message:", error);
+        }
+      };
+
+      data.onerror = (error) => {
+        console.error("Data channel error:", error);
       };
 
       pc.ontrack = (event) => {
         if (event.streams && event.streams[0]) {
           setRemoteStream(event.streams[0]);
         }
-      };
-
-      channel.onerror = (error) => {
-        console.error("Control channel error:", error);
-      };
-
-      channel.onmessage = (event) => {
-        console.log("Received message on control channel:", event.data);
       };
 
       pc.onicecandidate = async (event) => {
@@ -169,6 +196,7 @@ export function usePeer(props: PeerProps): Peer {
         peerConnection.close();
       }
       setControlChannel(null);
+      setDataChannel(null); // Reset the data channel
       setRemoteStream(null);
       setPeerConnection(null);
     }
@@ -184,12 +212,12 @@ export function usePeer(props: PeerProps): Peer {
 
   // Update resolution when it changes
   useEffect(() => {
-    if (controlChannel && controlChannel.readyState === 'open' && props.resolution) {
+    if (controlChannel && controlChannel.readyState === "open" && props.resolution) {
       const resolution = props.resolution;
       const resolutionMessage = {
         type: "update_resolution",
         width: resolution.width,
-        height: resolution.height
+        height: resolution.height,
       };
       controlChannel.send(JSON.stringify(resolutionMessage));
       console.log("[usePeer] Updated resolution configuration:", resolutionMessage);
@@ -200,5 +228,6 @@ export function usePeer(props: PeerProps): Peer {
     peerConnection,
     remoteStream,
     controlChannel,
+    dataChannel,
   };
 }
