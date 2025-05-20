@@ -1,25 +1,17 @@
-# import torch
-# import numpy as np
-
-# from queue import Queue
-# from asyncio import Queue as AsyncQueue
-
-# from typing import Union
-
-# # TODO: improve eviction policy fifo might not be the best, skip alternate frames instead
-# image_inputs: Queue[Union[torch.Tensor, np.ndarray]] = Queue(maxsize=1)
-# image_outputs: AsyncQueue[Union[torch.Tensor, np.ndarray]] = AsyncQueue()
-
-# audio_inputs: Queue[Union[torch.Tensor, np.ndarray]] = Queue()
-# audio_outputs: AsyncQueue[Union[torch.Tensor, np.ndarray]] = AsyncQueue()
-import os
-
+# TODO: add better frame management, improve eviction policy fifo might not be the best, skip alternate frames instead
+# TODO: also make the tensor_cache solution backward compatible for when not using process pool -- after the multi process solution is stable
 image_inputs = None
 image_outputs = None
 
-def init_tensor_cache(inputs_proxy, outputs_proxy):
-    print("Init tensor cache PID", os.getpid())
-    global image_inputs, image_outputs
-    image_inputs = inputs_proxy
-    image_outputs = outputs_proxy
+audio_inputs = None
+audio_outputs = None
+
+
+def init_tensor_cache(image_inputs_proxy, image_outputs_proxy, audio_inputs_proxy=None, audio_outputs_proxy=None):
+    print("init_tensor_cache")
+    global image_inputs, image_outputs, audio_inputs, audio_outputs
+    image_inputs = image_inputs_proxy
+    image_outputs = image_outputs_proxy
+    audio_inputs = audio_inputs_proxy
+    audio_outputs = audio_outputs_proxy
     

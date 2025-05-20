@@ -3,7 +3,7 @@ from comfystream import tensor_cache
 
 class LoadTensor:
     CATEGORY = "tensor_utils"
-    RETURN_TYPES = ("STRING",)
+    RETURN_TYPES = ("IMAGE",)
     FUNCTION = "execute"
 
     @classmethod
@@ -15,6 +15,6 @@ class LoadTensor:
         return float("nan")
 
     def execute(self):
-        print("LoadTensor PID", os.getpid())
-        ans = tensor_cache.image_inputs.get()
-        return (ans,)
+        print("LoadTensor PID:", os.getpid())
+        image = tensor_cache.image_inputs.get()
+        return (image,)

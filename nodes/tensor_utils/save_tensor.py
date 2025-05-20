@@ -1,3 +1,4 @@
+import torch
 from comfystream import tensor_cache
 
 class SaveTensor:
@@ -10,7 +11,7 @@ class SaveTensor:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "strs": ("STRING",),
+                "images": ("IMAGE",),
             }
         }
 
@@ -18,6 +19,6 @@ class SaveTensor:
     def IS_CHANGED(s):
         return float("nan")
 
-    def execute(self, strs: str):
-        tensor_cache.image_outputs.put(strs)
-        return strs
+    def execute(self, images: torch.Tensor):
+        tensor_cache.image_outputs.put(images)
+        return images
