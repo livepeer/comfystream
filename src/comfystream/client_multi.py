@@ -26,7 +26,7 @@ def _test_worker_init():
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, executor_type: str = "process", **kwargs):
         logger.info(f"[ComfyStreamClient] Main Process ID: {os.getpid()}")
-        logger.info("[ComfyStreamClient] __init__ start, max_workers:", max_workers, "executor_type:", executor_type)
+        logger.info(f"[ComfyStreamClient] __init__ start, max_workers: {max_workers}, executor_type: {executor_type}")
         
         # Store default dimensions
         self.width = kwargs.get('width', 512)
@@ -167,62 +167,22 @@ class ComfyStreamClient:
         while not self.image_outputs.empty():
             self.image_outputs.get()
 
-    def put_video_input(self, frame, width=None, height=None, pts=None, time_base=None):
-        # logger.debug(f"[ComfyStreamClient] Putting video input: {type(frame)}")
+    def put_video_input(self, frame):
         try:
+            # Check if frame is FrameProxy
             if isinstance(frame, FrameProxy):
-                # Already a FrameProxy, ensure tensor is in BCHW format and on CPU
-                tensor = frame.side_data.input
-                if len(tensor.shape) == 3:  # CHW format
-                    tensor = tensor.unsqueeze(0)  # Add batch dimension -> BCHW
-                elif len(tensor.shape) == 4:  # Already BCHW
-                    tensor = tensor  # Keep as is
-                else:
-                    raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
-                tensor = tensor.cpu()
-                proxy = FrameProxy(
-                    tensor=tensor,
-                    width=frame.width,
-                    height=frame.height,
-                    pts=frame.pts,
-                    time_base=frame.time_base
-                )
-            elif hasattr(frame, "to_ndarray") and hasattr(frame, "width") and hasattr(frame, "height"):
-                # It's an av.VideoFrame, convert to BCHW format
-                frame_np = frame.to_ndarray(format="rgb24").astype(np.float32) / 255.0
-                tensor = torch.from_numpy(frame_np).permute(2, 0, 1).unsqueeze(0)  # Convert to BCHW
-                proxy = FrameProxy(
-                    tensor=tensor,
-                    width=frame.width,
-                    height=frame.height,
-                    pts=getattr(frame, 'pts', None),
-                    time_base=getattr(frame, 'time_base', None)
-                )
+                proxy = frame
+            # Otherwise create a proxy (assuming frame is av.VideoFrame as in pipeline.py)
             else:
-                # Assume it's a tensor, require width/height
-                if width is None or height is None:
-                    raise ValueError("Width and height must be provided for raw tensors")
-                tensor = frame
-                if len(tensor.shape) == 3:  # CHW format
-                    tensor = tensor.unsqueeze(0)  # Add batch dimension -> BCHW
-                elif len(tensor.shape) == 4:  # Already BCHW
-                    tensor = tensor  # Keep as is
-                else:
-                    raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
-                tensor = tensor.cpu()
-                proxy = FrameProxy(
-                    tensor=tensor,
-                    width=width,
-                    height=height,
-                    pts=pts,
-                    time_base=time_base
-                )
-
+                proxy = FrameProxy.avframe_to_frameproxy(frame)
+            
+            # Handle queue being full
             if self.image_inputs.full():
                 try:
                     self.image_inputs.get_nowait()
                 except Exception:
                     pass
+            
             self.image_inputs.put_nowait(proxy)
             logger.debug(f"[ComfyStreamClient] Video input queued.")
         except Exception as e:
@@ -237,15 +197,13 @@ class ComfyStreamClient:
                 asyncio.get_event_loop().run_in_executor(None, self.image_outputs.get),
                 timeout=5.0
             )
-            # Add format conversion here
-            if len(tensor.shape) == 4 and tensor.shape[1] != 3:  # If BHWC format
-                tensor = tensor.permute(0, 3, 1, 2)  # Convert BHWC to BCHW
+            # No need for permutation here - tensor should already be in the right format
             return tensor
         except asyncio.TimeoutError:
-            return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)  # Return BCHW format
+            return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)
         except Exception as e:
             logger.info(f"[ComfyStreamClient] Error getting video output: {str(e)}")
-            return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)  # Return BCHW format
+            return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)
     
     async def get_audio_output(self):
         loop = asyncio.get_event_loop()
