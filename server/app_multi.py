@@ -378,6 +378,7 @@ async def on_startup(app: web.Application):
         max_workers=app["workers"],
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
         frame_log_file=app.get("frame_log_file", None),
+        base_directory=app["workspace"]
     )
     app["pcs"] = set()
     app["video_tracks"] = {}

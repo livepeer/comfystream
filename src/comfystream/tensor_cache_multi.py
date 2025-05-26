@@ -4,6 +4,7 @@ from comfystream import tensor_cache
 import queue
 import torch
 import asyncio
+import os
 from queue import Queue
 from asyncio import Queue as AsyncQueue
 
@@ -19,10 +20,14 @@ class MultiProcessInputQueue:
         self.queue = mp_queue
     
     def get(self, block=True, timeout=None):
-        return self.queue.get(block=block, timeout=timeout)
+        result = self.queue.get(block=block, timeout=timeout)
+        print(f"[MultiProcessInputQueue] Frame retrieved by worker PID: {os.getpid()}")
+        return result
     
     def get_nowait(self):
-        return self.queue.get_nowait()
+        result = self.queue.get_nowait()
+        print(f"[MultiProcessInputQueue] Frame retrieved (nowait) by worker PID: {os.getpid()}")
+        return result
     
     def put(self, item, block=True, timeout=None):
         return self.queue.put(item, block=block, timeout=timeout)
@@ -51,6 +56,7 @@ class MultiProcessOutputQueue:
         # Ensure tensor is on CPU before sending
         if torch.is_tensor(item):
             item = item.cpu()
+        print(f"[MultiProcessOutputQueue] Frame sent from worker PID: {os.getpid()}")
         return await loop.run_in_executor(None, self.queue.put, item)
     
     def put_nowait(self, item):
@@ -58,6 +64,7 @@ class MultiProcessOutputQueue:
             # Ensure tensor is on CPU before sending
             if torch.is_tensor(item):
                 item = item.cpu()
+            print(f"[MultiProcessOutputQueue] Frame sent (nowait) from worker PID: {os.getpid()}")
             self.queue.put_nowait(item)
         except queue.Full:
             try:
@@ -75,7 +82,7 @@ def init_tensor_cache(image_inputs, image_outputs, audio_inputs, audio_outputs):
         audio_inputs: Multiprocessing Queue for input audio
         audio_outputs: Multiprocessing Queue for output audio
     """
-    print("[init_tensor_cache] Setting up tensor_cache queues in worker")
+    print(f"[init_tensor_cache] Setting up tensor_cache queues in worker - PID: {os.getpid()}")
     
     # Replace the queues with our wrapped versions that match the original interface
     tensor_cache.image_inputs = MultiProcessInputQueue(image_inputs)
@@ -83,5 +90,5 @@ def init_tensor_cache(image_inputs, image_outputs, audio_inputs, audio_outputs):
     tensor_cache.audio_inputs = MultiProcessInputQueue(audio_inputs)
     tensor_cache.audio_outputs = MultiProcessOutputQueue(audio_outputs)
     
-    print("[init_tensor_cache] tensor_cache.image_outputs id:", id(tensor_cache.image_outputs))
-    print("[init_tensor_cache] Initialization complete")
+    print(f"[init_tensor_cache] tensor_cache.image_outputs id: {id(tensor_cache.image_outputs)} - PID: {os.getpid()}")
+    print(f"[init_tensor_cache] Initialization complete - PID: {os.getpid()}")

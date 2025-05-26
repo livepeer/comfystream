@@ -99,6 +99,10 @@ class ComfyStreamClient:
             self.running_prompts = {}
             self.current_prompts = []
             self.cleanup_lock = asyncio.Lock()
+            self.max_workers = max_workers
+            self.worker_tasks = []
+            self.next_worker = 0
+            self.distribution_lock = asyncio.Lock()
             logger.info("[ComfyStreamClient] __init__ complete")
 
         except Exception as e:
@@ -111,54 +115,106 @@ class ComfyStreamClient:
     async def set_prompts(self, prompts: List[PromptDictInput]):
         logger.info("set_prompts start")
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-        for idx in range(len(self.current_prompts)):
-            logger.info(f"Scheduling run_prompt for idx {idx}")
-            task = asyncio.create_task(self.run_prompt(idx))
-            self.running_prompts[idx] = task
+        
+        # Start the distribution manager
+        distribution_task = asyncio.create_task(self.distribute_frames())
+        self.running_prompts[-1] = distribution_task  # Use -1 as a special key for the manager
         logger.info("set_prompts end")
 
-    async def update_prompts(self, prompts: List[PromptDictInput]):
-        # TODO: currently under the assumption that only already running prompts are updated
-        if len(prompts) != len(self.current_prompts):
-            raise ValueError(
-                "Number of updated prompts must match the number of currently running prompts."
-            )
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-
-    async def run_prompt(self, prompt_index: int):
-        logger.info(f"[ComfyStreamClient] Starting run_prompt for index {prompt_index}")
+    async def distribute_frames(self):
+        """Manager that distributes frames across workers in round-robin fashion"""
+        logger.info(f"[ComfyStreamClient] Starting frame distribution manager")
+        
+        # Initialize worker tasks
+        self.worker_tasks = []
+        for worker_id in range(self.max_workers):
+            worker_task = asyncio.create_task(self.worker_loop(worker_id))
+            self.worker_tasks.append(worker_task)
+            self.running_prompts[worker_id] = worker_task
+        
+        # Keep the manager running to monitor workers
         while True:
-            try:
-                logger.debug(f"[ComfyStreamClient] Queueing prompt {prompt_index}")
-                await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
-                logger.debug(f"[ComfyStreamClient] Prompt {prompt_index} queued successfully")
-            except Exception as e:
-                logger.error(f"[ComfyStreamClient] Error in run_prompt {prompt_index}: {str(e)}")
-                await self.cleanup()
-                raise
+            await asyncio.sleep(1.0)  # Check periodically
+            # Restart any crashed workers
+            for worker_id, task in enumerate(self.worker_tasks):
+                if task.done():
+                    logger.warning(f"Worker {worker_id} crashed, restarting")
+                    new_task = asyncio.create_task(self.worker_loop(worker_id))
+                    self.worker_tasks[worker_id] = new_task
+                    self.running_prompts[worker_id] = new_task
+
+    async def worker_loop(self, worker_id: int):
+        """Worker process that handles frames"""
+        logger.info(f"[ComfyStreamClient] Worker {worker_id} started - PID: {os.getpid()}")
+        
+        while True:
+            # Check if this worker should process the next frame
+            async with self.distribution_lock:
+                should_process = (self.next_worker == worker_id)
+                if should_process:
+                    # Move to next worker for round-robin distribution
+                    self.next_worker = (self.next_worker + 1) % self.max_workers
+            
+            if should_process:
+                # Get prompt - cycle through available prompts
+                prompt_index = worker_id % len(self.current_prompts)
+                prompt = self.current_prompts[prompt_index]
+                
+                try:
+                    logger.debug(f"[ComfyStreamClient] Worker {worker_id} processing frame with prompt {prompt_index} - PID: {os.getpid()}")
+                    # Process a single frame
+                    await self.process_frame_with_prompt(prompt)
+                except Exception as e:
+                    logger.error(f"[ComfyStreamClient] Error in worker {worker_id}: {str(e)}")
+                    await asyncio.sleep(0.1)  # Avoid tight error loop
+            else:
+                # Small wait to avoid busy waiting
+                await asyncio.sleep(0.01)
+
+    async def process_frame_with_prompt(self, prompt):
+        """Process a single frame with the given prompt"""
+        try:
+            # Get frame from input queue if available
+            if not self.image_inputs.empty():
+                # Non-blocking queue check
+                frame = None
+                try:
+                    frame = self.image_inputs.get_nowait()
+                except Exception:
+                    pass
+                
+                if frame is not None:
+                    # Queue the prompt to process this frame
+                    await self.comfy_client.queue_prompt(prompt)
+                    
+                    # Assuming result will eventually appear in output queue
+                    # You may need logic to match inputs with outputs
+                    
+            else:
+                # No frames to process, small wait
+                await asyncio.sleep(0.01)
+                
+        except Exception as e:
+            logger.error(f"[ComfyStreamClient] Error processing frame: {str(e)}")
 
     async def cleanup(self):
         async with self.cleanup_lock:
-            tasks_to_cancel = list(self.running_prompts.values())
-            for task in tasks_to_cancel:
+            for task in self.worker_tasks:
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
-            self.running_prompts.clear()
-
+            
             if self.comfy_client.is_running:
                 try:
                     await self.comfy_client.__aexit__()
                 except Exception as e:
                     logger.error(f"Error during ComfyClient cleanup: {e}")
 
-
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
 
-        
     async def cleanup_queues(self):
         # TODO: add for audio as well
         while not self.image_inputs.empty():
@@ -193,16 +249,19 @@ class ComfyStreamClient:
 
     async def get_video_output(self):
         try:
+            logger.debug(f"[ComfyStreamClient] get_video_output called - PID: {os.getpid()}")
             tensor = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(None, self.image_outputs.get),
                 timeout=5.0
             )
+            logger.debug(f"[ComfyStreamClient] get_video_output returning tensor - PID: {os.getpid()}")
             # No need for permutation here - tensor should already be in the right format
             return tensor
         except asyncio.TimeoutError:
+            logger.warning(f"[ComfyStreamClient] get_video_output timeout - PID: {os.getpid()}")
             return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)
         except Exception as e:
-            logger.info(f"[ComfyStreamClient] Error getting video output: {str(e)}")
+            logger.info(f"[ComfyStreamClient] Error getting video output: {str(e)} - PID: {os.getpid()}")
             return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)
     
     async def get_audio_output(self):
