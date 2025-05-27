@@ -25,18 +25,27 @@ class Pipeline:
     postprocessing, and queue management.
     """
     
-    def __init__(self, width: int = 512, height: int = 512,
-                 comfyui_inference_log_level: Optional[int] = None, frame_log_file: Optional[str] = None, **kwargs):
+    def __init__(self, 
+                 width: int = 512, 
+                 height: int = 512,
+                 max_workers: int = 1,
+                 comfyui_inference_log_level: Optional[int] = None, 
+                 frame_log_file: Optional[str] = None, 
+                 **kwargs):
         """Initialize the pipeline with the given configuration.
         
         Args:
             width: Width of the video frames (default: 512)
             height: Height of the video frames (default: 512)
+            max_workers: Number of worker processes (default: 1)
             comfyui_inference_log_level: The logging level for ComfyUI inference.
-                Defaults to None, using the global ComfyUI log level.
-            **kwargs: Additional arguments to pass to the ComfyStreamClient
+            frame_log_file: Path to frame timing log file
+            **kwargs: Additional arguments to pass to the ComfyStreamClient (cwd, disable_cuda_malloc, etc.)
         """
-        self.client = ComfyStreamClient(**kwargs)
+        self.client = ComfyStreamClient(
+            max_workers=max_workers, 
+            executor_type="process",
+            **kwargs)
         self.width = width
         self.height = height
 

@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import torch
+import signal
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
+# Global variable to track the app for signal handling
+app_instance = None
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
@@ -371,24 +374,74 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
+        max_workers=app["workers"],
+        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        frame_log_file=app.get("frame_log_file", None),
         cwd=app["workspace"], 
         disable_cuda_malloc=True, 
         gpu_only=True, 
         preview_method='none',
-        max_workers=app["workers"],
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
-        frame_log_file=app.get("frame_log_file", None),
-        base_directory=app["workspace"]
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
 
 
 async def on_shutdown(app: web.Application):
+    logger.info("Starting server shutdown...")
+    
+    # Clean up pipeline first
+    if "pipeline" in app:
+        try:
+            await app["pipeline"].cleanup()
+            logger.info("Pipeline cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during pipeline cleanup: {e}")
+    
+    # Clean up peer connections
     pcs = app["pcs"]
-    coros = [pc.close() for pc in pcs]
-    await asyncio.gather(*coros)
-    pcs.clear()
+    if pcs:
+        logger.info(f"Closing {len(pcs)} peer connections...")
+        coros = [pc.close() for pc in pcs]
+        await asyncio.gather(*coros, return_exceptions=True)
+        pcs.clear()
+        logger.info("Peer connections closed")
+    
+    logger.info("Server shutdown completed")
+
+
+def signal_handler(signum, frame):
+    """Handle SIGINT (Ctrl+C) gracefully"""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    
+    if app_instance:
+        # Get the current event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule the shutdown coroutine
+                asyncio.create_task(shutdown_server())
+            else:
+                # If no loop is running, run the shutdown directly
+                asyncio.run(shutdown_server())
+        except RuntimeError:
+            # If we can't get the loop, force exit
+            logger.warning("Could not get event loop, forcing exit")
+            os._exit(1)
+    else:
+        logger.warning("No app instance found, forcing exit")
+        os._exit(1)
+
+async def shutdown_server():
+    """Perform graceful server shutdown"""
+    try:
+        if app_instance:
+            await on_shutdown(app_instance)
+        logger.info("Graceful shutdown completed")
+    except Exception as e:
+        logger.error(f"Error during graceful shutdown: {e}")
+    finally:
+        # Force exit after cleanup attempt
+        os._exit(0)
 
 
 if __name__ == "__main__":
@@ -445,6 +498,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, signal_handler)
+    
     logging.basicConfig(
         level=args.log_level.upper(),
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -452,6 +510,7 @@ if __name__ == "__main__":
     )
 
     app = web.Application()
+    app_instance = app  # Store reference for signal handler
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
     app["frame_log_file"] = args.frame_log_file
@@ -501,4 +560,14 @@ if __name__ == "__main__":
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 
-    web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    try:
+        web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    except KeyboardInterrupt:
+        logger.info("Received KeyboardInterrupt, shutting down...")
+    finally:
+        # Ensure cleanup happens even if web.run_app doesn't call on_shutdown
+        if app_instance:
+            try:
+                asyncio.run(on_shutdown(app_instance))
+            except Exception as e:
+                logger.error(f"Error in final cleanup: {e}")

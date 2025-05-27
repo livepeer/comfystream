@@ -24,7 +24,10 @@ def _test_worker_init():
     return os.getpid()
 
 class ComfyStreamClient:
-    def __init__(self, max_workers: int = 1, executor_type: str = "process", **kwargs):
+    def __init__(self, 
+                 max_workers: int = 1, 
+                 executor_type: str = "process", 
+                 **kwargs):
         logger.info(f"[ComfyStreamClient] Main Process ID: {os.getpid()}")
         logger.info(f"[ComfyStreamClient] __init__ start, max_workers: {max_workers}, executor_type: {executor_type}")
         
@@ -37,7 +40,7 @@ class ComfyStreamClient:
             kwargs['cwd'] = os.path.abspath(kwargs['cwd'])
             logger.info(f"[ComfyStreamClient] Converted workspace path to absolute: {kwargs['cwd']}")
         
-        logger.info("[ComfyStreamClient] Config kwargs:", kwargs)
+        logger.info("[ComfyStreamClient] Config kwargs: %s", kwargs)
         
         try:
             self.config = Configuration(**kwargs)
