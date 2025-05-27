@@ -50,12 +50,11 @@ class ComfyStreamClient:
                 
                 manager = ctx.Manager()
                 logger.info("[ComfyStreamClient] Created multiprocessing context and manager")
-                
-                # Create queues with a reasonable size limit to prevent memory issues
-                self.image_inputs = manager.Queue(maxsize=30)
-                self.image_outputs = manager.Queue(maxsize=30)
-                self.audio_inputs = manager.Queue(maxsize=10)
-                self.audio_outputs = manager.Queue(maxsize=10)
+
+                self.image_inputs = manager.Queue(maxsize=50)
+                self.image_outputs = manager.Queue(maxsize=50)
+                self.audio_inputs = manager.Queue(maxsize=50)
+                self.audio_outputs = manager.Queue(maxsize=50)
                 logger.info("[ComfyStreamClient] Created manager queues")
                 
                 logger.info("[ComfyStreamClient] About to create ProcessPoolExecutor...")
@@ -144,58 +143,25 @@ class ComfyStreamClient:
                     self.running_prompts[worker_id] = new_task
 
     async def worker_loop(self, worker_id: int):
-        """Worker process that handles frames"""
-        logger.info(f"[ComfyStreamClient] Worker {worker_id} started - PID: {os.getpid()}")
+        """Worker process that continuously processes prompts"""
+        logger.info(f"[Worker {worker_id}] Started - PID: {os.getpid()}")
         
+        # Get prompt for this worker
+        prompt_index = worker_id % len(self.current_prompts)
+        prompt = self.current_prompts[prompt_index]
+        
+        frame_count = 0
         while True:
-            # Check if this worker should process the next frame
-            async with self.distribution_lock:
-                should_process = (self.next_worker == worker_id)
-                if should_process:
-                    # Move to next worker for round-robin distribution
-                    self.next_worker = (self.next_worker + 1) % self.max_workers
-            
-            if should_process:
-                # Get prompt - cycle through available prompts
-                prompt_index = worker_id % len(self.current_prompts)
-                prompt = self.current_prompts[prompt_index]
-                
-                try:
-                    logger.debug(f"[ComfyStreamClient] Worker {worker_id} processing frame with prompt {prompt_index} - PID: {os.getpid()}")
-                    # Process a single frame
-                    await self.process_frame_with_prompt(prompt)
-                except Exception as e:
-                    logger.error(f"[ComfyStreamClient] Error in worker {worker_id}: {str(e)}")
-                    await asyncio.sleep(0.1)  # Avoid tight error loop
-            else:
-                # Small wait to avoid busy waiting
-                await asyncio.sleep(0.01)
-
-    async def process_frame_with_prompt(self, prompt):
-        """Process a single frame with the given prompt"""
-        try:
-            # Get frame from input queue if available
-            if not self.image_inputs.empty():
-                # Non-blocking queue check
-                frame = None
-                try:
-                    frame = self.image_inputs.get_nowait()
-                except Exception:
-                    pass
-                
-                if frame is not None:
-                    # Queue the prompt to process this frame
-                    await self.comfy_client.queue_prompt(prompt)
-                    
-                    # Assuming result will eventually appear in output queue
-                    # You may need logic to match inputs with outputs
-                    
-            else:
-                # No frames to process, small wait
-                await asyncio.sleep(0.01)
-                
-        except Exception as e:
-            logger.error(f"[ComfyStreamClient] Error processing frame: {str(e)}")
+            try:
+                logger.debug(f"[Worker {worker_id}] Starting prompt execution {frame_count}")
+                # Continuously execute the prompt
+                # The LoadTensor node will block until a frame is available
+                await self.comfy_client.queue_prompt(prompt)
+                frame_count += 1
+                logger.info(f"[Worker {worker_id}] Completed prompt execution {frame_count}")
+            except Exception as e:
+                logger.error(f"[Worker {worker_id}] Error on frame {frame_count}: {str(e)}")
+                await asyncio.sleep(0.1)
 
     async def cleanup(self):
         async with self.cleanup_lock:
@@ -228,21 +194,21 @@ class ComfyStreamClient:
             # Check if frame is FrameProxy
             if isinstance(frame, FrameProxy):
                 proxy = frame
-            # Otherwise create a proxy (assuming frame is av.VideoFrame as in pipeline.py)
             else:
                 proxy = FrameProxy.avframe_to_frameproxy(frame)
             
             # Handle queue being full
             if self.image_inputs.full():
+                # logger.warning(f"[ComfyStreamClient] Input queue full, dropping oldest frame")
                 try:
                     self.image_inputs.get_nowait()
                 except Exception:
                     pass
             
             self.image_inputs.put_nowait(proxy)
-            logger.debug(f"[ComfyStreamClient] Video input queued.")
+            # logger.info(f"[ComfyStreamClient] Video input queued. Queue size: {self.image_inputs.qsize()}")
         except Exception as e:
-            logger.info(f"[ComfyStreamClient] Error putting video frame: {str(e)}")
+            logger.error(f"[ComfyStreamClient] Error putting video frame: {str(e)}")
 
     def put_audio_input(self, frame):
         self.audio_inputs.put(frame)
@@ -254,14 +220,13 @@ class ComfyStreamClient:
                 asyncio.get_event_loop().run_in_executor(None, self.image_outputs.get),
                 timeout=5.0
             )
-            logger.debug(f"[ComfyStreamClient] get_video_output returning tensor - PID: {os.getpid()}")
-            # No need for permutation here - tensor should already be in the right format
+            logger.info(f"[ComfyStreamClient] get_video_output returning tensor: {tensor.shape} - PID: {os.getpid()}")
             return tensor
         except asyncio.TimeoutError:
             logger.warning(f"[ComfyStreamClient] get_video_output timeout - PID: {os.getpid()}")
             return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)
         except Exception as e:
-            logger.info(f"[ComfyStreamClient] Error getting video output: {str(e)} - PID: {os.getpid()}")
+            logger.error(f"[ComfyStreamClient] Error getting video output: {str(e)} - PID: {os.getpid()}")
             return torch.zeros((1, 3, self.height, self.width), dtype=torch.float32)
     
     async def get_audio_output(self):
