@@ -101,12 +101,32 @@ async def main():
 
 
     else:
+        # This is mainly used to stress test the ComfyUI client, gives us a good idea on how frame skipping etc is working on the client end.
         logger.info(f"Running FPS-based benchmark at {args.fps} FPS...")
         frame_interval = 1.0 / args.fps
         start_time = time.time()
-        latencies = []
-        output_tasks = []
-        sent_times = []
+
+        received_frames_count = 0
+        last_output_receive_time = None
+
+        async def collect_outputs_task():
+            nonlocal received_frames_count, last_output_receive_time
+            while True:
+                try:
+                    async with asyncio.timeout(5):
+                        await client.get_video_output()
+
+                    last_output_receive_time = time.time()
+                    received_frames_count += 1
+                    logger.debug(f"Received output frame {received_frames_count} at {last_output_receive_time - start_time:.4f} seconds")
+                except asyncio.TimeoutError:
+                    logger.debug(f"Output collection task timed out after waiting for 5 seconds.")
+                    break
+                except Exception as e:
+                    logger.debug(f"Output collection task finished due to exception: {e}")
+                    break
+
+        output_collector_task = asyncio.create_task(collect_outputs_task())
 
         for i in range(args.num_requests):
             frame = create_dummy_video_frame(args.width, args.height)
@@ -119,53 +139,26 @@ async def main():
 
             request_send_time = time.time()
             client.put_video_input(frame)
-            sent_times.append(request_send_time)
-
-            output_tasks.append(asyncio.create_task(client.get_video_output()))
 
             logger.debug(f"Sent request {i+1}/{args.num_requests} at {request_send_time - start_time:.4f} seconds")
 
-        all_outputs_received_time = time.time()
-        for i, task in enumerate(output_tasks):
-            output_receive_time = time.time()
-            await task
-            latency = output_receive_time - sent_times[i]
-            latencies.append(latency)
-            logger.debug(f"Received output for request {i+1}/{args.num_requests} at {output_receive_time - start_time:.4f} seconds, Latency: {latency:.4f} seconds")
+        await output_collector_task
 
-        end_time = time.time()
-        total_time = end_time - start_time
-        output_collection_duration = all_outputs_received_time - start_time
-        output_fps = args.num_requests / output_collection_duration if output_collection_duration > 0 else float('inf')
-
-        # The workflow is async, so the latency numbers might not make sense in this context.
-        # We're just using them to get a sense of the distribution of latencies.
-        p50_latency = np.percentile(latencies, 50)
-        p75_latency = np.percentile(latencies, 75)
-        p90_latency = np.percentile(latencies, 90)
-        p95_latency = np.percentile(latencies, 95)
-        p99_latency = np.percentile(latencies, 99)
+        if last_output_receive_time is not None and last_output_receive_time > start_time:
+            total_duration_for_fps = last_output_receive_time - start_time
+            output_fps = received_frames_count / total_duration_for_fps
+        elif received_frames_count == 0:
+            output_fps = 0.0
+        else:
+             output_fps = float('inf')
 
         print("\n" + "="*40)
         print("FPS Results:")
         print("="*40)
         print(f"Target Input FPS: {args.fps:.2f}")
-        print(f"Actual Output FPS:{output_fps:.2f}")
+        print(f"Actual Output FPS:{output_fps:.2f} ({received_frames_count} frames received)")
         print(f"Total requests:   {args.num_requests}")
-        print(f"Total time:       {total_time:.4f} seconds")
-        print("\n" + "="*40)
-        print("Latency Results:")
-        print("="*40)
-        print(f"Average: {np.mean(latencies):.4f}")
-        print(f"Min:     {np.min(latencies):.4f}")
-        print(f"Max:     {np.max(latencies):.4f}")
-        print(f"P50:     {p50_latency:.4f}")
-        print(f"P75:     {p75_latency:.4f}")
-        print(f"P90:     {p90_latency:.4f}")
-        print(f"P95:     {p95_latency:.4f}")
-        print(f"P99:     {p99_latency:.4f}")
-
-    await client.cleanup()
+        print(f"Total time:       {last_output_receive_time - start_time:.4f} seconds")
 
 
 if __name__ == "__main__":
