@@ -389,7 +389,7 @@ async def on_startup(app: web.Application):
 async def on_shutdown(app: web.Application):
     logger.info("Starting server shutdown...")
     
-    # Clean up pipeline first
+    # Clean up pipeline first - this should terminate worker processes
     if "pipeline" in app:
         try:
             await app["pipeline"].cleanup()
@@ -424,11 +424,35 @@ def signal_handler(signum, frame):
                 # If no loop is running, run the shutdown directly
                 asyncio.run(shutdown_server())
         except RuntimeError:
-            # If we can't get the loop, force exit
-            logger.warning("Could not get event loop, forcing exit")
-            os._exit(1)
+            # If we can't get the loop, force cleanup and exit
+            logger.warning("Could not get event loop, forcing cleanup and exit")
+            force_cleanup_and_exit()
     else:
         logger.warning("No app instance found, forcing exit")
+        os._exit(1)
+
+def force_cleanup_and_exit():
+    """Force cleanup of processes and exit"""
+    try:
+        # Try to cleanup the pipeline synchronously
+        if app_instance and "pipeline" in app_instance:
+            pipeline = app_instance["pipeline"]
+            if hasattr(pipeline, 'client') and hasattr(pipeline.client, 'comfy_client'):
+                # Force shutdown of the executor
+                if hasattr(pipeline.client.comfy_client, 'executor'):
+                    executor = pipeline.client.comfy_client.executor
+                    if hasattr(executor, 'shutdown'):
+                        logger.info("Force shutting down executor...")
+                        executor.shutdown(wait=False)
+                    if hasattr(executor, '_processes'):
+                        # Terminate all worker processes
+                        for process in executor._processes:
+                            if process.is_alive():
+                                logger.info(f"Terminating worker process {process.pid}")
+                                process.terminate()
+    except Exception as e:
+        logger.error(f"Error in force cleanup: {e}")
+    finally:
         os._exit(1)
 
 async def shutdown_server():

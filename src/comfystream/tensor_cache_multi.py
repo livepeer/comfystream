@@ -21,12 +21,12 @@ class MultiProcessInputQueue:
     
     def get(self, block=True, timeout=None):
         result = self.queue.get(block=block, timeout=timeout)
-        print(f"[MultiProcessInputQueue] Frame retrieved by worker PID: {os.getpid()}")
+        # print(f"[MultiProcessInputQueue] Frame retrieved by worker PID: {os.getpid()}")
         return result
     
     def get_nowait(self):
         result = self.queue.get_nowait()
-        print(f"[MultiProcessInputQueue] Frame retrieved (nowait) by worker PID: {os.getpid()}")
+        # print(f"[MultiProcessInputQueue] Frame retrieved (nowait) by worker PID: {os.getpid()}")
         return result
     
     def put(self, item, block=True, timeout=None):
@@ -56,7 +56,7 @@ class MultiProcessOutputQueue:
         # Ensure tensor is on CPU before sending
         if torch.is_tensor(item):
             item = item.cpu()
-        print(f"[MultiProcessOutputQueue] Frame sent from worker PID: {os.getpid()}")
+        # print(f"[MultiProcessOutputQueue] Frame sent from worker PID: {os.getpid()}")
         return await loop.run_in_executor(None, self.queue.put, item)
     
     def put_nowait(self, item):
@@ -64,7 +64,7 @@ class MultiProcessOutputQueue:
             # Ensure tensor is on CPU before sending
             if torch.is_tensor(item):
                 item = item.cpu()
-            print(f"[MultiProcessOutputQueue] Frame sent (nowait) from worker PID: {os.getpid()}")
+            # print(f"[MultiProcessOutputQueue] Frame sent (nowait) from worker PID: {os.getpid()}")
             self.queue.put_nowait(item)
         except queue.Full:
             try:

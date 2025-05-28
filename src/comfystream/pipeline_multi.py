@@ -44,7 +44,6 @@ class Pipeline:
         """
         self.client = ComfyStreamClient(
             max_workers=max_workers, 
-            executor_type="process",
             **kwargs)
         self.width = width
         self.height = height
@@ -213,8 +212,7 @@ class Pipeline:
     
     # TODO: make it generic to support purely generative video cases
     async def get_processed_video_frame(self) -> av.VideoFrame:
-        logger.info(f"[PipelineMulti] get_processed_video_frame called - PID: {os.getpid()}")
-        logger.debug("[PipelineMulti] Waiting for processed video frame...")
+        # logger.info(f"[PipelineMulti] get_processed_video_frame called - PID: {os.getpid()}")
         frame_process_start_time = time.time()
 
         # Get the input frame first
@@ -242,7 +240,7 @@ class Pipeline:
                 'csv_path': self.frame_log_file
             })
         
-        logger.info(f"[PipelineMulti] get_processed_video_frame returning frame - PID: {os.getpid()}")
+        # logger.info(f"[PipelineMulti] get_processed_video_frame returning frame - PID: {os.getpid()}")
         return processed_frame
 
     async def get_processed_audio_frame(self) -> av.AudioFrame:
@@ -277,6 +275,10 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
+        logger.info("[PipelineMulti] Starting pipeline cleanup...")
+        
+        # Set running flag to false to stop frame processing
+        self.running = False
 
         # Cancel frame logger task if it exists
         if hasattr(self, 'frame_logger_task') and self.frame_logger_task:
@@ -286,7 +288,10 @@ class Pipeline:
             except asyncio.CancelledError:
                 pass
 
+        # Clean up the client (this will gracefully shutdown workers)
         await self.client.cleanup()
+        
+        logger.info("[PipelineMulti] Pipeline cleanup complete")
 
     async def _process_frame_logs(self):
         """Background task to process frame logs from queue"""

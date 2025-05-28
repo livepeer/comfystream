@@ -12,7 +12,7 @@ from comfystream.utils import convert_prompt
 from comfystream.tensor_cache_multi import init_tensor_cache
 
 from comfy.cli_args_types import Configuration
-from comfy.distributed.executors import ProcessPoolExecutor  # Use ComfyUI's executor
+from comfy.distributed.executors import ProcessPoolExecutor  # Use ComfyUI's executor wrapper
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
 from comfystream.frame_proxy import FrameProxy
@@ -26,10 +26,9 @@ def _test_worker_init():
 class ComfyStreamClient:
     def __init__(self, 
                  max_workers: int = 1, 
-                 executor_type: str = "process", 
                  **kwargs):
         logger.info(f"[ComfyStreamClient] Main Process ID: {os.getpid()}")
-        logger.info(f"[ComfyStreamClient] __init__ start, max_workers: {max_workers}, executor_type: {executor_type}")
+        logger.info(f"[ComfyStreamClient] __init__ start, max_workers: {max_workers}")
         
         # Store default dimensions
         self.width = kwargs.get('width', 512)
@@ -46,104 +45,112 @@ class ComfyStreamClient:
             self.config = Configuration(**kwargs)
             print("[ComfyStreamClient] Configuration created")
             
-            if executor_type == "process":
-                logger.info("[ComfyStreamClient] Initializing process executor")
-                ctx = mp.get_context("spawn")
-                logger.info(f"[ComfyStreamClient] Using multiprocessing context: {ctx.get_start_method()}")
-                
-                manager = ctx.Manager()
-                logger.info("[ComfyStreamClient] Created multiprocessing context and manager")
+            logger.info("[ComfyStreamClient] Initializing process executor")
+            ctx = mp.get_context("spawn")
+            logger.info(f"[ComfyStreamClient] Using multiprocessing context: {ctx.get_start_method()}")
+            
+            manager = ctx.Manager()
+            logger.info("[ComfyStreamClient] Created multiprocessing context and manager")
 
-                self.image_inputs = manager.Queue(maxsize=50)
-                self.image_outputs = manager.Queue(maxsize=50)
-                self.audio_inputs = manager.Queue(maxsize=50)
-                self.audio_outputs = manager.Queue(maxsize=50)
-                logger.info("[ComfyStreamClient] Created manager queues")
-                
-                logger.info("[ComfyStreamClient] About to create ProcessPoolExecutor...")
-                try:
-                    # Create executor first
-                    executor = ProcessPoolExecutor(
-                        max_workers=max_workers,
-                        initializer=init_tensor_cache,
-                        initargs=(self.image_inputs, self.image_outputs, self.audio_inputs, self.audio_outputs)
-                    )
-                    logger.info("[ComfyStreamClient] ProcessPoolExecutor created successfully")
-                    
-                    # Create EmbeddedComfyClient with the executor
-                    logger.info("[ComfyStreamClient] Creating EmbeddedComfyClient with executor")
-                    self.comfy_client = EmbeddedComfyClient(self.config, executor=executor)
-                    logger.info("[ComfyStreamClient] EmbeddedComfyClient created successfully")
-                    
-                    # Submit a test task to ensure worker processes are initialized
-                    logger.info("[ComfyStreamClient] Testing worker process initialization...")
-                    test_future = executor.submit(_test_worker_init)  # Use the named function instead of lambda
-                    try:
-                        worker_pid = test_future.result(timeout=30)  # 30 second timeout
-                        logger.info(f"[ComfyStreamClient] Worker process initialized successfully (PID: {worker_pid})")
-                    except Exception as e:
-                        logger.info(f"[ComfyStreamClient] Error initializing worker process: {str(e)}")
-                        raise
-                    
-                except Exception as e:
-                    logger.info(f"[ComfyStreamClient] Error during initialization: {str(e)}")
-                    logger.info(f"[ComfyStreamClient] Error type: {type(e)}")
-                    import traceback
-                    logger.info(f"[ComfyStreamClient] Error traceback: {traceback.format_exc()}")
-                    raise
-                
-            else:
-                logger.info("[ComfyStreamClient] Using default executor")
-                logger.info("[ComfyStreamClient] Creating EmbeddedComfyClient in main process")
-                self.comfy_client = EmbeddedComfyClient(self.config)
-                logger.info("[ComfyStreamClient] EmbeddedComfyClient created in main process")
-
-            self.running_prompts = {}
-            self.current_prompts = []
-            self.cleanup_lock = asyncio.Lock()
-            self.max_workers = max_workers
-            self.worker_tasks = []
-            self.next_worker = 0
-            self.distribution_lock = asyncio.Lock()
-            logger.info("[ComfyStreamClient] __init__ complete")
-
+            self.image_inputs = manager.Queue(maxsize=50)
+            self.image_outputs = manager.Queue(maxsize=50)
+            self.audio_inputs = manager.Queue(maxsize=50)
+            self.audio_outputs = manager.Queue(maxsize=50)
+            logger.info("[ComfyStreamClient] Created manager queues")
+            
+            logger.info("[ComfyStreamClient] About to create ProcessPoolExecutor...")
+            
+            executor = ProcessPoolExecutor(
+                max_workers=max_workers,
+                initializer=init_tensor_cache,
+                initargs=(self.image_inputs, self.image_outputs, self.audio_inputs, self.audio_outputs)
+            )
+            logger.info("[ComfyStreamClient] ProcessPoolExecutor created successfully")
+            
+            # Create EmbeddedComfyClient with the executor
+            logger.info("[ComfyStreamClient] Creating EmbeddedComfyClient with executor")
+            self.comfy_client = EmbeddedComfyClient(self.config, executor=executor)
+            logger.info("[ComfyStreamClient] EmbeddedComfyClient created successfully")
+            
+            # Submit a test task to ensure worker processes are initialized
+            logger.info("[ComfyStreamClient] Testing worker process initialization...")
+            test_future = executor.submit(_test_worker_init)
+            try:
+                worker_pid = test_future.result(timeout=30)  # 30 second timeout
+                logger.info(f"[ComfyStreamClient] Worker process initialized successfully (PID: {worker_pid})")
+            except Exception as e:
+                logger.info(f"[ComfyStreamClient] Error initializing worker process: {str(e)}")
+                raise
+            
         except Exception as e:
             logger.info(f"[ComfyStreamClient] Error during initialization: {str(e)}")
             logger.info(f"[ComfyStreamClient] Error type: {type(e)}")
             import traceback
             logger.info(f"[ComfyStreamClient] Error traceback: {traceback.format_exc()}")
             raise
+                    
+        self.running_prompts = {}
+        self.current_prompts = []
+        self.cleanup_lock = asyncio.Lock()
+        self.max_workers = max_workers
+        self.worker_tasks = []
+        self.next_worker = 0
+        self.distribution_lock = asyncio.Lock()
+        self.shutting_down = False  # Add shutdown flag
+        self.distribution_task = None  # Track distribution task
+        logger.info("[ComfyStreamClient] Initialized successfully")
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         logger.info("set_prompts start")
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         
-        # Start the distribution manager
-        distribution_task = asyncio.create_task(self.distribute_frames())
-        self.running_prompts[-1] = distribution_task  # Use -1 as a special key for the manager
+        # Start the distribution manager only if not already running
+        if self.distribution_task is None or self.distribution_task.done():
+            self.shutting_down = False  # Reset shutdown flag
+            self.distribution_task = asyncio.create_task(self.distribute_frames())
+            self.running_prompts[-1] = self.distribution_task  # Use -1 as a special key for the manager
         logger.info("set_prompts end")
 
     async def distribute_frames(self):
         """Manager that distributes frames across workers in round-robin fashion"""
         logger.info(f"[ComfyStreamClient] Starting frame distribution manager")
         
-        # Initialize worker tasks
-        self.worker_tasks = []
-        for worker_id in range(self.max_workers):
-            worker_task = asyncio.create_task(self.worker_loop(worker_id))
-            self.worker_tasks.append(worker_task)
-            self.running_prompts[worker_id] = worker_task
-        
-        # Keep the manager running to monitor workers
-        while True:
-            await asyncio.sleep(1.0)  # Check periodically
-            # Restart any crashed workers
-            for worker_id, task in enumerate(self.worker_tasks):
-                if task.done():
-                    logger.warning(f"Worker {worker_id} crashed, restarting")
-                    new_task = asyncio.create_task(self.worker_loop(worker_id))
-                    self.worker_tasks[worker_id] = new_task
-                    self.running_prompts[worker_id] = new_task
+        try:
+            # Initialize worker tasks
+            self.worker_tasks = []
+            for worker_id in range(self.max_workers):
+                worker_task = asyncio.create_task(self.worker_loop(worker_id))
+                self.worker_tasks.append(worker_task)
+                self.running_prompts[worker_id] = worker_task
+            
+            # Keep the manager running to monitor workers
+            while not self.shutting_down:
+                await asyncio.sleep(1.0)  # Check periodically
+                
+                # Only restart crashed workers if we're not shutting down
+                if not self.shutting_down:
+                    for worker_id, task in enumerate(self.worker_tasks):
+                        if task.done():
+                            # Check if the task was cancelled (graceful shutdown) or crashed
+                            if task.cancelled():
+                                logger.info(f"Worker {worker_id} was cancelled (graceful shutdown)")
+                            else:
+                                # Check if there was an exception
+                                try:
+                                    task.result()
+                                    logger.info(f"Worker {worker_id} completed normally")
+                                except Exception as e:
+                                    logger.warning(f"Worker {worker_id} crashed with error: {e}, restarting")
+                                    new_task = asyncio.create_task(self.worker_loop(worker_id))
+                                    self.worker_tasks[worker_id] = new_task
+                                    self.running_prompts[worker_id] = new_task
+                                    
+        except asyncio.CancelledError:
+            logger.info("[ComfyStreamClient] Distribution manager cancelled")
+        except Exception as e:
+            logger.error(f"[ComfyStreamClient] Error in distribution manager: {e}")
+        finally:
+            logger.info("[ComfyStreamClient] Distribution manager stopped")
 
     async def worker_loop(self, worker_id: int):
         """Worker process that continuously processes prompts"""
@@ -154,35 +161,107 @@ class ComfyStreamClient:
         prompt = self.current_prompts[prompt_index]
         
         frame_count = 0
-        while True:
-            try:
-                logger.debug(f"[Worker {worker_id}] Starting prompt execution {frame_count}")
-                # Continuously execute the prompt
-                # The LoadTensor node will block until a frame is available
-                await self.comfy_client.queue_prompt(prompt)
-                frame_count += 1
-                logger.info(f"[Worker {worker_id}] Completed prompt execution {frame_count}")
-            except Exception as e:
-                logger.error(f"[Worker {worker_id}] Error on frame {frame_count}: {str(e)}")
-                await asyncio.sleep(0.1)
+        try:
+            while not self.shutting_down:
+                try:
+                    # Check if we should stop before processing
+                    if self.shutting_down:
+                        break
+                        
+                    # Continuously execute the prompt
+                    # The LoadTensor node will block until a frame is available
+                    await self.comfy_client.queue_prompt(prompt)
+                    frame_count += 1
+                except asyncio.CancelledError:
+                    logger.info(f"[Worker {worker_id}] Cancelled after {frame_count} frames")
+                    break
+                except Exception as e:
+                    if self.shutting_down:
+                        logger.info(f"[Worker {worker_id}] Stopping due to shutdown")
+                        break
+                    logger.error(f"[Worker {worker_id}] Error on frame {frame_count}: {str(e)}")
+                    await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            logger.info(f"[Worker {worker_id}] Task cancelled")
+        finally:
+            logger.info(f"[Worker {worker_id}] Stopped after processing {frame_count} frames")
 
     async def cleanup(self):
         async with self.cleanup_lock:
-            for task in self.worker_tasks:
-                task.cancel()
+            logger.info("[ComfyStreamClient] Starting cleanup...")
+            
+            # Set shutdown flag to stop workers gracefully
+            self.shutting_down = True
+            
+            # Cancel distribution task first
+            if self.distribution_task and not self.distribution_task.done():
+                self.distribution_task.cancel()
                 try:
-                    await task
+                    await self.distribution_task
                 except asyncio.CancelledError:
                     pass
             
-            if self.comfy_client.is_running:
+            # Cancel all worker tasks
+            for task in self.worker_tasks:
+                if not task.done():
+                    task.cancel()
+            
+            # Wait for tasks to complete cancellation
+            if self.worker_tasks:
                 try:
-                    await self.comfy_client.__aexit__()
+                    await asyncio.gather(*self.worker_tasks, return_exceptions=True)
+                    logger.info("[ComfyStreamClient] All worker tasks stopped")
+                except Exception as e:
+                    logger.error(f"Error waiting for worker tasks: {e}")
+            
+            # Clear the tasks list
+            self.worker_tasks.clear()
+            self.running_prompts.clear()
+            
+            # Cleanup the ComfyUI client and its executor
+            if hasattr(self, 'comfy_client') and self.comfy_client.is_running:
+                try:
+                    # Get the executor before closing the client
+                    executor = getattr(self.comfy_client, 'executor', None)
+                    
+                    # Close the client first
+                    await self.comfy_client.__aexit__(None, None, None)
+                    logger.info("[ComfyStreamClient] ComfyUI client closed")
+                    
+                    # Then shutdown the executor and terminate processes
+                    if executor:
+                        logger.info("[ComfyStreamClient] Shutting down executor...")
+                        # Shutdown the executor
+                        executor.shutdown(wait=False)
+                        
+                        # Force terminate any remaining processes
+                        if hasattr(executor, '_processes'):
+                            for process in executor._processes:
+                                if process.is_alive():
+                                    logger.info(f"[ComfyStreamClient] Terminating worker process {process.pid}")
+                                    process.terminate()
+                                    # Give it a moment to terminate gracefully
+                                    try:
+                                        process.join(timeout=2.0)
+                                    except:
+                                        pass
+                                    # Force kill if still alive
+                                    if process.is_alive():
+                                        logger.warning(f"[ComfyStreamClient] Force killing worker process {process.pid}")
+                                        process.kill()
+                        
+                        logger.info("[ComfyStreamClient] Executor shutdown completed")
+                        
                 except Exception as e:
                     logger.error(f"Error during ComfyClient cleanup: {e}")
 
             await self.cleanup_queues()
-            logger.info("Client cleanup complete")
+            
+            # Reset state for potential reuse
+            self.shutting_down = False
+            self.distribution_task = None
+            
+            logger.info("[ComfyStreamClient] Client cleanup complete")
 
     async def cleanup_queues(self):
         # TODO: add for audio as well
@@ -223,7 +302,7 @@ class ComfyStreamClient:
                 asyncio.get_event_loop().run_in_executor(None, self.image_outputs.get),
                 timeout=5.0
             )
-            logger.info(f"[ComfyStreamClient] get_video_output returning tensor: {tensor.shape} - PID: {os.getpid()}")
+            # logger.info(f"[ComfyStreamClient] get_video_output returning tensor: {tensor.shape} - PID: {os.getpid()}")
             return tensor
         except asyncio.TimeoutError:
             logger.warning(f"[ComfyStreamClient] get_video_output timeout - PID: {os.getpid()}")
