@@ -35,9 +35,11 @@ class ComfyStreamClient:
         self.height = kwargs.get('height', 512)
         
         # Ensure workspace path is absolute
-        if 'cwd' in kwargs and not os.path.isabs(kwargs['cwd']):
-            kwargs['cwd'] = os.path.abspath(kwargs['cwd'])
-            logger.info(f"[ComfyStreamClient] Converted workspace path to absolute: {kwargs['cwd']}")
+        if 'cwd' in kwargs:
+            if not os.path.isabs(kwargs['cwd']):
+                # Convert relative path to absolute path from current working directory
+                kwargs['cwd'] = os.path.abspath(kwargs['cwd'])
+            logger.info(f"[ComfyStreamClient] Using absolute workspace path: {kwargs['cwd']}")
         
         logger.info("[ComfyStreamClient] Config kwargs: %s", kwargs)
         
@@ -451,10 +453,10 @@ def execute_prompt_in_worker(config_dict, prompt):
         from comfy.cli_args_types import Configuration
         from comfy.client.embedded_comfy_client import EmbeddedComfyClient
         
-        # On Windows, we need to ensure the working directory is correct
-        if sys.platform == 'win32':
-            # Get the workspace directory from config
-            workspace = config_dict.get('cwd', '..\\..')
+        # Ensure the working directory is correct for all platforms
+        workspace = config_dict.get('cwd')
+        if workspace:
+            # The workspace should already be an absolute path from the main process
             logger.info(f"[execute_prompt_in_worker] Setting working directory to: {workspace}")
             os.chdir(workspace)
             
@@ -464,7 +466,6 @@ def execute_prompt_in_worker(config_dict, prompt):
                 logger.info(f"[execute_prompt_in_worker] Added {workspace} to Python path")
         
         logger.info(f"[execute_prompt_in_worker] Current working directory: {os.getcwd()}")
-        logger.info(f"[execute_prompt_in_worker] Python path: {sys.path}")
         
         # Create a new client in the worker process
         logger.info("[execute_prompt_in_worker] Creating configuration")

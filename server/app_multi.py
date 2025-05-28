@@ -375,7 +375,7 @@ async def on_startup(app: web.Application):
         width=512,
         height=512,
         max_workers=app["workers"],
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        comfyui_inference_log_level=app.get("comfyui_inference_log_level", None),
         frame_log_file=app.get("frame_log_file", None),
         cwd=app["workspace"], 
         disable_cuda_malloc=True, 
@@ -582,7 +582,8 @@ if __name__ == "__main__":
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
     if args.comfyui_inference_log_level:
-        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+        log_level = logging._nameToLevel.get(args.comfyui_inference_log_level.upper())
+        app["comfyui_inference_log_level"] = log_level
 
     try:
         web.run_app(app, host=args.host, port=int(args.port), print=force_print)
