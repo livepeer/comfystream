@@ -21,6 +21,7 @@ class ComfyStreamClient:
         self.cleanup_lock = asyncio.Lock()
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
+        await self.cancel_running_tasks()
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
@@ -44,16 +45,8 @@ class ComfyStreamClient:
                 raise
 
     async def cleanup(self):
+        await self.cancel_running_tasks()
         async with self.cleanup_lock:
-            tasks_to_cancel = list(self.running_prompts.values())
-            for task in tasks_to_cancel:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            self.running_prompts.clear()
-
             if self.comfy_client.is_running:
                 try:
                     await self.comfy_client.__aexit__()
@@ -63,6 +56,17 @@ class ComfyStreamClient:
 
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
+
+    async def cancel_running_tasks(self):
+        async with self.cleanup_lock:
+            tasks_to_cancel = list(self.running_prompts.values())
+            for task in tasks_to_cancel:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            self.running_prompts.clear()
 
         
     async def cleanup_queues(self):
