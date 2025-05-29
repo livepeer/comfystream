@@ -6,3 +6,6 @@ toml
 twilio
 prometheus_client
 librosa
+
+# Fatser Whisper Test
+faster-whisper

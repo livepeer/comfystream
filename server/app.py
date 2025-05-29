@@ -157,7 +157,6 @@ class AudioStreamTrack(MediaStreamTrack):
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
 
-
 def force_codec(pc, sender, forced_codec):
     kind = forced_codec.split("/")[0]
     codecs = RTCRtpSender.getCapabilities(kind).codecs
@@ -288,6 +287,19 @@ async def offer(request):
                     logger.error("[Server] Invalid JSON received")
                 except Exception as e:
                     logger.error(f"[Server] Error processing message: {str(e)}")
+
+        elif channel.label == "data":
+            async def forward_text():
+                try:
+                    while True:
+                        text = await pipeline.get_text_output()
+                        # Send as JSON string for extensibility.
+                        channel.send(json.dumps({"type": "text", "data": text}))
+                except Exception as e:
+                    logger.error(f"[TextChannel] Error forwarding text: {e}")
+
+            asyncio.create_task(forward_text())
+    
 
     @pc.on("track")
     def on_track(track):
