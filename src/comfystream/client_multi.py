@@ -12,7 +12,7 @@ from comfystream.utils import convert_prompt
 from comfystream.tensor_cache_multi import init_tensor_cache
 
 from comfy.cli_args_types import Configuration
-from comfy.distributed.executors import ProcessPoolExecutor  # Use ComfyUI's executor wrapper
+from comfy.distributed.process_pool_executor import ProcessPoolExecutor
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
 from comfystream.frame_proxy import FrameProxy
@@ -33,7 +33,7 @@ class ComfyStreamClient:
         # Store default dimensions
         self.width = kwargs.get('width', 512)
         self.height = kwargs.get('height', 512)
-        
+
         # Ensure workspace path is absolute
         if 'cwd' in kwargs:
             if not os.path.isabs(kwargs['cwd']):
@@ -41,12 +41,16 @@ class ComfyStreamClient:
                 kwargs['cwd'] = os.path.abspath(kwargs['cwd'])
             logger.info(f"[ComfyStreamClient] Using absolute workspace path: {kwargs['cwd']}")
         
+        # Register TensorRT paths in main process BEFORE creating ComfyUI client
+        self._register_tensorrt_paths_main_process(kwargs.get('cwd'))
+        
         logger.info("[ComfyStreamClient] Config kwargs: %s", kwargs)
         
         try:
-            self.config = Configuration(**kwargs)
-            print("[ComfyStreamClient] Configuration created")
-            
+            self.config = Configuration(**kwargs)            
+            logger.info("[ComfyStreamClient] Configuration created")
+            logger.info(f"[ComfyStreamClient] Current working directory: {os.getcwd()}")
+                        
             logger.info("[ComfyStreamClient] Initializing process executor")
             ctx = mp.get_context("spawn")
             logger.info(f"[ComfyStreamClient] Using multiprocessing context: {ctx.get_start_method()}")
@@ -65,7 +69,7 @@ class ComfyStreamClient:
             executor = ProcessPoolExecutor(
                 max_workers=max_workers,
                 initializer=init_tensor_cache,
-                initargs=(self.image_inputs, self.image_outputs, self.audio_inputs, self.audio_outputs)
+                initargs=(self.image_inputs, self.image_outputs, self.audio_inputs, self.audio_outputs, kwargs.get('cwd'))
             )
             logger.info("[ComfyStreamClient] ProcessPoolExecutor created successfully")
             
@@ -443,58 +447,41 @@ class ComfyStreamClient:
             logger.error(f"Error getting node info: {str(e)}")
             return {}
 
-def execute_prompt_in_worker(config_dict, prompt):
-    """Execute a prompt in the worker process"""
-    logger.info(f"[execute_prompt_in_worker] Starting in process {os.getpid()}")
-    try:
-        import os
-        import sys
-        import torch
-        from comfy.cli_args_types import Configuration
-        from comfy.client.embedded_comfy_client import EmbeddedComfyClient
-        
-        # Ensure the working directory is correct for all platforms
-        workspace = config_dict.get('cwd')
-        if workspace:
-            # The workspace should already be an absolute path from the main process
-            logger.info(f"[execute_prompt_in_worker] Setting working directory to: {workspace}")
-            os.chdir(workspace)
-            
-            # Ensure Python path includes the workspace
-            if workspace not in sys.path:
-                sys.path.insert(0, workspace)
-                logger.info(f"[execute_prompt_in_worker] Added {workspace} to Python path")
-        
-        logger.info(f"[execute_prompt_in_worker] Current working directory: {os.getcwd()}")
-        
-        # Create a new client in the worker process
-        logger.info("[execute_prompt_in_worker] Creating configuration")
-        config = Configuration(**config_dict)
-        
-        logger.info("[execute_prompt_in_worker] Creating EmbeddedComfyClient")
-        # Try to initialize CUDA before creating the client
-        if torch.cuda.is_available():
-            logger.info(f"[execute_prompt_in_worker] CUDA device count: {torch.cuda.device_count()}")
-            # Set the device explicitly
-            torch.cuda.set_device(0)
-            logger.info(f"[execute_prompt_in_worker] Set CUDA device to: {torch.cuda.current_device()}")
-        
-        client = EmbeddedComfyClient(config)
-        
-        # Execute the prompt
-        logger.info("[execute_prompt_in_worker] Setting up event loop")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    def _register_tensorrt_paths_main_process(self, workspace_path):
+        """Register TensorRT paths in the main process for validation"""
         try:
-            logger.info("[execute_prompt_in_worker] Queueing prompt")
-            loop.run_until_complete(client.queue_prompt(prompt))
-            logger.info("[execute_prompt_in_worker] Prompt queued successfully")
-        finally:
-            logger.info("[execute_prompt_in_worker] Closing event loop")
-            loop.close()
-    except Exception as e:
-        logger.info(f"[execute_prompt_in_worker] Error: {str(e)}")
-        logger.info(f"[execute_prompt_in_worker] Error type: {type(e)}")
-        import traceback
-        logger.info(f"[execute_prompt_in_worker] Error traceback: {traceback.format_exc()}")
-        raise
+            from comfy.cmd import folder_paths
+            
+            if workspace_path:
+                base_dir = workspace_path
+                tensorrt_models_dir = os.path.join(base_dir, "models", "tensorrt")
+                tensorrt_outputs_dir = os.path.join(base_dir, "outputs", "tensorrt")
+            else:
+                tensorrt_models_dir = os.path.join(folder_paths.models_dir, "tensorrt")
+                tensorrt_outputs_dir = os.path.join(folder_paths.models_dir, "outputs", "tensorrt")
+            
+            logger.info(f"[ComfyStreamClient] Registering TensorRT paths in main process")
+            logger.info(f"[ComfyStreamClient] TensorRT models dir: {tensorrt_models_dir}")
+            logger.info(f"[ComfyStreamClient] TensorRT outputs dir: {tensorrt_outputs_dir}")
+            
+            # Register TensorRT paths
+            if "tensorrt" in folder_paths.folder_names_and_paths:
+                existing_paths = folder_paths.folder_names_and_paths["tensorrt"][0]
+                for path in [tensorrt_models_dir, tensorrt_outputs_dir]:
+                    if path not in existing_paths:
+                        existing_paths.append(path)
+                folder_paths.folder_names_and_paths["tensorrt"][1].add(".engine")
+            else:
+                folder_paths.folder_names_and_paths["tensorrt"] = (
+                    [tensorrt_models_dir, tensorrt_outputs_dir], 
+                    {".engine"}
+                )
+            
+            # Verify registration
+            available_files = folder_paths.get_filename_list("tensorrt")
+            logger.info(f"[ComfyStreamClient] Main process TensorRT files: {available_files}")
+            
+        except Exception as e:
+            logger.error(f"[ComfyStreamClient] Error registering TensorRT paths in main process: {e}")
+            import traceback
+            logger.error(f"[ComfyStreamClient] Traceback: {traceback.format_exc()}")
