@@ -1,5 +1,7 @@
 # comfystream
 
+> ⚠️ **NOTICE:** Active development of this project has moved to [the Livepeer fork](https://github.com/livepeer/comfystream).
+
 comfystream is a package for running img2img [Comfy](https://www.comfy.org/) workflows on video streams.
 
 This repo also includes a WebRTC server and UI that uses comfystream to support streaming from a webcam and processing the stream with a workflow JSON file (API format) created in ComfyUI. If you have an existing ComfyUI installation, the same custom nodes used to create the workflow in ComfyUI will be re-used when processing the video stream.
@@ -78,7 +80,7 @@ Make sure you have [PyTorch](https://pytorch.org/get-started/locally/) installed
 Install `comfystream`:
 
 ```bash
-pip install git+https://github.com/yondonfu/comfystream.git
+pip install git+https://github.com/livepeer/comfystream.git
 
 # This can be used to install from a local repo
 # pip install .
