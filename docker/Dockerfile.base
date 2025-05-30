@@ -21,13 +21,24 @@ RUN apt update && apt install -yqq --no-install-recommends \
     socat \
     libsndfile1 \
     build-essential \
+    \
     llvm \
     tk-dev \
+    libglvnd-dev \
     cmake \
     swig \
     libprotobuf-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
+
+#enable opengl support with nvidia gpu
+RUN printf '%s\n' \
+  '{' \
+  '    "file_format_version" : "1.0.0",' \
+  '    "ICD" : {' \
+  '        "library_path" : "libEGL_nvidia.so.0"' \
+  '    }' \
+  '}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 # Conda setup
 RUN mkdir -p /workspace/comfystream && \
@@ -75,6 +86,10 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip in
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --root-user-action=ignore
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
+
+# Accept a build-arg that lets CI force-invalidate setup_nodes.py
+ARG CACHEBUST=static
+ENV CACHEBUST=${CACHEBUST}
 
 # Run setup_nodes
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
