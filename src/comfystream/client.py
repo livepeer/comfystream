@@ -33,12 +33,21 @@ class ComfyStreamClient:
             raise ValueError(
                 "Number of updated prompts must match the number of currently running prompts."
             )
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        # Validation step before updating the prompt, only meant for a single prompt for now
+        for idx, prompt in enumerate(prompts):
+            converted_prompt = convert_prompt(prompt)
+            try:
+                await self.comfy_client.queue_prompt(converted_prompt)
+                self.current_prompts[idx] = converted_prompt
+            except Exception as e:
+                raise Exception("Prompt update failed") from e
 
     async def run_prompt(self, prompt_index: int):
         while True:
             try:
                 await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 await self.cleanup()
                 logger.error(f"Error running prompt: {str(e)}")
@@ -52,7 +61,6 @@ class ComfyStreamClient:
                     await self.comfy_client.__aexit__()
                 except Exception as e:
                     logger.error(f"Error during ComfyClient cleanup: {e}")
-
 
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
