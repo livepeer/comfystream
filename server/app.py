@@ -259,7 +259,7 @@ async def offer(request):
                         try:
                             await pipeline.update_prompts(params["prompts"])
                         except Exception as e:
-                            print("Error updating the prompt", e)
+                            logger.error(f"Error updating prompt: {str(e)}")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
