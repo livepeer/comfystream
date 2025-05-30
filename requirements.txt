@@ -1,5 +1,5 @@
 asyncio
-comfyui @ git+https://github.com/JJassonn69/ComfyUI.git@72aeb60d0ec8827355abc8b04e6203576adcb3e1
+comfyui @ git+https://github.com/livepeer/ComfyUI.git@72aeb60d0ec8827355abc8b04e6203576adcb3e1
 aiortc
 aiohttp
 toml
