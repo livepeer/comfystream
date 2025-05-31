@@ -99,7 +99,7 @@ class ComfyStreamClient:
             return {}
 
         try:
-            from comfy.nodes.package import import_all_nodes_in_workspace
+            from hiddenswitch_comfy.nodes.package import import_all_nodes_in_workspace
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
