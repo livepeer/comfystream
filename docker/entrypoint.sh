@@ -3,17 +3,19 @@
 set -e
 eval "$(conda shell.bash hook)"
 
-# Handle workspace mounting
-if [ -d "/app" ] && [ ! -d "/app/miniconda3" ]; then
-  echo "Initializing workspace in /app..."
-  cp -r /workspace/* /app
-fi
+if [ "$1" = "--server" ]; then
+  # Handle workspace mounting
+  if [ -d "/app" ] && [ ! -d "/app/miniconda3" ]; then
+    echo "Initializing workspace in /app..."
+    cp -r /workspace/* /app
+  fi
 
-if [ -d "/app" ] && [ ! -L "/workspace" ]; then
-  echo "Starting from volume mount /app..."
-  cd / && rm -rf /workspace
-  ln -sf /app /workspace
-  cd /workspace/comfystream
+  if [ -d "/app" ] && [ ! -L "/workspace" ]; then
+    echo "Starting from volume mount /app..."
+    cd / && rm -rf /workspace
+    ln -sf /app /workspace
+    cd /workspace/comfystream
+  fi
 fi
 
 # Add help command to show usage
@@ -41,43 +43,79 @@ if [ "$1" = "--download-models" ]; then
   shift
 fi
 
-DEPTH_ANYTHING_DIR="/workspace/ComfyUI/models/tensorrt/depth-anything"
+TENSORRT_DIR="/workspace/ComfyUI/models/tensorrt"
+DEPTH_ANYTHING_DIR="${TENSORRT_DIR}/depth-anything"
+DEPTH_ANYTHING_ENGINE="depth_anything_vitl14-fp16.engine"
+DEPTH_ANYTHING_ENGINE_LARGE="depth_anything_v2_vitl-fp16.engine"
+FASTERLIVEPORTRAIT_DIR="/workspace/ComfyUI/models/liveportrait_onnx"
 
 if [ "$1" = "--build-engines" ]; then
   cd /workspace/comfystream
   conda activate comfystream
 
-  # Build Static Engine for Dreamshaper
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine
+  # Build Static Engine for Dreamshaper - Square (512x512)
+  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine --width 512 --height 512
+
+  # Build Static Engine for Dreamshaper - Portrait (384x704)
+  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-704-w-384_00001_.engine --width 384 --height 704
+
+  # Build Static Engine for Dreamshaper - Landscape (704x384)
+  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-384-w-704_00001_.engine --width 704 --height 384
 
   # Build Dynamic Engine for Dreamshaper
   python src/comfystream/scripts/build_trt.py \
                 --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors \
-                --out-engine /workspace/ComfyUI/output/tensorrt/dynamic-dreamshaper8_SD15_\$dyn-b-1-4-2-h-448-704-512-w-448-704-512_00001_.engine \
-                --width 512 \
-                --height 512 \
-                --min-width 448 \
-                --min-height 448 \
-                --max-width 704 \
+                --out-engine /workspace/ComfyUI/output/tensorrt/dynamic-dreamshaper8_SD15_\$dyn-b-1-4-2-h-512-704-w-320-384-448_00001_.engine \
+                --width 384 \
+                --height 704 \
+                --min-width 320 \
+                --min-height 512 \
+                --max-width 448 \
                 --max-height 704
 
   # Build Engine for Depth Anything V2
-  if [ ! -f "$DEPTH_ANYTHING_DIR/depth_anything_vitl14-fp16.engine" ]; then
+  if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE" ]; then
     if [ ! -d "$DEPTH_ANYTHING_DIR" ]; then
       mkdir -p "$DEPTH_ANYTHING_DIR"
     fi
     cd "$DEPTH_ANYTHING_DIR"
     python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py
   else
-    echo "Engine for DepthAnything2 already exists, skipping..."
+    echo "Engine for DepthAnything2 already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE}, skipping..."
   fi
 
   # Build Engine for Depth Anything2 (large)
-  if [ ! -f "$DEPTH_ANYTHING_DIR/depth_anything_v2_vitl-fp16.engine" ]; then
+  if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE_LARGE" ]; then
     cd "$DEPTH_ANYTHING_DIR"
-    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py --trt-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl-fp16.engine" --onnx-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl.onnx"
+    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py --trt-path "${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}" --onnx-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl.onnx"
   else
-    echo "Engine for DepthAnything2 (large) already exists, skipping..."
+    echo "Engine for DepthAnything2 (large) already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}, skipping..."
+  fi
+
+  # Build Engines for FasterLivePortrait
+  if [ ! -f "$FASTERLIVEPORTRAIT_DIR/warping_spade-fix.trt" ]; then
+    cd "$FASTERLIVEPORTRAIT_DIR"
+    bash /workspace/ComfyUI/custom_nodes/ComfyUI-FasterLivePortrait/scripts/build_fasterliveportrait_trt.sh "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}"
+  else
+    echo "Engines for FasterLivePortrait already exists, skipping..."
+  fi
+
+  # Build Engine for StreamDiffusion
+  if [ ! -f "$TENSORRT_DIR/StreamDiffusion-engines/stabilityai/sd-turbo--lcm_lora-True--tiny_vae-True--max_batch-3--min_batch-3--mode-img2img/unet.engine.opt.onnx" ]; then
+    cd /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion
+    MODELS="stabilityai/sd-turbo KBlueLeaf/kohaku-v2.1"
+    TIMESTEPS="3"
+    for model in $MODELS; do
+      for timestep in $TIMESTEPS; do
+        echo "Building model=$model with timestep=$timestep"
+        python build_tensorrt.py \
+          --model-id "$model" \
+          --timesteps "$timestep" \
+          --engine-dir $TENSORRT_DIR/StreamDiffusion-engines
+      done
+    done
+  else
+    echo "Engine for StreamDiffusion already exists, skipping..."
   fi
   shift
 fi
