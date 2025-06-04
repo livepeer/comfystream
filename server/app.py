@@ -17,6 +17,7 @@ from aiortc import (
     RTCIceServer,
     RTCPeerConnection,
     RTCSessionDescription,
+    MediaStreamError,
 )
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
@@ -66,7 +67,31 @@ class VideoStreamTrack(MediaStreamTrack):
         @track.on("ended")
         async def on_ended():
             logger.info("Source video track ended, stopping collection")
-            await cancel_collect_frames(self)
+            await self.cleanup()
+
+    async def cleanup(self):
+        """Clean up resources and stop frame collection."""
+        if not self.running:
+            return
+
+        self.running = False
+        logger.info("Starting video track cleanup")
+
+        try:
+            # Cancel the collection task
+            if hasattr(self, 'collect_task') and not self.collect_task.done():
+                self.collect_task.cancel()
+                try:
+                    await self.collect_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Cleanup pipeline
+            await self.pipeline.cleanup()
+
+            logger.info("Video track cleanup complete")
+        except Exception as e:
+            logger.error(f"Error during video track cleanup: {str(e)}")
 
     async def collect_frames(self):
         """Collect video frames from the underlying track and pass them to
@@ -85,28 +110,36 @@ class VideoStreamTrack(MediaStreamTrack):
                         logger.info("Media stream ended")
                     else:
                         logger.error(f"Error collecting video frames: {str(e)}")
-                    self.running = False
                     break
             
             # Perform cleanup outside the exception handler
             logger.info("Video frame collection stopped")
+            await self.cleanup()
         except asyncio.CancelledError:
             logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
-        finally:
-            await self.pipeline.cleanup()
+            await self.cleanup()
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
         count for FPS calculation and return the processed frame to the client.
         """
-        processed_frame = await self.pipeline.get_processed_video_frame()
+        try:
+            processed_frame = await self.pipeline.get_processed_video_frame()
+            if processed_frame is None:  # Stream ended
+                self.running = False
+                await self.cleanup()
+                raise MediaStreamError("Stream ended")
 
-        # Increment the frame count to calculate FPS.
-        await self.fps_meter.increment_frame_count()
-
-        return processed_frame
+            # Increment the frame count to calculate FPS.
+            await self.fps_meter.increment_frame_count()
+            return processed_frame
+        except Exception as e:
+            logger.error(f"Error receiving video frame: {str(e)}")
+            self.running = False
+            await self.cleanup()
+            raise
 
 
 class AudioStreamTrack(MediaStreamTrack):
@@ -123,7 +156,31 @@ class AudioStreamTrack(MediaStreamTrack):
         @track.on("ended")
         async def on_ended():
             logger.info("Source audio track ended, stopping collection")
-            await cancel_collect_frames(self)
+            await self.cleanup()
+
+    async def cleanup(self):
+        """Clean up resources and stop frame collection."""
+        if not self.running:
+            return
+
+        self.running = False
+        logger.info("Starting audio track cleanup")
+
+        try:
+            # Cancel the collection task
+            if hasattr(self, 'collect_task') and not self.collect_task.done():
+                self.collect_task.cancel()
+                try:
+                    await self.collect_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Cleanup pipeline
+            await self.pipeline.cleanup()
+
+            logger.info("Audio track cleanup complete")
+        except Exception as e:
+            logger.error(f"Error during audio track cleanup: {str(e)}")
 
     async def collect_frames(self):
         """Collect audio frames from the underlying track and pass them to
@@ -142,20 +199,31 @@ class AudioStreamTrack(MediaStreamTrack):
                         logger.info("Media stream ended")
                     else:
                         logger.error(f"Error collecting audio frames: {str(e)}")
-                    self.running = False
                     break
             
             # Perform cleanup outside the exception handler
             logger.info("Audio frame collection stopped")
+            await self.cleanup()
         except asyncio.CancelledError:
             logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
-        finally:
-            await self.pipeline.cleanup()
+            await self.cleanup()
 
     async def recv(self):
-        return await self.pipeline.get_processed_audio_frame()
+        """Receive a processed audio frame from the pipeline."""
+        try:
+            processed_frame = await self.pipeline.get_processed_audio_frame()
+            if processed_frame is None:  # Stream ended
+                self.running = False
+                await self.cleanup()
+                raise MediaStreamError("Stream ended")
+            return processed_frame
+        except Exception as e:
+            logger.error(f"Error receiving audio frame: {str(e)}")
+            self.running = False
+            await self.cleanup()
+            raise
 
 
 def force_codec(pc, sender, forced_codec):
@@ -358,6 +426,10 @@ async def set_prompt(request):
 
     return web.Response(content_type="application/json", text="OK")
 
+async def stop(request):
+    pipeline = request.app["pipeline"]
+    await pipeline.stop()
+    return web.Response(content_type="application/json", text="OK")
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
@@ -448,6 +520,7 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
+    app.router.add_get("/stop", stop)
 
     # Add routes for getting stream statistics.
     stream_stats_manager = StreamStatsManager(app)

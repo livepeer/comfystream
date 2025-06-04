@@ -42,72 +42,103 @@ class Pipeline:
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
+        self._is_shutting_down = False
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
-        # Create dummy frame with the CURRENT resolution settings
-        dummy_frame = av.VideoFrame()
-        dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
-        
-        logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
+        if self._is_shutting_down:
+            return
 
-        for _ in range(WARMUP_RUNS):
-            self.client.put_video_input(dummy_frame)
-            await self.client.get_video_output()
+        try:
+            # Create dummy frame with the CURRENT resolution settings
+            dummy_frame = av.VideoFrame()
+            dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+            
+            logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
+
+            for _ in range(WARMUP_RUNS):
+                if self._is_shutting_down:
+                    break
+                self.client.put_video_input(dummy_frame)
+                await self.client.get_video_output()
+        except Exception as e:
+            logger.error(f"Error during video warmup: {str(e)}")
+            await self.cleanup()
 
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
-        dummy_frame = av.AudioFrame()
-        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
-        dummy_frame.sample_rate = 48000
+        if self._is_shutting_down:
+            return
 
-        for _ in range(WARMUP_RUNS):
-            self.client.put_audio_input(dummy_frame)
-            await self.client.get_audio_output()
+        try:
+            dummy_frame = av.AudioFrame()
+            dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)
+            dummy_frame.sample_rate = 48000
+
+            for _ in range(WARMUP_RUNS):
+                if self._is_shutting_down:
+                    break
+                self.client.put_audio_input(dummy_frame)
+                await self.client.get_audio_output()
+        except Exception as e:
+            logger.error(f"Error during audio warmup: {str(e)}")
+            await self.cleanup()
 
     async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
-        """Set the processing prompts for the pipeline.
-        
-        Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
-        """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        """Set the processing prompts for the pipeline."""
+        if self._is_shutting_down:
+            return
+
+        try:
+            if isinstance(prompts, list):
+                await self.client.set_prompts(prompts)
+            else:
+                await self.client.set_prompts([prompts])
+        except Exception as e:
+            logger.error(f"Error setting prompts: {str(e)}")
+            await self.cleanup()
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
-        """Update the existing processing prompts.
-        
-        Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
-        """
-        if isinstance(prompts, list):
-            await self.client.update_prompts(prompts)
-        else:
-            await self.client.update_prompts([prompts])
+        """Update the existing processing prompts."""
+        if self._is_shutting_down:
+            return
+
+        try:
+            if isinstance(prompts, list):
+                await self.client.update_prompts(prompts)
+            else:
+                await self.client.update_prompts([prompts])
+        except Exception as e:
+            logger.error(f"Error updating prompts: {str(e)}")
+            await self.cleanup()
 
     async def put_video_frame(self, frame: av.VideoFrame):
-        """Queue a video frame for processing.
-        
-        Args:
-            frame: The video frame to process
-        """
-        frame.side_data.input = self.video_preprocess(frame)
-        frame.side_data.skipped = True
-        self.client.put_video_input(frame)
-        await self.video_incoming_frames.put(frame)
+        """Queue a video frame for processing."""
+        if self._is_shutting_down:
+            return
+
+        try:
+            frame.side_data.input = self.video_preprocess(frame)
+            frame.side_data.skipped = True
+            self.client.put_video_input(frame)
+            await self.video_incoming_frames.put(frame)
+        except Exception as e:
+            logger.error(f"Error putting video frame: {str(e)}")
+            await self.cleanup()
 
     async def put_audio_frame(self, frame: av.AudioFrame):
-        """Queue an audio frame for processing.
-        
-        Args:
-            frame: The audio frame to process
-        """
-        frame.side_data.input = self.audio_preprocess(frame)
-        frame.side_data.skipped = True
-        self.client.put_audio_input(frame)
-        await self.audio_incoming_frames.put(frame)
+        """Queue an audio frame for processing."""
+        if self._is_shutting_down:
+            return
+
+        try:
+            frame.side_data.input = self.audio_preprocess(frame)
+            frame.side_data.skipped = True
+            self.client.put_audio_input(frame)
+            await self.audio_incoming_frames.put(frame)
+        except Exception as e:
+            logger.error(f"Error putting audio frame: {str(e)}")
+            await self.cleanup()
 
     def video_preprocess(self, frame: av.VideoFrame) -> Union[torch.Tensor, np.ndarray]:
         """Preprocess a video frame before processing.
@@ -156,45 +187,60 @@ class Pipeline:
         """
         return av.AudioFrame.from_ndarray(np.repeat(output, 2).reshape(1, -1))
     
-    # TODO: make it generic to support purely generative video cases
-    async def get_processed_video_frame(self) -> av.VideoFrame:
-        """Get the next processed video frame.
-        
-        Returns:
-            The processed video frame
-        """
-        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
-            out_tensor = await self.client.get_video_output()
-        frame = await self.video_incoming_frames.get()
-        while frame.side_data.skipped:
-            frame = await self.video_incoming_frames.get()
+    async def get_processed_video_frame(self) -> Optional[av.VideoFrame]:
+        """Get the next processed video frame."""
+        if self._is_shutting_down:
+            return None
 
-        processed_frame = self.video_postprocess(out_tensor)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
-        
-        return processed_frame
-
-    async def get_processed_audio_frame(self) -> av.AudioFrame:
-        """Get the next processed audio frame.
-        
-        Returns:
-            The processed audio frame
-        """
-        frame = await self.audio_incoming_frames.get()
-        if frame.samples > len(self.processed_audio_buffer):
+        try:
             async with temporary_log_level("comfy", self._comfyui_inference_log_level):
-                out_tensor = await self.client.get_audio_output()
-            self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
-        out_data = self.processed_audio_buffer[:frame.samples]
-        self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
+                out_tensor = await self.client.get_video_output()
+                if out_tensor is None:  # Stream ended
+                    await self.cleanup()
+                    return None
 
-        processed_frame = self.audio_postprocess(out_data)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
-        processed_frame.sample_rate = frame.sample_rate
-        
-        return processed_frame
+            frame = await self.video_incoming_frames.get()
+            while frame.side_data.skipped:
+                frame = await self.video_incoming_frames.get()
+
+            processed_frame = self.video_postprocess(out_tensor)
+            processed_frame.pts = frame.pts
+            processed_frame.time_base = frame.time_base
+            
+            return processed_frame
+        except Exception as e:
+            logger.error(f"Error getting processed video frame: {str(e)}")
+            await self.cleanup()
+            return None
+
+    async def get_processed_audio_frame(self) -> Optional[av.AudioFrame]:
+        """Get the next processed audio frame."""
+        if self._is_shutting_down:
+            return None
+
+        try:
+            frame = await self.audio_incoming_frames.get()
+            if frame.samples > len(self.processed_audio_buffer):
+                async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+                    out_tensor = await self.client.get_audio_output()
+                    if out_tensor is None:  # Stream ended
+                        await self.cleanup()
+                        return None
+                    self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
+
+            out_data = self.processed_audio_buffer[:frame.samples]
+            self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
+
+            processed_frame = self.audio_postprocess(out_data)
+            processed_frame.pts = frame.pts
+            processed_frame.time_base = frame.time_base
+            processed_frame.sample_rate = frame.sample_rate
+            
+            return processed_frame
+        except Exception as e:
+            logger.error(f"Error getting processed audio frame: {str(e)}")
+            await self.cleanup()
+            return None
     
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
@@ -207,4 +253,37 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        if self._is_shutting_down:
+            return
+
+        self._is_shutting_down = True
+        logger.info("Starting pipeline cleanup")
+
+        try:
+            # Clear queues
+            while not self.video_incoming_frames.empty():
+                try:
+                    self.video_incoming_frames.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+            while not self.audio_incoming_frames.empty():
+                try:
+                    self.audio_incoming_frames.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+            # Clear processed audio buffer
+            self.processed_audio_buffer = np.array([], dtype=np.int16)
+
+            # Cleanup client
+            await self.client.cleanup()
+
+            # Clear CUDA cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            logger.info("Pipeline cleanup complete")
+        except Exception as e:
+            logger.error(f"Error during pipeline cleanup: {str(e)}")
+            raise 
