@@ -15,6 +15,16 @@ image_outputs = None
 audio_inputs = None
 audio_outputs = None
 
+# Global frame ID tracking for worker processes
+current_frame_id = None
+frame_id_mapping = {}  # Maps tensor id to frame_id
+
+class FrameData:
+    """Wrapper class to carry frame metadata through the processing pipeline"""
+    def __init__(self, tensor, frame_id=None):
+        self.tensor = tensor
+        self.frame_id = frame_id
+
 # Create wrapper classes that match the interface of the original queues
 class MultiProcessInputQueue:
     def __init__(self, mp_queue):
@@ -22,12 +32,24 @@ class MultiProcessInputQueue:
     
     def get(self, block=True, timeout=None):
         result = self.queue.get(block=block, timeout=timeout)
-        # logger.info(f"[MultiProcessInputQueue] Frame retrieved by worker PID: {os.getpid()}")
+        
+        # Extract frame metadata and store it globally for this worker
+        global current_frame_id
+        if hasattr(result, 'side_data') and hasattr(result.side_data, 'frame_id'):
+            current_frame_id = result.side_data.frame_id
+            # logger.info(f"[MultiProcessInputQueue] Frame {current_frame_id} retrieved by worker PID: {os.getpid()}")
+        
         return result
     
     def get_nowait(self):
         result = self.queue.get_nowait()
-        # logger.info(f"[MultiProcessInputQueue] Frame retrieved (nowait) by worker PID: {os.getpid()}")
+        
+        # Extract frame metadata and store it globally for this worker
+        global current_frame_id
+        if hasattr(result, 'side_data') and hasattr(result.side_data, 'frame_id'):
+            current_frame_id = result.side_data.frame_id
+            # logger.info(f"[MultiProcessInputQueue] Frame {current_frame_id} retrieved (nowait) by worker PID: {os.getpid()}")
+        
         return result
     
     def put(self, item, block=True, timeout=None):
@@ -49,7 +71,15 @@ class MultiProcessOutputQueue:
     async def get(self):
         # Convert synchronous get to async
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.queue.get)
+        result = await loop.run_in_executor(None, self.queue.get)
+        
+        # Check if this is a tuple with frame_id
+        if isinstance(result, tuple) and len(result) == 2:
+            frame_id, tensor = result
+            return (frame_id, tensor)
+        else:
+            # Backward compatibility - return just the tensor
+            return result
     
     async def put(self, item):
         # Convert synchronous put to async
@@ -62,15 +92,31 @@ class MultiProcessOutputQueue:
     
     def put_nowait(self, item):
         try:
+            # Check if we have a current frame ID to associate with this output
+            global current_frame_id
+            
             # Ensure tensor is on CPU before sending
             if torch.is_tensor(item):
                 item = item.cpu()
-            # logger.info(f"[MultiProcessOutputQueue] Frame sent (nowait) from worker PID: {os.getpid()}")
-            self.queue.put_nowait(item)
+            
+            # If we have a frame ID, send it as a tuple
+            if current_frame_id is not None:
+                output_data = (current_frame_id, item)
+                # logger.info(f"[MultiProcessOutputQueue] Frame {current_frame_id} sent (nowait) from worker PID: {os.getpid()}")
+            else:
+                output_data = item
+                # logger.info(f"[MultiProcessOutputQueue] Frame sent (nowait) without ID from worker PID: {os.getpid()}")
+                
+            self.queue.put_nowait(output_data)
         except queue.Full:
             try:
                 self.queue.get_nowait()  # Drop oldest
-                self.queue.put_nowait(item)
+                # Try again with the same logic
+                if current_frame_id is not None:
+                    output_data = (current_frame_id, item)
+                else:
+                    output_data = item
+                self.queue.put_nowait(output_data)
             except Exception:
                 pass  # If still full, drop this frame
 

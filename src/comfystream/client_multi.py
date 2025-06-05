@@ -44,6 +44,9 @@ class ComfyStreamClient:
         # Register TensorRT paths in main process BEFORE creating ComfyUI client
         self.register_tensorrt_paths_main_process(kwargs.get('cwd'))
         
+        # Cache nodes information in main process to avoid ProcessPoolExecutor conflicts
+        self._initialize_nodes_cache()
+        
         logger.info("[ComfyStreamClient] Config kwargs: %s", kwargs)
         
         try:
@@ -321,19 +324,20 @@ class ComfyStreamClient:
         return await loop.run_in_executor(None, self.audio_outputs.get)
     
     async def get_available_nodes(self):
-        """Get metadata and available nodes info in a single pass"""
-        # TODO: make it for for multiple prompts
-        if not self.running_prompts:
+        """Get metadata and available nodes info using cached nodes to avoid ProcessPoolExecutor conflicts"""
+        if not self.current_prompts:
+            return {}
+
+        # Use cached nodes instead of calling import_all_nodes_in_workspace from worker process
+        if self._nodes is None:
+            logger.warning("[ComfyStreamClient] Nodes cache not available, returning empty result")
             return {}
 
         try:
-            from comfy.nodes.package import import_all_nodes_in_workspace
-            nodes = import_all_nodes_in_workspace()
-
             all_prompts_nodes_info = {}
             
             for prompt_index, prompt in enumerate(self.current_prompts):
-                # Get set of class types we need metadata for, excluding LoadTensor and SaveTensor
+                # Get set of class types we need metadata for
                 needed_class_types = {
                     node.get('class_type') 
                     for node in prompt.values()
@@ -345,7 +349,7 @@ class ComfyStreamClient:
                 nodes_info = {}
 
                 # Only process nodes until we've found all the ones we need
-                for class_type, node_class in nodes.NODE_CLASS_MAPPINGS.items():
+                for class_type, node_class in self._nodes.NODE_CLASS_MAPPINGS.items():
                     if not remaining_nodes:  # Exit early if we've found all needed nodes
                         break
 
@@ -492,3 +496,14 @@ class ComfyStreamClient:
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         
         logger.info("[ComfyStreamClient] Prompts updated")
+
+    def _initialize_nodes_cache(self):
+        """Initialize nodes cache in main process to avoid ProcessPoolExecutor conflicts"""
+        try:
+            logger.info("[ComfyStreamClient] Initializing nodes cache in main process...")
+            from comfy.nodes.package import import_all_nodes_in_workspace
+            self._nodes = import_all_nodes_in_workspace()
+            logger.info(f"[ComfyStreamClient] Cached {len(self._nodes.NODE_CLASS_MAPPINGS)} node types")
+        except Exception as e:
+            logger.error(f"[ComfyStreamClient] Error initializing nodes cache: {e}")
+            self._nodes = None
