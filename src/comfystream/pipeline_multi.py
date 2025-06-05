@@ -57,7 +57,7 @@ class Pipeline:
 
         # Add a queue for frame log entries
         self.running = True
-        self.next_expected_frame_id = 0
+        self.next_expected_frame_id = 0  # Initialize to 0 instead of None
         self.frame_log_file = frame_log_file
         self.frame_log_queue = None  # Initialize to None by default
 
@@ -108,21 +108,24 @@ class Pipeline:
             await self.client.set_prompts([prompts])
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
-        """Update the existing processing prompts.
-        
-        Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
-        """
+        """Update the existing processing prompts."""
         if isinstance(prompts, list):
             await self.client.update_prompts(prompts)
         else:
             await self.client.update_prompts([prompts])
+        
+        logger.info("Prompts updated")
 
     async def put_video_frame(self, frame: av.VideoFrame):
         current_time = time.time()
         frame.side_data.input = self.video_preprocess(frame)
         frame.side_data.skipped = True
         frame.side_data.frame_received_time = current_time
+        
+        # Initialize frame ID if it's None (safety check)
+        if self.next_expected_frame_id is None:
+            self.next_expected_frame_id = 0
+        
         frame.side_data.frame_id = self.next_expected_frame_id
         frame.side_data.client_index = -1
         self.next_expected_frame_id += 1

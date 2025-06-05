@@ -159,12 +159,8 @@ class ComfyStreamClient:
             logger.info("[ComfyStreamClient] Distribution manager stopped")
 
     async def worker_loop(self, worker_id: int):
-        """Worker process that continuously processes prompts"""
+        """Worker loop that continuously processes prompts and picks up updates"""
         logger.info(f"[Worker {worker_id}] Started - PID: {os.getpid()}")
-        
-        # Get prompt for this worker
-        prompt_index = worker_id % len(self.current_prompts)
-        prompt = self.current_prompts[prompt_index]
         
         frame_count = 0
         try:
@@ -173,11 +169,14 @@ class ComfyStreamClient:
                     # Check if we should stop before processing
                     if self.shutting_down:
                         break
-                        
-                    # Continuously execute the prompt
-                    # The LoadTensor node will block until a frame is available
-                    await self.comfy_client.queue_prompt(prompt)
+                    
+                    prompt_index = worker_id % len(self.current_prompts)
+                    current_prompt = self.current_prompts[prompt_index]
+                    
+                    # Execute the current prompt
+                    await self.comfy_client.queue_prompt(current_prompt)
                     frame_count += 1
+                    
                 except asyncio.CancelledError:
                     logger.info(f"[Worker {worker_id}] Cancelled after {frame_count} frames")
                     break
@@ -322,19 +321,30 @@ class ComfyStreamClient:
         return await loop.run_in_executor(None, self.audio_outputs.get)
 
     async def get_available_nodes(self):
-        """Get metadata and available nodes info in a single pass"""
-        # TODO: make it for for multiple prompts
-        if not self.running_prompts:
+        """Get metadata and available nodes info in the main process"""
+        logger.info("[ComfyStreamClient] get_available_nodes called")
+        
+        if not self.running_prompts or not self.current_prompts:
+            logger.info("[ComfyStreamClient] No running prompts or current prompts, returning empty")
             return {}
 
         try:
+            logger.info("[ComfyStreamClient] Starting node info gathering...")
+            
+            # Run node info gathering in the main process instead of worker process
+            # This avoids interfering with the ongoing video processing
             from comfy.nodes.package import import_all_nodes_in_workspace
+            logger.info("[ComfyStreamClient] Imported import_all_nodes_in_workspace")
+            
             nodes = import_all_nodes_in_workspace()
-
+            logger.info(f"[ComfyStreamClient] Loaded {len(nodes.NODE_CLASS_MAPPINGS)} node classes")
+            
             all_prompts_nodes_info = {}
             
             for prompt_index, prompt in enumerate(self.current_prompts):
-                # Get set of class types we need metadata for, excluding LoadTensor and SaveTensor
+                logger.info(f"[ComfyStreamClient] Processing prompt {prompt_index}")
+                
+                # Get set of class types we need metadata for
                 needed_class_types = {
                     node.get('class_type') 
                     for node in prompt.values()
@@ -344,107 +354,109 @@ class ComfyStreamClient:
                     for node_id, node in prompt.items() 
                 }
                 nodes_info = {}
+                
+                logger.info(f"[ComfyStreamClient] Need metadata for {len(needed_class_types)} class types")
 
-                # Only process nodes until we've found all the ones we need
+                # Process nodes to get metadata
                 for class_type, node_class in nodes.NODE_CLASS_MAPPINGS.items():
-                    if not remaining_nodes:  # Exit early if we've found all needed nodes
+                    if not remaining_nodes:
                         break
 
                     if class_type not in needed_class_types:
                         continue
 
-                    # Get metadata for this node type (same as original get_node_metadata)
-                    input_data = node_class.INPUT_TYPES() if hasattr(node_class, 'INPUT_TYPES') else {}
-                    input_info = {}
+                    try:
+                        # Get metadata for this node type
+                        input_data = node_class.INPUT_TYPES() if hasattr(node_class, 'INPUT_TYPES') else {}
+                        input_info = {}
 
-                    # Process required inputs
-                    if 'required' in input_data:
-                        for name, value in input_data['required'].items():
-                            if isinstance(value, tuple):
-                                if len(value) == 1 and isinstance(value[0], list):
-                                    # Handle combo box case where value is ([option1, option2, ...],)
-                                    input_info[name] = {
-                                        'type': 'combo',
-                                        'value': value[0],  # The list of options becomes the value
+                        # Process required inputs
+                        if 'required' in input_data:
+                            for name, value in input_data['required'].items():
+                                if isinstance(value, tuple):
+                                    if len(value) == 1 and isinstance(value[0], list):
+                                        input_info[name] = {
+                                            'type': 'combo',
+                                            'value': value[0],
+                                        }
+                                    elif len(value) == 2:
+                                        input_type, config = value
+                                        input_info[name] = {
+                                            'type': input_type,
+                                            'required': True,
+                                            'min': config.get('min', None),
+                                            'max': config.get('max', None),
+                                            'widget': config.get('widget', None)
+                                        }
+                                    elif len(value) == 1:
+                                        input_info[name] = {
+                                            'type': value[0]
+                                        }
+
+                        # Process optional inputs
+                        if 'optional' in input_data:
+                            for name, value in input_data['optional'].items():
+                                if isinstance(value, tuple):
+                                    if len(value) == 1 and isinstance(value[0], list):
+                                        input_info[name] = {
+                                            'type': 'combo',
+                                            'value': value[0],
+                                        }
+                                    elif len(value) == 2:
+                                        input_type, config = value
+                                        input_info[name] = {
+                                            'type': input_type,
+                                            'required': False,
+                                            'min': config.get('min', None),
+                                            'max': config.get('max', None),
+                                            'widget': config.get('widget', None)
+                                        }
+                                    elif len(value) == 1:
+                                        input_info[name] = {
+                                            'type': value[0]
+                                        }
+
+                        # Process nodes in prompt that use this class_type
+                        for node_id in list(remaining_nodes):
+                            node = prompt[node_id]
+                            if node.get('class_type') != class_type:
+                                continue
+
+                            node_info = {
+                                'class_type': class_type,
+                                'inputs': {}
+                            }
+
+                            if 'inputs' in node:
+                                for input_name, input_value in node['inputs'].items():
+                                    input_metadata = input_info.get(input_name, {})
+                                    node_info['inputs'][input_name] = {
+                                        'value': input_value,
+                                        'type': input_metadata.get('type', 'unknown'),
+                                        'min': input_metadata.get('min', None),
+                                        'max': input_metadata.get('max', None),
+                                        'widget': input_metadata.get('widget', None)
                                     }
-                                elif len(value) == 2:
-                                    input_type, config = value
-                                    input_info[name] = {
-                                        'type': input_type,
-                                        'required': True,
-                                        'min': config.get('min', None),
-                                        'max': config.get('max', None),
-                                        'widget': config.get('widget', None)
-                                    }
-                                elif len(value) == 1:
-                                    # Handle simple type case like ('IMAGE',)
-                                    input_info[name] = {
-                                        'type': value[0]
-                                    }
-                            else:
-                                logger.error(f"Unexpected structure for required input {name}: {value}")
+                                    if input_metadata.get('type') == 'combo':
+                                        node_info['inputs'][input_name]['value'] = input_metadata.get('value', [])
 
-                    # Process optional inputs with same logic
-                    if 'optional' in input_data:
-                        for name, value in input_data['optional'].items():
-                            if isinstance(value, tuple):
-                                if len(value) == 1 and isinstance(value[0], list):
-                                    # Handle combo box case where value is ([option1, option2, ...],)
-                                    input_info[name] = {
-                                        'type': 'combo',
-                                        'value': value[0],  # The list of options becomes the value
-                                    }
-                                elif len(value) == 2:
-                                    input_type, config = value
-                                    input_info[name] = {
-                                        'type': input_type,
-                                        'required': False,
-                                        'min': config.get('min', None),
-                                        'max': config.get('max', None),
-                                        'widget': config.get('widget', None)
-                                    }
-                                elif len(value) == 1:
-                                    # Handle simple type case like ('IMAGE',)
-                                    input_info[name] = {
-                                        'type': value[0]
-                                    }
-                            else:
-                                logger.error(f"Unexpected structure for optional input {name}: {value}")
+                            nodes_info[node_id] = node_info
+                            remaining_nodes.remove(node_id)
+                    
+                    except Exception as e:
+                        logger.error(f"[ComfyStreamClient] Error processing class_type {class_type}: {e}")
+                        continue
 
-                    # Now process any nodes in our prompt that use this class_type
-                    for node_id in list(remaining_nodes):
-                        node = prompt[node_id]
-                        if node.get('class_type') != class_type:
-                            continue
+                all_prompts_nodes_info[prompt_index] = nodes_info
+                logger.info(f"[ComfyStreamClient] Completed prompt {prompt_index}, found {len(nodes_info)} nodes")
 
-                        node_info = {
-                            'class_type': class_type,
-                            'inputs': {}
-                        }
-
-                        if 'inputs' in node:
-                            for input_name, input_value in node['inputs'].items():
-                                input_metadata = input_info.get(input_name, {})
-                                node_info['inputs'][input_name] = {
-                                    'value': input_value,
-                                    'type': input_metadata.get('type', 'unknown'),
-                                    'min': input_metadata.get('min', None),
-                                    'max': input_metadata.get('max', None),
-                                    'widget': input_metadata.get('widget', None)
-                                }
-                                # For combo type inputs, include the list of options
-                                if input_metadata.get('type') == 'combo':
-                                    node_info['inputs'][input_name]['value'] = input_metadata.get('value', [])
-
-                        nodes_info[node_id] = node_info
-                        remaining_nodes.remove(node_id)
-
-                    all_prompts_nodes_info[prompt_index] = nodes_info
-
+            logger.info(f"[ComfyStreamClient] get_available_nodes completed successfully, returning {len(all_prompts_nodes_info)} prompts")
             return all_prompts_nodes_info
 
         except Exception as e:
-            logger.error(f"Error getting node info: {str(e)}")
+            logger.error(f"[ComfyStreamClient] Error getting node info: {str(e)}")
+            import traceback
+            logger.error(f"[ComfyStreamClient] Traceback: {traceback.format_exc()}")
             return {}
 
     def _register_tensorrt_paths_main_process(self, workspace_path):
@@ -460,9 +472,9 @@ class ComfyStreamClient:
                 tensorrt_models_dir = os.path.join(folder_paths.models_dir, "tensorrt")
                 tensorrt_outputs_dir = os.path.join(folder_paths.models_dir, "outputs", "tensorrt")
             
-            logger.info(f"[ComfyStreamClient] Registering TensorRT paths in main process")
-            logger.info(f"[ComfyStreamClient] TensorRT models dir: {tensorrt_models_dir}")
-            logger.info(f"[ComfyStreamClient] TensorRT outputs dir: {tensorrt_outputs_dir}")
+            # logger.info(f"[ComfyStreamClient] Registering TensorRT paths in main process")
+            # logger.info(f"[ComfyStreamClient] TensorRT models dir: {tensorrt_models_dir}")
+            # logger.info(f"[ComfyStreamClient] TensorRT outputs dir: {tensorrt_outputs_dir}")
             
             # Register TensorRT paths
             if "tensorrt" in folder_paths.folder_names_and_paths:
@@ -478,10 +490,18 @@ class ComfyStreamClient:
                 )
             
             # Verify registration
-            available_files = folder_paths.get_filename_list("tensorrt")
-            logger.info(f"[ComfyStreamClient] Main process TensorRT files: {available_files}")
+            # available_files = folder_paths.get_filename_list("tensorrt")
+            # logger.info(f"[ComfyStreamClient] Main process TensorRT files: {available_files}")
             
         except Exception as e:
             logger.error(f"[ComfyStreamClient] Error registering TensorRT paths in main process: {e}")
             import traceback
             logger.error(f"[ComfyStreamClient] Traceback: {traceback.format_exc()}")
+
+    async def update_prompts(self, prompts: List[PromptDictInput]):
+        """Update the existing processing prompts without restarting workers."""
+        
+        # Simply update the current prompts - worker loops will pick up changes on next iteration
+        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        
+        logger.info("[ComfyStreamClient] Prompts updated")
