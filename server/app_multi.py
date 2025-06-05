@@ -380,7 +380,6 @@ async def on_startup(app: web.Application):
         max_workers=app["workers"],
         comfyui_inference_log_level=app.get("comfyui_inference_log_level", None),
         frame_log_file=app.get("frame_log_file", None),
-        max_frame_wait_ms=app.get("max_frame_wait", 500),
         cwd=app["workspace"], 
         disable_cuda_malloc=True, 
         gpu_only=True, 
@@ -524,12 +523,6 @@ if __name__ == "__main__":
         default=1,
         help="Number of workers to run",
     )
-    parser.add_argument(
-        "--max-frame-wait",
-        type=int,
-        default=500,
-        help="Maximum time to wait for a frame before dropping it (milliseconds)",
-    )
     args = parser.parse_args()
 
     # Set up signal handlers
@@ -549,7 +542,6 @@ if __name__ == "__main__":
     app["workspace"] = args.workspace
     app["frame_log_file"] = args.frame_log_file
     app["workers"] = args.workers
-    app["max_frame_wait"] = args.max_frame_wait
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)

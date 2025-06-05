@@ -162,37 +162,30 @@ class ComfyStreamClient:
             logger.info("[ComfyStreamClient] Distribution manager stopped")
 
     async def worker_loop(self, worker_id: int):
-        """Worker loop that continuously processes prompts and picks up updates"""
-        logger.info(f"[Worker {worker_id}] Started - PID: {os.getpid()}")
+        """Simple worker loop - just process frames continuously"""
+        logger.info(f"[Worker {worker_id}] Started")
         
         frame_count = 0
         try:
             while not self.shutting_down:
                 try:
-                    # Check if we should stop before processing
-                    if self.shutting_down:
-                        break
-                    
+                    # Simple round-robin prompt selection
                     prompt_index = worker_id % len(self.current_prompts)
                     current_prompt = self.current_prompts[prompt_index]
                     
-                    # Execute the current prompt
+                    # Just process the prompt
                     await self.comfy_client.queue_prompt(current_prompt)
                     frame_count += 1
                     
                 except asyncio.CancelledError:
-                    logger.info(f"[Worker {worker_id}] Cancelled after {frame_count} frames")
                     break
                 except Exception as e:
                     if self.shutting_down:
-                        logger.info(f"[Worker {worker_id}] Stopping due to shutdown")
                         break
-                    logger.error(f"[Worker {worker_id}] Error on frame {frame_count}: {str(e)}")
+                    logger.error(f"[Worker {worker_id}] Error: {e}")
                     await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            logger.info(f"[Worker {worker_id}] Task cancelled")
         finally:
-            logger.info(f"[Worker {worker_id}] Stopped after processing {frame_count} frames")
+            logger.info(f"[Worker {worker_id}] Processed {frame_count} frames")
 
     async def cleanup(self):
         async with self.cleanup_lock:

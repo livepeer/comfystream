@@ -92,33 +92,17 @@ class MultiProcessOutputQueue:
     
     def put_nowait(self, item):
         try:
-            # Check if we have a current frame ID to associate with this output
-            global current_frame_id
-            
-            # Ensure tensor is on CPU before sending
+            # Ensure tensor is on CPU
             if torch.is_tensor(item):
                 item = item.cpu()
-            
-            # If we have a frame ID, send it as a tuple
-            if current_frame_id is not None:
-                output_data = (current_frame_id, item)
-                # logger.info(f"[MultiProcessOutputQueue] Frame {current_frame_id} sent (nowait) from worker PID: {os.getpid()}")
-            else:
-                output_data = item
-                # logger.info(f"[MultiProcessOutputQueue] Frame sent (nowait) without ID from worker PID: {os.getpid()}")
-                
-            self.queue.put_nowait(output_data)
+            self.queue.put_nowait(item)
         except queue.Full:
+            # Simple: drop one old frame and try again
             try:
-                self.queue.get_nowait()  # Drop oldest
-                # Try again with the same logic
-                if current_frame_id is not None:
-                    output_data = (current_frame_id, item)
-                else:
-                    output_data = item
-                self.queue.put_nowait(output_data)
-            except Exception:
-                pass  # If still full, drop this frame
+                self.queue.get_nowait()
+                self.queue.put_nowait(item)
+            except:
+                pass  # If still fails, just drop this frame
 
 def init_tensor_cache(image_inputs, image_outputs, audio_inputs, audio_outputs, workspace_path=None):
     """Initialize the tensor cache for a worker process.
