@@ -80,7 +80,7 @@ class VideoStreamTrack(MediaStreamTrack):
         the processing pipeline. Stops when track ends or connection closes.
         """
         try:
-            while self.running:
+            while self.running and not self.pipeline.client.is_shutting_down:
                 try:
                     frame = await self.track.recv()
                     await self.pipeline.put_video_frame(frame)
@@ -102,6 +102,11 @@ class VideoStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
         finally:
+            if self.pipeline.client.is_shutting_down:
+                logger.info("Video frame collection stopped due to client shutdown")
+            
+            # Stop the FPS meter
+            await self.fps_meter.stop()
             await self.pipeline.cleanup()
 
     async def recv(self):
@@ -146,7 +151,7 @@ class AudioStreamTrack(MediaStreamTrack):
         the processing pipeline. Stops when track ends or connection closes.
         """
         try:
-            while self.running:
+            while self.running and not self.pipeline.client.is_shutting_down:
                 try:
                     frame = await self.track.recv()
                     await self.pipeline.put_audio_frame(frame)
@@ -168,6 +173,8 @@ class AudioStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
         finally:
+            if self.pipeline.client.is_shutting_down:
+                logger.info("Audio frame collection stopped due to client shutdown")
             await self.pipeline.cleanup()
 
     async def recv(self):
@@ -220,7 +227,22 @@ async def offer(request):
 
     params = await request.json()
 
-    await pipeline.set_prompts(params["prompts"])
+    # Start the pipeline with client configuration and prompts
+    try:
+        await pipeline.start(
+            prompts=params["prompts"],
+            max_workers=1,
+            cwd=request.app["workspace"],
+            disable_cuda_malloc=True,
+            gpu_only=True,
+            preview_method='none'
+        )
+    except Exception as e:
+        logger.error(f"Error starting pipeline: {e}")
+        return web.json_response(
+            {"error": f"Failed to start pipeline: {str(e)}"},
+            status=500
+        )
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -292,7 +314,13 @@ async def offer(request):
                         
                         # Warm the video pipeline with the new resolution
                         if "m=video" in pc.remoteDescription.sdp:
-                            await pipeline.warm_video()
+                            await pipeline.warm_video(
+                                max_workers=1,
+                                cwd=request.app["workspace"],
+                                disable_cuda_malloc=True,
+                                gpu_only=True,
+                                preview_method='none'
+                            )
                             
                         response = {
                             "type": "resolution_updated",
@@ -346,18 +374,19 @@ async def offer(request):
 
     # Only warm audio here, video warming happens after resolution update
     if "m=audio" in pc.remoteDescription.sdp:
-        await pipeline.warm_audio()
-    
-    # We no longer warm video here - it will be warmed after receiving resolution
+        await pipeline.warm_audio(
+            max_workers=1,
+            cwd=request.app["workspace"],
+            disable_cuda_malloc=True,
+            gpu_only=True,
+            preview_method='none'
+        )
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
-    return web.Response(
-        content_type="application/json",
-        text=json.dumps(
-            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
-        ),
+    return web.json_response(
+        {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
     )
 
 async def cancel_collect_frames(track):
@@ -389,11 +418,7 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
-        preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        comfyui_inference_log_level=app.get("comfui_inference_log_level", None)
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
@@ -404,6 +429,28 @@ async def on_shutdown(app: web.Application):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+
+
+async def unload_models(request):
+    """Unload all models from memory and release CUDA resources."""
+    try:
+        # Get the client from the request
+        pipeline = request.app.get("pipeline")
+        if not pipeline.client:
+            return web.json_response({"error": "No client available"}, status=500)
+
+        # Unload all models
+        await pipeline.client.unload_all_models()
+        
+        #comfy.model_management.unload_all_models()
+        
+        return web.json_response({
+            "success": True,
+            "message": "All models unloaded successfully"
+        })
+    except Exception as e:
+        logger.error(f"Error unloading models: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
 if __name__ == "__main__":
@@ -477,6 +524,7 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
+    app.router.add_post("/unload_models", unload_models)
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)

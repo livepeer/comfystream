@@ -22,7 +22,7 @@ class Pipeline:
     """
     
     def __init__(self, width: int = 512, height: int = 512, 
-                 comfyui_inference_log_level: Optional[int] = None, **kwargs):
+                 comfyui_inference_log_level: Optional[int] = None):
         """Initialize the pipeline with the given configuration.
         
         Args:
@@ -30,40 +30,73 @@ class Pipeline:
             height: Height of the video frames (default: 512)
             comfyui_inference_log_level: The logging level for ComfyUI inference.
                 Defaults to None, using the global ComfyUI log level.
-            **kwargs: Additional arguments to pass to the ComfyStreamClient
         """
-        self.client = ComfyStreamClient(**kwargs)
+        self.client = None
         self.width = width
         self.height = height
-
+        self._comfyui_inference_log_level = comfyui_inference_log_level
+        self._start_lock = asyncio.Lock()
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
-
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
-        self._comfyui_inference_log_level = comfyui_inference_log_level
-
-    async def warm_video(self):
-        """Warm up the video processing pipeline with dummy frames."""
-        # Create dummy frame with the CURRENT resolution settings
-        dummy_frame = av.VideoFrame()
-        dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+    async def start(self, prompts: Optional[Union[Dict[Any, Any], List[Dict[Any, Any]]]] = None, **client_kwargs):
+        """Start the pipeline by initializing the client if needed.
         
-        logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
+        Args:
+            prompts: Optional prompts to set after starting the pipeline
+            **client_kwargs: Arguments to pass to the ComfyStreamClient constructor.
+                These will override any previous client configuration.
+        
+        If the client is in a shutdown state or doesn't exist, this will create a new client.
+        Returns True if a new client was created, False otherwise.
+        """
+        async with self._start_lock:
+            needs_new_client = (
+                self.client is None or 
+                self.client.is_shutting_down or 
+                self.client._cleanup_lock.locked()
+            )
+            
+            if needs_new_client:
+                logger.info("Initializing new client for pipeline")
+                if self.client is not None:
+                    try:
+                        # Clean up the old client with a timeout
+                        await asyncio.wait_for(
+                            self.client.cleanup(exit_client=True),
+                            timeout=10.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Timeout during client cleanup, forcing new client creation")
+                    except Exception as e:
+                        logger.error(f"Error during client cleanup: {e}")
+                
+                # Create a new client with the provided configuration
+                self.client = ComfyStreamClient(**client_kwargs)
+                
+                # Set prompts if provided
+                if prompts is not None:
+                    if isinstance(prompts, list):
+                        await self.client.set_prompts(prompts)
+                    else:
+                        await self.client.set_prompts([prompts])
+                
+                return True
+            return False
 
-        for _ in range(WARMUP_RUNS):
-            self.client.put_video_input(dummy_frame)
-            await self.client.get_video_output()
-
-    async def warm_audio(self):
-        """Warm up the audio processing pipeline with dummy frames."""
-        dummy_frame = av.AudioFrame()
-        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
-        dummy_frame.sample_rate = 48000
-
-        for _ in range(WARMUP_RUNS):
-            self.client.put_audio_input(dummy_frame)
-            await self.client.get_audio_output()
+    async def stop(self):
+        """Stop the pipeline and clean up resources."""
+        if self.client is not None:
+            try:
+                await asyncio.wait_for(
+                    self.client.cleanup(exit_client=True),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Timeout during pipeline stop")
+            except Exception as e:
+                logger.error(f"Error stopping pipeline: {e}")
 
     async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Set the processing prompts for the pipeline.
@@ -71,6 +104,9 @@ class Pipeline:
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
         """
+        if self.client is None:
+            raise RuntimeError("Pipeline client not initialized. Call start() first.")
+            
         if isinstance(prompts, list):
             await self.client.set_prompts(prompts)
         else:
@@ -82,10 +118,23 @@ class Pipeline:
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
         """
+        if self.client is None:
+            raise RuntimeError("Pipeline client not initialized. Call start() first.")
+            
         if isinstance(prompts, list):
             await self.client.update_prompts(prompts)
         else:
             await self.client.update_prompts([prompts])
+
+    async def warm_video(self, **client_kwargs):
+        """Warm up the video processing pipeline."""
+        await self.start(**client_kwargs)
+        await self.client.warm_video(WARMUP_RUNS, width=self.width, height=self.height)
+        
+    async def warm_audio(self, **client_kwargs):
+        """Warm up the audio processing pipeline."""
+        await self.start(**client_kwargs)
+        await self.client.warm_audio(WARMUP_RUNS, sample_rate=48000, buffer_size=48000)
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -156,7 +205,6 @@ class Pipeline:
         """
         return av.AudioFrame.from_ndarray(np.repeat(output, 2).reshape(1, -1))
     
-    # TODO: make it generic to support purely generative video cases
     async def get_processed_video_frame(self) -> av.VideoFrame:
         """Get the next processed video frame.
         
@@ -207,4 +255,4 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        await self.stop() 
