@@ -48,8 +48,6 @@ RUN mkdir -p /workspace/comfystream && \
     conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
-ENV CACHEBUST=${CACHEBUST}
-
 # TensorRT SDK
 WORKDIR /opt
 RUN wget --progress=dot:giga \
@@ -59,7 +57,7 @@ RUN wget --progress=dot:giga \
 
 # Link libraries and update linker cache
 RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
-    && ldconfig && cat /etc/ld.so.conf.d/tensorrt.conf
+    && ldconfig
 
 # Install matching TensorRT Python bindings for CPython 3.11
 RUN conda run -n comfystream pip install --no-cache-dir \
