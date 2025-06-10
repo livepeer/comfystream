@@ -97,7 +97,7 @@ class ComfyStreamClient:
 
     async def warm_video(self, WARMUP_RUNS: int = 5, width: int = 512, height: int = 512):
         """Warm up the video processing pipeline with dummy frames."""
-        # Create dummy frame with the CURRENT resolution settings
+        # Create dummy frame with the current resolution settings
         dummy_frame = av.VideoFrame()
         dummy_frame.side_data.input = torch.randn(1, height, width, 3)
         
@@ -117,7 +117,7 @@ class ComfyStreamClient:
             self.put_audio_input(dummy_frame)
             await self.get_audio_output()
 
-    async def cleanup(self, exit_client: bool = False):
+    async def cleanup(self, exit_client: bool = False, unload_models: bool = True):
         """Clean up all resources and stop all tasks."""
         async with self.cleanup_lock:
             try:
@@ -136,14 +136,15 @@ class ComfyStreamClient:
                     await self.report_error(e)
                 
                 # Finally unload all models with timeout
-                try:
-                    await asyncio.wait_for(self.unload_all_models(), timeout=3.0)
-                    logger.info("Successfully unloaded all models")
-                except asyncio.TimeoutError:
-                    await self.report_error(Exception("Timeout while unloading models"))
-                except Exception as e:
-                    await self.report_error(e)
-                
+                if unload_models:
+                    try:
+                        await asyncio.wait_for(self.unload_all_models(), timeout=3.0)
+                        logger.info("Successfully unloaded all models")
+                    except asyncio.TimeoutError:
+                        await self.report_error(Exception("Timeout while unloading models"))
+                    except Exception as e:
+                        await self.report_error(e)
+                    
                 # Optionally fully exit the client
                 if exit_client and self.comfy_client.is_running:
                     # Dispose of the comfy_client
