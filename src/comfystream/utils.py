@@ -1,24 +1,62 @@
+"""
+ComfyStream utilities for prompt processing and ComfyUI integration
+"""
+import sys
 import copy
+import asyncio
+from typing import List, Dict, Any
+import logging
 
-from typing import Dict, Any
-from comfy.api.components.schema.prompt import Prompt, PromptDictInput
+logger = logging.getLogger(__name__)
 
+# Import ComfyStream modules
+from comfystream import tensor_cache
+from comfystream.comfy_loader import get_comfy_namespace, load_specific_module
 
-def create_load_tensor_node():
-    return {
-        "inputs": {},
-        "class_type": "LoadTensor",
-        "_meta": {"title": "LoadTensor"},
-    }
+# Setup comfy modules with complete namespace
+logger.info("Loading ComfyUI namespace...")
+try:
+    comfy = get_comfy_namespace()
+    logger.info("ComfyUI namespace loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to load ComfyUI namespace: {e}")
+    raise
 
+# Import specific ComfyUI components
+try:
+    # Load specific modules we need
+    schema_module = load_specific_module("comfy.api.components.schema.prompt")
+    cli_args_module = load_specific_module("comfy.cli_args_types") 
+    client_module = load_specific_module("comfy.client.embedded_comfy_client")
+    
+    # Import the classes we need
+    PromptDictInput = schema_module.PromptDictInput
+    Configuration = cli_args_module.Configuration
+    Comfy = client_module.Comfy
+    
+    logger.info("ComfyUI components imported successfully")
+except Exception as e:
+    logger.error(f"Failed to import ComfyUI components: {e}")
+    raise
 
-def create_save_tensor_node(inputs: Dict[Any, Any]):
-    return {
-        "inputs": inputs,
-        "class_type": "SaveTensor",
-        "_meta": {"title": "SaveTensor"},
-    }
-
+# Define Prompt class for validation (if not available from ComfyUI)
+class Prompt(dict):
+    """Prompt wrapper with validation"""
+    
+    @classmethod
+    def validate(cls, prompt_data):
+        """Validate prompt data structure"""
+        if not isinstance(prompt_data, dict):
+            raise ValueError("Prompt must be a dictionary")
+        
+        for node_id, node_data in prompt_data.items():
+            if not isinstance(node_data, dict):
+                raise ValueError(f"Node {node_id} must be a dictionary")
+            
+            if "class_type" not in node_data:
+                raise ValueError(f"Node {node_id} missing class_type")
+        
+        return cls(prompt_data)
 
 def convert_prompt(prompt: PromptDictInput) -> Prompt:
     # Validate the schema
@@ -85,3 +123,32 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     prompt = Prompt.validate(prompt)
 
     return prompt
+
+# Helper functions for prompt processing
+def create_load_tensor_node():
+    """Create a LoadTensor node for input processing"""
+    return {
+        "class_type": "LoadTensor",
+        "inputs": {}
+    }
+
+def create_save_tensor_node(original_inputs: Dict[str, Any]):
+    """Create a SaveTensor node for output processing"""
+    return {
+        "class_type": "SaveTensor", 
+        "inputs": original_inputs.copy() if original_inputs else {}
+    }
+
+def create_load_audio_tensor_node():
+    """Create a LoadAudioTensor node for audio input processing"""
+    return {
+        "class_type": "LoadAudioTensor",
+        "inputs": {}
+    }
+
+def create_save_audio_tensor_node(original_inputs: Dict[str, Any]):
+    """Create a SaveAudioTensor node for audio output processing"""
+    return {
+        "class_type": "SaveAudioTensor",
+        "inputs": original_inputs.copy() if original_inputs else {}
+    }

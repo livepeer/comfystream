@@ -1,21 +1,44 @@
 import asyncio
-from typing import List
+from pathlib import Path
+import sys
+import subprocess
+from typing import List, Dict, Any
 import logging
+import importlib.util
 
+# Import ComfyStream modules
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
+from comfystream.comfy_loader import get_comfy_namespace, load_specific_module
 
-from comfy.api.components.schema.prompt import PromptDictInput
-from comfy.cli_args_types import Configuration
-from comfy.client.embedded_comfy_client import EmbeddedComfyClient
-
+# Setup logging
 logger = logging.getLogger(__name__)
+
+# Load ComfyUI modules
+logger.info("Loading ComfyUI modules for client...")
+try:
+    comfy = get_comfy_namespace()
+    
+    # Load specific modules we need
+    schema_module = load_specific_module("comfy.api.components.schema.prompt")
+    cli_args_module = load_specific_module("comfy.cli_args_types")
+    client_module = load_specific_module("comfy.client.embedded_comfy_client")
+    
+    # Import the classes
+    PromptDictInput = schema_module.PromptDictInput
+    Configuration = cli_args_module.Configuration
+    Comfy = client_module.Comfy
+    
+    logger.info("ComfyUI modules loaded successfully for client")
+except Exception as e:
+    logger.error(f"Failed to load ComfyUI modules for client: {e}")
+    raise
 
 
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
         config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
+        self.comfy_client = Comfy(config, max_workers=max_workers)
         self.running_prompts = {} # To be used for cancelling tasks
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
@@ -109,13 +132,14 @@ class ComfyStreamClient:
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
-        # TODO: make it for for multiple prompts
+        # TODO: make it work for multiple prompts
         if not self.running_prompts:
             return {}
 
         try:
-            from comfy.nodes.package import import_all_nodes_in_workspace
-            nodes = import_all_nodes_in_workspace()
+            # Load nodes module using our loader
+            nodes_package_module = load_specific_module("comfy.nodes.package")
+            nodes = nodes_package_module.import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
             
@@ -225,7 +249,7 @@ class ComfyStreamClient:
                         nodes_info[node_id] = node_info
                         remaining_nodes.remove(node_id)
 
-                    all_prompts_nodes_info[prompt_index] = nodes_info
+                all_prompts_nodes_info[prompt_index] = nodes_info
 
             return all_prompts_nodes_info
 
