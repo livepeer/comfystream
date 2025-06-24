@@ -17,7 +17,9 @@ from .frame import (
 )
 from .trickle_publisher import TricklePublisher
 from .trickle_subscriber import TrickleSubscriber
-from .media import run_publish, simple_frame_publisher
+from .media import run_publish, simple_frame_publisher, enhanced_segment_publisher
+from .encoder import TrickleSegmentEncoder, TrickleMetadataExtractor
+from .decoder import TrickleSegmentDecoder, TrickleFrameConverter, TrickleStreamDecoder
 
 __all__ = [
     "VideoFrame",
@@ -32,4 +34,10 @@ __all__ = [
     "TrickleSubscriber",
     "run_publish",
     "simple_frame_publisher",
+    "enhanced_segment_publisher",
+    "TrickleSegmentEncoder",
+    "TrickleMetadataExtractor",
+    "TrickleSegmentDecoder",
+    "TrickleFrameConverter",
+    "TrickleStreamDecoder",
 ]

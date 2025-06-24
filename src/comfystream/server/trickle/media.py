@@ -6,6 +6,7 @@ import threading
 from typing import Callable, Any, Optional
 
 from .trickle_publisher import TricklePublisher
+from .encoder import TrickleMetadataExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ async def simple_frame_publisher(publish_url: str, frame_queue: asyncio.Queue):
         frame_queue: Queue containing frame data to publish
     """
     try:
-        publisher = TricklePublisher(url=publish_url, mime_type="video/mp2t")
+        publisher = TricklePublisher(url=publish_url, mime_type="video/mp4")
         
         logger.info(f"Starting frame publisher for {publish_url}")
         
@@ -204,6 +205,64 @@ async def simple_frame_publisher(publish_url: str, frame_queue: asyncio.Queue):
         
     except Exception as e:
         logger.error(f"Frame publisher error: {e}")
+    finally:
+        if publisher:
+            await publisher.close()
+
+async def enhanced_segment_publisher(publish_url: str, segment_queue: asyncio.Queue, 
+                                   add_metadata_headers: bool = True):
+    """
+    Enhanced segment publisher that publishes encoded segments with proper metadata.
+    
+    Args:
+        publish_url: URL to publish the stream to
+        segment_queue: Queue containing encoded segment data to publish
+        add_metadata_headers: Whether to extract and add metadata headers
+    """
+    try:
+        publisher = TricklePublisher(url=publish_url, mime_type="video/mp4")
+        
+        logger.info(f"Starting enhanced segment publisher for {publish_url}")
+        segment_count = 0
+        
+        while True:
+            try:
+                segment_data = await asyncio.wait_for(segment_queue.get(), timeout=1.0)
+                if segment_data is None:  # End of stream signal
+                    break
+                
+                segment_count += 1
+                
+                # Extract metadata for headers if requested
+                if add_metadata_headers and segment_data:
+                    try:
+                        metadata = TrickleMetadataExtractor.extract_segment_metadata(segment_data)
+                        headers = TrickleMetadataExtractor.create_segment_headers(metadata, segment_count)
+                        logger.debug(f"Segment {segment_count} metadata: {metadata}")
+                        # Note: Headers would be set on the publisher if the TricklePublisher supported them
+                        # For now, we log them for debugging
+                    except Exception as e:
+                        logger.warning(f"Failed to extract metadata for segment {segment_count}: {e}")
+                
+                # Publish the segment
+                async with await publisher.next() as segment:
+                    await segment.write(segment_data)
+                
+                logger.debug(f"Published segment {segment_count} ({len(segment_data)} bytes)")
+                
+                if segment_count % 10 == 0:  # Log every 10 segments
+                    logger.info(f"Published {segment_count} segments to {publish_url}")
+                    
+            except asyncio.TimeoutError:
+                continue  # Keep trying to get segments
+            except Exception as e:
+                logger.error(f"Error publishing segment {segment_count}: {e}")
+                break
+                
+        logger.info(f"Enhanced segment publisher finished - published {segment_count} segments")
+        
+    except Exception as e:
+        logger.error(f"Enhanced segment publisher error: {e}")
     finally:
         if publisher:
             await publisher.close() 

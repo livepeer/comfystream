@@ -32,6 +32,23 @@
                 "--host=0.0.0.0",
                 "--port=8889",
                 "--log-level=DEBUG",
+                "--mode=webrtc"
+            ],
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+        },
+        {
+            "name": "Run ComfyStream trickle",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/comfystream/server",
+            "program": "app.py",
+            "args": [
+                "--workspace=/workspace/ComfyUI",
+                "--media-ports=5678",
+                "--host=0.0.0.0",
+                "--port=8889",
+                "--log-level=DEBUG",
+                "--mode=trickle"
             ],
             "python": "/workspace/miniconda3/envs/comfystream/bin/python"
         },
@@ -41,6 +58,17 @@
             "request": "launch",
             "cwd": "/workspace/comfystream",
             "program": "example_byoc_server.py",
+            "args": [
+                "--workspace=/workspace/ComfyUI"
+            ],
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+        },
+        {
+            "name": "test_byoc_frame_processing",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/comfystream",
+            "program": "test_byoc_frame_processing.py",
             "args": [
                 "--workspace=/workspace/ComfyUI"
             ],
@@ -63,6 +91,24 @@
                 "action": "openExternally"
             }
         },
+        {
+            "name": "Test Trickle Workflow",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/comfystream",
+            "program": "test_trickle_workflow.py",
+            "args": [
+                "/workspace/ComfyUI",
+                "127.0.0.1"
+            ],
+            "console": "integratedTerminal",
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python",
+            "purpose": ["debug-test"],
+            "env": {
+                "PYTHONPATH": "/workspace/comfystream:/workspace/comfystream/src",
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            }
+        },
     ], "compounds": [
         {
             "name": "Run ComfyStream and UI",
@@ -71,6 +117,15 @@
             "configurations": [
                 "Run ComfyStream",
                 "Run ComfyStream UI (Node.js)"
+            ]
+        },
+        {
+            "name": "Run Trickle Server and Test",
+            "type": "composite",
+            "stopAll": true,
+            "configurations": [
+                "Run ComfyStream trickle",
+                "Test Trickle Workflow"
             ]
         }
     ]

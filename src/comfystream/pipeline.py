@@ -45,7 +45,7 @@ class Pipeline:
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
-        # Create dummy frame with the CURRENT resolution settings
+        # Create dummy frame with current resolution settings
         dummy_frame = av.VideoFrame()
         dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
         
