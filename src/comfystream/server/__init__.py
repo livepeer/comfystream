@@ -1,9 +1,9 @@
 """
 ComfyStream Server Module
 
-Provides server functionality for ComfyStream including BYOC (Bring Your Own Container) support.
+Provides server utility functionality for ComfyStream.
 """
 
-from .byoc_server import ComfyStreamBYOCServer, start_byoc_server
+# BYOC server has been moved to top-level server/ directory to resolve circular imports
 
-__all__ = ["ComfyStreamBYOCServer", "start_byoc_server"]
+__all__ = []

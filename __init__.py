@@ -31,6 +31,24 @@ ensure_init_files()
 WEB_DIRECTORY = "./nodes/web/js"
 
 # Import and expose node classes
-from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+try:
+    from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+except ImportError:
+    # Fallback for when running from different working directory context (e.g., BYOC server)
+    import sys
+    import os
+    
+    # Add the current directory to Python path to resolve relative imports
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
+    try:
+        from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+    except ImportError:
+        # If we still can't import, create empty mappings to prevent crashes
+        print(f"Warning: Could not import ComfyStream nodes from {current_dir}")
+        NODE_CLASS_MAPPINGS = {}
+        NODE_DISPLAY_NAME_MAPPINGS = {}
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS'] 

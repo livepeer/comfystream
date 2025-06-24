@@ -42,7 +42,7 @@ import signal
 import sys
 from pathlib import Path
 
-from src.comfystream.server import start_byoc_server
+from server.byoc_server import start_byoc_server
 
 # Configure logging
 logging.basicConfig(

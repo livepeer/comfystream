@@ -14,12 +14,13 @@ import uuid
 from typing import Dict, Optional, Any, List
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
+from comfystream.pipeline import Pipeline as ComfyPipeline
 
 from aiohttp import web, WSMsgType
 import aiohttp_cors
 
-from .trickle import TricklePublisher, simple_frame_publisher
-from .trickle.frame import VideoFrame, AudioFrame
+from comfystream.server.trickle import TricklePublisher, simple_frame_publisher
+from comfystream.server.trickle.frame import VideoFrame, AudioFrame
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,9 @@ class StreamManifest:
     status: str  # 'starting', 'active', 'stopping', 'stopped'
     pipeline: Optional[Any] = None
     publisher_task: Optional[asyncio.Task] = None
+    frame_processor_task: Optional[asyncio.Task] = None
     frame_queue: Optional[asyncio.Queue] = None
-    metadata: Dict[str, Any] = None
+    metadata: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -179,7 +181,6 @@ class ComfyStreamBYOCServer:
             raise ValueError("No stream URL provided for video output")
         
         # Create a pipeline for this request
-        from ..pipeline import Pipeline as ComfyPipeline
         pipeline = ComfyPipeline(
             width=width,
             height=height,
@@ -208,10 +209,11 @@ class ComfyStreamBYOCServer:
                 }
             )
             
-            # Start the streaming pipeline
-            stream_manifest.publisher_task = asyncio.create_task(
-                simple_frame_publisher(stream_url, stream_manifest.frame_queue)
-            )
+            # Start the streaming pipeline (frame_queue is guaranteed to exist at this point)
+            if stream_manifest.frame_queue is not None:
+                stream_manifest.publisher_task = asyncio.create_task(
+                    simple_frame_publisher(stream_url, stream_manifest.frame_queue)
+                )
             
             self.active_streams[manifest_id] = stream_manifest
             stream_manifest.status = 'active'
@@ -239,7 +241,6 @@ class ComfyStreamBYOCServer:
             raise ValueError("No prompts provided for image processing")
         
         # Create a pipeline for this request
-        from ..pipeline import Pipeline as ComfyPipeline
         pipeline = ComfyPipeline(
             width=width,
             height=height,
@@ -288,7 +289,6 @@ class ComfyStreamBYOCServer:
                 )
             
             # Create pipeline
-            from ..pipeline import Pipeline as ComfyPipeline
             pipeline = ComfyPipeline(
                 width=width,
                 height=height,
@@ -298,7 +298,13 @@ class ComfyStreamBYOCServer:
                 preview_method='none'
             )
             
+            # Set prompts and warm up pipeline
             await pipeline.set_prompts(prompts)
+            logger.info("Pipeline prompts set, warming up...")
+            
+            # Warm up the pipeline to ensure it's ready
+            await pipeline.warm_video()
+            logger.info("Pipeline warmed up successfully")
             
             # Create manifest
             manifest_id = str(uuid.uuid4())
@@ -316,12 +322,20 @@ class ComfyStreamBYOCServer:
                 }
             )
             
-            # Start streaming
-            stream_manifest.publisher_task = asyncio.create_task(
-                simple_frame_publisher(stream_url, stream_manifest.frame_queue)
+            # Store the manifest first
+            self.active_streams[manifest_id] = stream_manifest
+            
+            # Start the frame processing task BEFORE starting the publisher
+            stream_manifest.frame_processor_task = asyncio.create_task(
+                self._process_frames_for_stream(stream_manifest)
             )
             
-            self.active_streams[manifest_id] = stream_manifest
+            # Start streaming publisher (frame_queue is guaranteed to exist at this point)
+            if stream_manifest.frame_queue is not None:
+                stream_manifest.publisher_task = asyncio.create_task(
+                    simple_frame_publisher(stream_url, stream_manifest.frame_queue)
+                )
+            
             stream_manifest.status = 'active'
             
             logger.info(f"Started stream {manifest_id} to {stream_url}")
@@ -339,6 +353,55 @@ class ComfyStreamBYOCServer:
                 status=500
             )
     
+    async def _process_frames_for_stream(self, stream_manifest: StreamManifest):
+        """Process frames from pipeline and feed them to the frame queue"""
+        try:
+            pipeline = stream_manifest.pipeline
+            frame_queue = stream_manifest.frame_queue
+            
+            if frame_queue is None:
+                logger.error("Frame queue is None, cannot process frames")
+                return
+                
+            logger.info(f"Starting frame processing for stream {stream_manifest.manifest_id}")
+            
+            # Generate dummy frames for now - in a real implementation, 
+            # this would process actual video input through the pipeline
+            frame_count = 0
+            while stream_manifest.status == 'active':
+                try:
+                    # Create a simple test frame (in real implementation, this would be actual video processing)
+                    test_frame_data = f"Frame {frame_count} for stream {stream_manifest.manifest_id}\n".encode()
+                    
+                    # Put frame data into the queue
+                    await frame_queue.put(test_frame_data)
+                    
+                    frame_count += 1
+                    
+                    # Control frame rate (e.g., 30 FPS = ~33ms between frames)
+                    await asyncio.sleep(0.033)
+                    
+                    # For testing, limit to 300 frames (10 seconds at 30fps)
+                    if frame_count >= 300:
+                        break
+                        
+                except Exception as e:
+                    logger.error(f"Error processing frame {frame_count}: {e}")
+                    break
+            
+            # Signal end of stream
+            await frame_queue.put(None)
+            logger.info(f"Frame processing finished for stream {stream_manifest.manifest_id}")
+            
+        except Exception as e:
+            logger.error(f"Frame processor error for stream {stream_manifest.manifest_id}: {e}")
+            # Signal end of stream on error
+            try:
+                if stream_manifest.frame_queue is not None:
+                    await stream_manifest.frame_queue.put(None)
+            except:
+                pass
+    
     async def stop_stream(self, request: web.Request) -> web.Response:
         """Stop a streaming session by manifest ID"""
         manifest_id = request.match_info.get('manifest_id', '')
@@ -352,6 +415,14 @@ class ComfyStreamBYOCServer:
         try:
             stream_manifest = self.active_streams[manifest_id]
             stream_manifest.status = 'stopping'
+            
+            # Stop the frame processor task first
+            if stream_manifest.frame_processor_task:
+                stream_manifest.frame_processor_task.cancel()
+                try:
+                    await stream_manifest.frame_processor_task
+                except asyncio.CancelledError:
+                    pass
             
             # Stop the publisher task
             if stream_manifest.publisher_task:
@@ -485,6 +556,8 @@ class ComfyStreamBYOCServer:
             for manifest_id in list(self.active_streams.keys()):
                 try:
                     stream_manifest = self.active_streams[manifest_id]
+                    if stream_manifest.frame_processor_task:
+                        stream_manifest.frame_processor_task.cancel()
                     if stream_manifest.publisher_task:
                         stream_manifest.publisher_task.cancel()
                     if stream_manifest.pipeline:
@@ -501,20 +574,19 @@ class ComfyStreamBYOCServer:
             logger.error(f"Error stopping BYOC server: {e}")
             return False
 
-# Package method to start server
+
 async def start_byoc_server(workspace: str, host: str = "0.0.0.0", port: int = 5000) -> ComfyStreamBYOCServer:
-    """
-    Package method to start the ComfyStream BYOC server.
+    """Start a ComfyStream BYOC server instance
     
     Args:
-        workspace: Path to ComfyUI workspace
-        host: Host to bind to (default: "0.0.0.0")
-        port: Port to bind to (default: 5000)
+        workspace: Path to the ComfyUI workspace
+        host: Host address to bind to
+        port: Port number to bind to
         
     Returns:
-        ComfyStreamBYOCServer instance
+        The running ComfyStreamBYOCServer instance
     """
-    server = ComfyStreamBYOCServer(workspace=workspace, host=host, port=port)
+    server = ComfyStreamBYOCServer(workspace, host, port)
     success = await server.start()
     
     if not success:
