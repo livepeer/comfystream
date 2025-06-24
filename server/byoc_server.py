@@ -167,7 +167,7 @@ class ComfyStreamBYOCServer:
             logger.error(f"Error processing capability request: {e}")
             return web.Response(
                 status=500,
-                text=f"Internal server error: {str(e)}"
+                text="An internal server error has occurred. Please try again later."
             )
     
     async def _process_video_capability(self, request_data: Dict, header_data: Dict) -> Dict:
