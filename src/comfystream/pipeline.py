@@ -5,8 +5,8 @@ import asyncio
 import logging
 from typing import Any, Dict, Union, List, Optional
 
-from comfystream.client import ComfyStreamClient
-from comfystream.server.utils import temporary_log_level
+from .client import ComfyStreamClient
+from .server.utils import temporary_log_level
 
 WARMUP_RUNS = 5
 

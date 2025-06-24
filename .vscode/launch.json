@@ -36,6 +36,17 @@
             "python": "/workspace/miniconda3/envs/comfystream/bin/python"
         },
         {
+            "name": "Run BYOC Server",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/comfystream",
+            "program": "example_byoc_server.py",
+            "args": [
+                "--workspace=/workspace/ComfyUI"
+            ],
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+        },
+        {
             "name": "Run ComfyStream UI (Node.js)",
             "type": "node",
             "request": "launch",

@@ -1,9 +1,10 @@
 asyncio
 comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8
 aiortc
-aiohttp
-aiohttp_cors
+aiohttp>=3.8.0
+aiohttp-cors>=0.7.0
 toml
 twilio
 prometheus_client
 librosa
+Pillow>=9.0.0
