@@ -1279,6 +1279,7 @@ async def start_stream(request: web.Request) -> web.Response:
         input_stream_url = data.get('stream_url', '')  # Input trickle stream URL
         width = data.get('width', 512)
         height = data.get('height', 512)
+        manifest_id = data.get('gateway_request_id', str(uuid.uuid4()))
         
         # Optional output stream URL (defaults to auto-generated)
         output_stream_url = data.get('output_stream_url', '')
@@ -1311,7 +1312,7 @@ async def start_stream(request: web.Request) -> web.Response:
         logger.info("Pipeline prompts set successfully")
         
         # Create manifest
-        manifest_id = str(uuid.uuid4())
+        # manifest_id =
         
         # Generate output URL if not provided - use simple "-out" suffix
         if not output_stream_url:
@@ -1769,6 +1770,7 @@ if __name__ == "__main__":
     cors.add(app.router.add_delete("/stream/{manifest_id}", stop_stream))
     cors.add(app.router.add_get("/stream/{manifest_id}/status", get_stream_status))
     cors.add(app.router.add_get("/streams", list_streams))
+    # Simple text reversal endpoint for testing
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)
