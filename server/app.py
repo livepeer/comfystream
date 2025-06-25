@@ -7,13 +7,13 @@ import sys
 import time
 import secrets
 import torch
+import signal
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
     torch.cuda.empty_cache()
-
-
+    
 from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiohttp import web
@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
+# Global variable to track the app for signal handling
+app_instance = None
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
@@ -73,7 +75,7 @@ class VideoStreamTrack(MediaStreamTrack):
         # Add cleanup when track ends
         @track.on("ended")
         async def on_ended():
-            logger.info("Source video track ended, stopping collection")
+            logger.info("[App] Source video track ended, stopping collection")
             await cancel_collect_frames(self)
 
     async def collect_frames(self):
@@ -86,22 +88,22 @@ class VideoStreamTrack(MediaStreamTrack):
                     frame = await self.track.recv()
                     await self.pipeline.put_video_frame(frame)
                 except asyncio.CancelledError:
-                    logger.info("Frame collection cancelled")
+                    logger.info("[App] Frame collection cancelled")
                     break
                 except Exception as e:
                     if "MediaStreamError" in str(type(e)):
-                        logger.info("Media stream ended")
+                        logger.info("[App] Media stream ended")
                     else:
-                        logger.error(f"Error collecting video frames: {str(e)}")
+                        logger.error(f"[App] Error collecting video frames: {str(e)}")
                     self.running = False
                     break
             
             # Perform cleanup outside the exception handler
-            logger.info("Video frame collection stopped")
+            logger.info("[App] Video frame collection stopped")
         except asyncio.CancelledError:
-            logger.info("Frame collection task cancelled")
+            logger.info("[App] Frame collection task cancelled")
         except Exception as e:
-            logger.error(f"Unexpected error in frame collection: {str(e)}")
+            logger.error(f"[App] Unexpected error in frame collection: {str(e)}")
         finally:
             await self.pipeline.cleanup()
 
@@ -111,14 +113,15 @@ class VideoStreamTrack(MediaStreamTrack):
         """
         processed_frame = await self.pipeline.get_processed_video_frame()
 
-                # Update the frame buffer with the processed frame
+        # Update the frame buffer with the processed frame
         try:
             from frame_buffer import FrameBuffer
             frame_buffer = FrameBuffer.get_instance()
             frame_buffer.update_frame(processed_frame)
         except Exception as e:
             # Don't let frame buffer errors affect the main pipeline
-            print(f"Error updating frame buffer: {e}")
+            print(f"[App] Error updating frame buffer: {e}")
+
 
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
@@ -152,22 +155,22 @@ class AudioStreamTrack(MediaStreamTrack):
                     frame = await self.track.recv()
                     await self.pipeline.put_audio_frame(frame)
                 except asyncio.CancelledError:
-                    logger.info("Audio frame collection cancelled")
+                    logger.info("[App] Audio frame collection cancelled")
                     break
                 except Exception as e:
                     if "MediaStreamError" in str(type(e)):
-                        logger.info("Media stream ended")
+                        logger.info("[App] Media stream ended")
                     else:
-                        logger.error(f"Error collecting audio frames: {str(e)}")
+                        logger.error(f"[App] Error collecting audio frames: {str(e)}")
                     self.running = False
                     break
             
             # Perform cleanup outside the exception handler
-            logger.info("Audio frame collection stopped")
+            logger.info("[App] Audio frame collection stopped")
         except asyncio.CancelledError:
-            logger.info("Frame collection task cancelled")
+            logger.info("[App] Frame collection task cancelled")
         except Exception as e:
-            logger.error(f"Unexpected error in audio frame collection: {str(e)}")
+            logger.error(f"[App] Unexpected error in audio frame collection: {str(e)}")
         finally:
             await self.pipeline.cleanup()
 
@@ -302,16 +305,16 @@ async def offer(request):
                         channel.send(json.dumps(response))
                     else:
                         logger.warning(
-                            "[Server] Invalid message format - missing required fields"
+                            "[App] Invalid message format - missing required fields"
                         )
                 except json.JSONDecodeError:
-                    logger.error("[Server] Invalid JSON received")
+                    logger.error("[App] Invalid JSON received")
                 except Exception as e:
-                    logger.error(f"[Server] Error processing message: {str(e)}")
+                    logger.error(f"[App] Error processing message: {str(e)}")
 
     @pc.on("track")
     def on_track(track):
-        logger.info(f"Track received: {track.kind}")
+        logger.info(f"[App] Track received: {track.kind}")
         if track.kind == "video":
             videoTrack = VideoStreamTrack(track, pipeline)
             tracks["video"] = videoTrack
@@ -330,12 +333,12 @@ async def offer(request):
 
         @track.on("ended")
         async def on_ended():
-            logger.info(f"{track.kind} track ended")
+            logger.info(f"[App] {track.kind} track ended")
             request.app["video_tracks"].pop(track.id, None)
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
-        logger.info(f"Connection state is: {pc.connectionState}")
+        logger.info(f"[App] Connection state is: {pc.connectionState}")
         if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
@@ -377,7 +380,7 @@ async def set_prompt(request):
     await pipeline.set_prompts(prompt)
 
     return web.Response(content_type="application/json", text="OK")
-    
+
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
@@ -390,22 +393,97 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
+        max_workers=app["workers"],
         cwd=app["workspace"], 
         disable_cuda_malloc=True, 
         gpu_only=True, 
         preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
-        frame_log_file=app.get("frame_log_file", None),
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
 
 
 async def on_shutdown(app: web.Application):
+    logger.info("Starting server shutdown...")
+    
+    # Clean up pipeline first - this should terminate worker processes
+    if "pipeline" in app:
+        try:
+            await app["pipeline"].cleanup()
+            logger.info("Pipeline cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during pipeline cleanup: {e}")
+    
+    # Clean up peer connections
     pcs = app["pcs"]
-    coros = [pc.close() for pc in pcs]
-    await asyncio.gather(*coros)
-    pcs.clear()
+    if pcs:
+        logger.info(f"Closing {len(pcs)} peer connections...")
+        coros = [pc.close() for pc in pcs]
+        await asyncio.gather(*coros, return_exceptions=True)
+        pcs.clear()
+        logger.info("Peer connections closed")
+    
+    logger.info("Server shutdown completed")
+
+
+def signal_handler(signum, frame):
+    """Handle SIGINT (Ctrl+C) gracefully"""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    
+    if app_instance:
+        # Get the current event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule the shutdown coroutine
+                asyncio.create_task(shutdown_server())
+            else:
+                # If no loop is running, run the shutdown directly
+                asyncio.run(shutdown_server())
+        except RuntimeError:
+            # If we can't get the loop, force cleanup and exit
+            logger.warning("Could not get event loop, forcing cleanup and exit")
+            force_cleanup_and_exit()
+    else:
+        logger.warning("No app instance found, forcing exit")
+        os._exit(1)
+
+def force_cleanup_and_exit():
+    """Force cleanup of processes and exit"""
+    try:
+        # Try to cleanup the pipeline synchronously
+        if app_instance and "pipeline" in app_instance:
+            pipeline = app_instance["pipeline"]
+            if hasattr(pipeline, 'client') and hasattr(pipeline.client, 'comfy_client'):
+                # Force shutdown of the executor
+                if hasattr(pipeline.client.comfy_client, 'executor'):
+                    executor = pipeline.client.comfy_client.executor
+                    if hasattr(executor, 'shutdown'):
+                        logger.info("Force shutting down executor...")
+                        executor.shutdown(wait=False)
+                    if hasattr(executor, '_processes'):
+                        # Terminate all worker processes
+                        for process in executor._processes:
+                            if process.is_alive():
+                                logger.info(f"Terminating worker process {process.pid}")
+                                process.terminate()
+    except Exception as e:
+        logger.error(f"Error in force cleanup: {e}")
+    finally:
+        os._exit(1)
+
+async def shutdown_server():
+    """Perform graceful server shutdown"""
+    try:
+        if app_instance:
+            await on_shutdown(app_instance)
+        logger.info("Graceful shutdown completed")
+    except Exception as e:
+        logger.error(f"Error during graceful shutdown: {e}")
+    finally:
+        # Force exit after cleanup attempt
+        os._exit(0)
 
 
 if __name__ == "__main__":
@@ -454,8 +532,19 @@ if __name__ == "__main__":
         default=None,
         help="Filename for frame timing log (optional)"
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of workers to run",
+    )
     args = parser.parse_args()
 
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, signal_handler)
+    
     logging.basicConfig(
         level=args.log_level.upper(),
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -463,9 +552,9 @@ if __name__ == "__main__":
     )
 
     app = web.Application()
+    app_instance = app  # Store reference for signal handler
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
-    app["frame_log_file"] = args.frame_log_file
 
     # Setup CORS
     cors = setup_cors(app, defaults={
@@ -476,6 +565,7 @@ if __name__ == "__main__":
             allow_methods=["GET", "POST", "OPTIONS"]
         )
     })
+    app["workers"] = args.workers
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -486,7 +576,7 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
-    
+
     # Setup HTTP streaming routes
     setup_routes(app, cors)
     
@@ -525,6 +615,17 @@ if __name__ == "__main__":
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
     if args.comfyui_inference_log_level:
-        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+        log_level = logging._nameToLevel.get(args.comfyui_inference_log_level.upper())
+        app["comfyui_inference_log_level"] = log_level
 
-    web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    try:
+        web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    except KeyboardInterrupt:
+        logger.info("Received KeyboardInterrupt, shutting down...")
+    finally:
+        # Ensure cleanup happens even if web.run_app doesn't call on_shutdown
+        if app_instance:
+            try:
+                asyncio.run(on_shutdown(app_instance))
+            except Exception as e:
+                logger.error(f"Error in final cleanup: {e}")
