@@ -1,0 +1,31 @@
+services:
+  orchestrator:
+    image: livepeer/go-livepeer:latest
+    container_name: byoc_orchestrator
+    command: "-network arbitrum-one-mainnet -orchestrator -ethUrl http://arb.eliteencoder.net:3517 -ethPassword secret-password -pricePerUnit 0 -serviceAddr=byoc_orchestrator:8935 -orchSecret=orch-secret -v 6"
+    ports:
+      - 8936:8936
+  gateway:
+    image: livepeer/go-livepeer:latest
+    container_name: byoc_gateway
+    command: "-network arbitrum-one-mainnet -gateway -ethUrl http://arb.eliteencoder.net:3517 -ethPassword secret-password -ignoreMaxPriceIfNeeded=true -orchAddr=byoc_orchestrator:8935 -httpAddr=0.0.0.0:8937 -httpIngest -v 6"
+    ports:
+      - 8937:8937
+    depends_on:
+      - orchestrator
+  comfystream:
+    image: byoc_reverse_text
+    container_name: byoc_reverse_text
+    ports:
+      - 8889:8889
+    depends_on:
+      - orchestrator
+  register_capability:
+    image: byoc_register_capability
+    container_name: byoc_register_capability
+    depends_on: 
+      - comfystream
+
+networks:
+  default:
+    name: byoc_livepeer_network

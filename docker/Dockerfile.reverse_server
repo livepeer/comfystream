@@ -1,0 +1,14 @@
+ARG	BASE_IMAGE=livepeer/comfyui-base:runner
+FROM	${BASE_IMAGE}
+
+RUN pip install flask
+
+WORKDIR /workspace/comfystream
+
+RUN conda run -n comfystream pip install -e .
+
+COPY server/app.py .
+
+EXPOSE 8889
+
+CMD ["conda", "run", "-n", "comfystream", "--no-capture-output", "python", "server//app.py", "--workspace=/workspace/ComfyUI", "--media-ports=5678", "--host=0.0.0.0", "--port=8889", "--log-level=DEBUG", "--mode=trickle"]
