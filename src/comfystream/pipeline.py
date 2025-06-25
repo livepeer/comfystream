@@ -260,12 +260,8 @@ class Pipeline:
         Returns:
             The processed video frame
         """
-
-        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
-            out_tensor = await self.client.get_video_output()
+        # Get input frame
         frame = await self.video_incoming_frames.get()
-        while frame.side_data.skipped:
-            frame = await self.video_incoming_frames.get()
         
         # Get any available output (don't match input to output)
         try:

@@ -298,7 +298,7 @@ class ComfyStreamClient:
 
     async def get_video_output(self):
         try:
-            logger.debug(f"[ComfyStreamClient] get_video_output called - PID: {os.getpid()}")
+            # logger.info(f"[ComfyStreamClient] get_video_output called - PID: {os.getpid()}")
             tensor = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(None, self.image_outputs.get),
                 timeout=5.0
