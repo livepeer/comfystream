@@ -15,9 +15,9 @@ from .frame import (
     DEFAULT_WIDTH,
     DEFAULT_HEIGHT,
 )
-from .trickle_publisher import TricklePublisher
-from .trickle_subscriber import TrickleSubscriber
-from .media import run_publish, simple_frame_publisher, enhanced_segment_publisher
+from .trickle_publisher import TricklePublisher, SegmentWriter
+from .trickle_subscriber import TrickleSubscriber, SegmentReader
+from .media import run_publish, simple_frame_publisher, enhanced_segment_publisher, high_throughput_segment_publisher
 from .encoder import TrickleSegmentEncoder, TrickleMetadataExtractor
 from .decoder import TrickleSegmentDecoder, TrickleFrameConverter, TrickleStreamDecoder
 
@@ -31,10 +31,13 @@ __all__ = [
     "DEFAULT_WIDTH",
     "DEFAULT_HEIGHT",
     "TricklePublisher",
+    "SegmentWriter",
     "TrickleSubscriber",
+    "SegmentReader",
     "run_publish",
     "simple_frame_publisher",
     "enhanced_segment_publisher",
+    "high_throughput_segment_publisher",
     "TrickleSegmentEncoder",
     "TrickleMetadataExtractor",
     "TrickleSegmentDecoder",

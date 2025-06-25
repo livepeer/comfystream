@@ -182,7 +182,7 @@ async def simple_frame_publisher(publish_url: str, frame_queue: asyncio.Queue):
         frame_queue: Queue containing frame data to publish
     """
     try:
-        publisher = TricklePublisher(url=publish_url, mime_type="video/mp4")
+        publisher = TricklePublisher(url=publish_url, mime_type="video/mp2t")  # MPEG-TS format
         
         logger.info(f"Starting frame publisher for {publish_url}")
         
@@ -212,57 +212,174 @@ async def simple_frame_publisher(publish_url: str, frame_queue: asyncio.Queue):
 async def enhanced_segment_publisher(publish_url: str, segment_queue: asyncio.Queue, 
                                    add_metadata_headers: bool = True):
     """
-    Enhanced segment publisher that publishes encoded segments with proper metadata.
+    Enhanced segment publisher that publishes encoded segments with proper metadata and optimized timing.
     
     Args:
         publish_url: URL to publish the stream to
-        segment_queue: Queue containing encoded segment data to publish
+        segment_queue: Queue containing encoded segment data to publish (may be tuples or bytes)
         add_metadata_headers: Whether to extract and add metadata headers
     """
     try:
-        publisher = TricklePublisher(url=publish_url, mime_type="video/mp4")
+        publisher = TricklePublisher(url=publish_url, mime_type="video/mp2t")  # MPEG-TS format
         
         logger.info(f"Starting enhanced segment publisher for {publish_url}")
         segment_count = 0
         
         while True:
             try:
-                segment_data = await asyncio.wait_for(segment_queue.get(), timeout=1.0)
-                if segment_data is None:  # End of stream signal
+                # Reduced timeout for faster processing - don't wait too long for segments
+                segment_item = await asyncio.wait_for(segment_queue.get(), timeout=0.1)
+                if segment_item is None:  # End of stream signal
                     break
+                
+                # Handle both tuple format (segment_id, segment_data) and bytes format
+                if isinstance(segment_item, tuple) and len(segment_item) == 2:
+                    segment_id, segment_data = segment_item
+                    use_custom_id = True
+                    logger.debug(f"Received segment {segment_id} with ID preservation")
+                else:
+                    segment_data = segment_item
+                    segment_id = segment_count
+                    use_custom_id = False
+                
+                # Ensure segment_data is bytes
+                if not isinstance(segment_data, bytes):
+                    logger.error(f"Expected bytes for segment data, got {type(segment_data)}")
+                    continue
                 
                 segment_count += 1
                 
-                # Extract metadata for headers if requested
+                # Extract metadata for headers if requested (only on bytes!)
                 if add_metadata_headers and segment_data:
                     try:
                         metadata = TrickleMetadataExtractor.extract_segment_metadata(segment_data)
-                        headers = TrickleMetadataExtractor.create_segment_headers(metadata, segment_count)
-                        logger.debug(f"Segment {segment_count} metadata: {metadata}")
+                        headers = TrickleMetadataExtractor.create_segment_headers(metadata, segment_id)
+                        logger.debug(f"Segment {segment_id} metadata: {metadata}")
                         # Note: Headers would be set on the publisher if the TricklePublisher supported them
                         # For now, we log them for debugging
                     except Exception as e:
-                        logger.warning(f"Failed to extract metadata for segment {segment_count}: {e}")
+                        logger.warning(f"Failed to extract metadata for segment {segment_id}: {e}")
                 
-                # Publish the segment
-                async with await publisher.next() as segment:
-                    await segment.write(segment_data)
-                
-                logger.debug(f"Published segment {segment_count} ({len(segment_data)} bytes)")
-                
-                if segment_count % 10 == 0:  # Log every 10 segments
-                    logger.info(f"Published {segment_count} segments to {publish_url}")
+                # Publish the segment (ensure only bytes are passed!)
+                if use_custom_id and hasattr(publisher, 'publish_segment_at_index'):
+                    # Use specific segment ID publishing
+                    await publisher.publish_segment_at_index(segment_data, segment_id)
+                    logger.debug(f"Published segment {segment_id} with custom ID")
+                else:
+                    # Use regular sequential publishing
+                    async with await publisher.next() as segment:
+                        await segment.write(segment_data)  # Only pass bytes here!
+                    
+                    if use_custom_id:
+                        logger.debug(f"Published segment {segment_id} sequentially")
+                    else:
+                        logger.debug(f"Published MPEG-TS segment {segment_count} ({len(segment_data)} bytes)")
                     
             except asyncio.TimeoutError:
-                continue  # Keep trying to get segments
+                # Don't log timeout messages as they're normal when no segments are available
+                continue  
             except Exception as e:
-                logger.error(f"Error publishing segment {segment_count}: {e}")
-                break
+                logger.error(f"Error publishing segment: {e}")
+                # Don't break the loop, continue trying to publish other segments
+                continue
                 
-        logger.info(f"Enhanced segment publisher finished - published {segment_count} segments")
+        logger.info(f"Enhanced segment publisher finished: {segment_count} segments published")
         
     except Exception as e:
         logger.error(f"Enhanced segment publisher error: {e}")
+    finally:
+        if publisher:
+            await publisher.close()
+
+async def high_throughput_segment_publisher(publish_url: str, segment_queue: asyncio.Queue, 
+                                          max_fps: float = 30.0, skip_frame_on_backlog: bool = True):
+    """
+    High-throughput segment publisher optimized for maximum FPS and minimal latency.
+    
+    Implements frame skipping when queue backs up to maintain real-time performance.
+    
+    Args:
+        publish_url: URL to publish the stream to
+        segment_queue: Queue containing encoded segment data to publish
+        max_fps: Maximum frames per second to publish
+        skip_frame_on_backlog: Whether to skip segments when queue backs up
+    """
+    try:
+        publisher = TricklePublisher(url=publish_url, mime_type="video/mp2t")
+        
+        logger.info(f"Starting high-throughput segment publisher for {publish_url} (max {max_fps} fps)")
+        
+        segment_count = 0
+        skipped_count = 0
+        min_segment_interval = 1.0 / max_fps  # Minimum time between segments
+        last_publish_time = 0
+        
+        while True:
+            try:
+                # Very short timeout to maximize responsiveness
+                segment_item = await asyncio.wait_for(segment_queue.get(), timeout=0.05)
+                if segment_item is None:  # End of stream signal
+                    break
+                
+                current_time = time.time()
+                
+                # Handle both tuple and bytes format
+                if isinstance(segment_item, tuple) and len(segment_item) == 2:
+                    segment_id, segment_data = segment_item
+                else:
+                    segment_data = segment_item
+                    segment_id = segment_count
+                
+                # Ensure segment_data is bytes
+                if not isinstance(segment_data, bytes):
+                    logger.error(f"Expected bytes for segment data, got {type(segment_data)}")
+                    continue
+                
+                # Check if we should skip this segment due to rate limiting or backlog
+                time_since_last = current_time - last_publish_time
+                queue_size = segment_queue.qsize()
+                
+                if skip_frame_on_backlog and queue_size > 3:
+                    # Queue is backing up, skip this segment to catch up
+                    skipped_count += 1
+                    logger.debug(f"Skipping segment {segment_id} due to queue backlog ({queue_size} segments)")
+                    continue
+                
+                if time_since_last < min_segment_interval and last_publish_time > 0:
+                    # Publishing too fast, skip this segment to maintain frame rate
+                    skipped_count += 1
+                    logger.debug(f"Skipping segment {segment_id} to maintain {max_fps} fps limit")
+                    continue
+                
+                # Publish the segment
+                try:
+                    async with await publisher.next() as segment:
+                        await segment.write(segment_data)
+                    
+                    segment_count += 1
+                    last_publish_time = current_time
+                    
+                    # Log progress periodically
+                    if segment_count % 30 == 0:  # Every 30 segments
+                        actual_fps = 1.0 / time_since_last if time_since_last > 0 else 0
+                        logger.info(f"Published {segment_count} segments (skipped {skipped_count}), "
+                                  f"current FPS: {actual_fps:.1f}, queue size: {queue_size}")
+                    
+                except Exception as e:
+                    logger.error(f"Error publishing segment {segment_id}: {e}")
+                    continue
+                    
+            except asyncio.TimeoutError:
+                # Normal when no segments available, continue
+                continue
+            except Exception as e:
+                logger.error(f"Error in high-throughput publisher loop: {e}")
+                continue
+                
+        logger.info(f"High-throughput segment publisher finished: {segment_count} segments published, {skipped_count} skipped")
+        
+    except Exception as e:
+        logger.error(f"High-throughput segment publisher error: {e}")
     finally:
         if publisher:
             await publisher.close() 

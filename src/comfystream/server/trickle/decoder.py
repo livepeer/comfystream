@@ -27,6 +27,79 @@ class TrickleSegmentDecoder:
         self.last_width = None
         self.last_height = None
         self.last_fps = None
+    
+    def _get_stream_fps(self, video_stream) -> float:
+        """
+        Get frame rate from video stream using PyAV version-compatible approach.
+        
+        Args:
+            video_stream: PyAV video stream object
+            
+        Returns:
+            Frame rate as float, defaults to 30.0 if not found
+        """
+        try:
+            # Try different attributes based on PyAV version
+            
+            # PyAV 8.x and newer: average_rate
+            if hasattr(video_stream, 'average_rate') and video_stream.average_rate:
+                return float(video_stream.average_rate)
+            
+            # PyAV 7.x and some versions: rate  
+            if hasattr(video_stream, 'rate') and video_stream.rate:
+                return float(video_stream.rate)
+            
+            # Fallback: try to get from time_base
+            if hasattr(video_stream, 'time_base') and video_stream.time_base:
+                # Convert time_base to fps (time_base is typically 1/fps)
+                if video_stream.time_base.denominator > 0:
+                    calculated_fps = float(video_stream.time_base.denominator) / float(video_stream.time_base.numerator)
+                    if 1.0 <= calculated_fps <= 120.0:  # Reasonable fps range
+                        return calculated_fps
+            
+            # Try codec context
+            if hasattr(video_stream, 'codec_context'):
+                codec_ctx = video_stream.codec_context
+                
+                # Try various codec context attributes
+                if hasattr(codec_ctx, 'framerate') and codec_ctx.framerate:
+                    return float(codec_ctx.framerate)
+                
+                if hasattr(codec_ctx, 'time_base') and codec_ctx.time_base:
+                    if codec_ctx.time_base.denominator > 0:
+                        calculated_fps = float(codec_ctx.time_base.denominator) / float(codec_ctx.time_base.numerator)
+                        if 1.0 <= calculated_fps <= 120.0:
+                            return calculated_fps
+            
+            # Last resort: check stream metadata
+            if hasattr(video_stream, 'metadata'):
+                metadata = video_stream.metadata
+                if 'r_frame_rate' in metadata:
+                    try:
+                        rate_str = metadata['r_frame_rate']
+                        if '/' in rate_str:
+                            num, den = rate_str.split('/')
+                            if int(den) > 0:
+                                return float(num) / float(den)
+                    except (ValueError, ZeroDivisionError):
+                        pass
+                        
+                if 'avg_frame_rate' in metadata:
+                    try:
+                        rate_str = metadata['avg_frame_rate']
+                        if '/' in rate_str:
+                            num, den = rate_str.split('/')
+                            if int(den) > 0:
+                                return float(num) / float(den)
+                    except (ValueError, ZeroDivisionError):
+                        pass
+            
+            logger.warning(f"Could not determine frame rate from video stream, using default 24.0 fps")
+            return 24.0
+            
+        except Exception as e:
+            logger.warning(f"Error getting stream fps: {e}, using default 24.0")
+            return 24.0
         
     def decode_segment(self, segment_data: bytes) -> List[av.VideoFrame]:
         """
@@ -53,14 +126,18 @@ class TrickleSegmentDecoder:
             video_stream = None
             if container.streams.video:
                 video_stream = container.streams.video[0]
+                
+                # Get frame rate using PyAV version-compatible approach
+                fps = self._get_stream_fps(video_stream)
+                
                 logger.debug(f"Found video stream: {video_stream.codec_context.name}, "
                            f"{video_stream.width}x{video_stream.height}, "
-                           f"fps: {float(video_stream.average_rate)}")
+                           f"fps: {fps}")
                 
                 # Store metadata for consistency
                 self.last_width = video_stream.width
                 self.last_height = video_stream.height
-                self.last_fps = float(video_stream.average_rate)
+                self.last_fps = fps
             else:
                 logger.warning("No video stream found in segment")
                 container.close()
@@ -110,13 +187,17 @@ class TrickleSegmentDecoder:
             video_stream = None
             if container.streams.video:
                 video_stream = container.streams.video[0]
+                
+                # Get frame rate using PyAV version-compatible approach
+                fps = self._get_stream_fps(video_stream)
+                
                 logger.debug(f"Found video stream: {video_stream.codec_context.name}, "
                            f"{video_stream.width}x{video_stream.height}")
                 
                 # Store metadata for consistency
                 self.last_width = video_stream.width
                 self.last_height = video_stream.height
-                self.last_fps = float(video_stream.average_rate)
+                self.last_fps = fps
             else:
                 logger.warning("No video stream found in segment")
                 container.close()
@@ -191,12 +272,16 @@ class TrickleSegmentDecoder:
             # Get video stream info
             if container.streams.video:
                 video_stream = container.streams.video[0]
+                
+                # Get frame rate using PyAV version-compatible approach
+                fps = self._get_stream_fps(video_stream)
+                
                 info.update({
                     'video_codec': video_stream.codec_context.name,
                     'width': video_stream.width,
                     'height': video_stream.height,
-                    'fps': float(video_stream.average_rate),
-                    'time_base': [video_stream.time_base.numerator, video_stream.time_base.denominator],
+                    'fps': fps,
+                    'time_base': [video_stream.time_base.numerator, video_stream.time_base.denominator] if video_stream.time_base else [1, 30],
                     'estimated_frames': video_stream.frames if hasattr(video_stream, 'frames') else None
                 })
             
