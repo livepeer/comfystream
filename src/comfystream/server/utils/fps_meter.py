@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from collections import deque
+from typing import Optional
 from comfystream.server.metrics import MetricsManager
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 class FPSMeter:
     """Class to calculate and store the framerate of a stream by counting frames."""
 
-    def __init__(self, metrics_manager: MetricsManager, track_id: str):
+    def __init__(self, metrics_manager: Optional[MetricsManager], track_id: str):
         """Initializes the FPSMeter class."""
         self._lock = asyncio.Lock()
         self._fps_interval_frame_count = 0
@@ -52,7 +53,8 @@ class FPSMeter:
                 self._fps_interval_frame_count = 0
 
             # Update Prometheus metrics if enabled.
-            self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
+            if self._metrics_manager is not None:
+                self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
 
             await asyncio.sleep(1)  # Calculate FPS every second.
 
