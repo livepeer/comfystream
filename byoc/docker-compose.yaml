@@ -14,14 +14,18 @@ services:
     depends_on:
       - orchestrator
   comfystream:
-    image: byoc_reverse_text
+    build:
+      context: ..
+      dockerfile: byoc/Dockerfile.reverse_server
     container_name: byoc_reverse_text
     ports:
       - 8889:8889
     depends_on:
       - orchestrator
   register_capability:
-    image: byoc_register_capability
+    build:
+      context: ..
+      dockerfile: byoc/Dockerfile.register_capability
     container_name: byoc_register_capability
     depends_on: 
       - comfystream

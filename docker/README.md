@@ -6,6 +6,8 @@ This folder contains the Docker files that can be used to run ComfyStream in a c
 
 - [Dockerfile](Dockerfile) - The main Dockerfile that can be used to run ComfyStream in a containerized fashion.
 - [Dockerfile.base](Dockerfile.base) - The base Dockerfile that can be used to build the base image for ComfyStream.
+- Main Docker files for ComfyStream containerization
+- BYOC files are located in the top-level `byoc/` directory
 
 ## Pre-requisites
 
@@ -19,7 +21,7 @@ This folder contains the Docker files that can be used to run ComfyStream in a c
 To build the base image, run the following command:
 
 ```bash
-docker build -t livepeer/comfyui-base -f docker/Dockerfile.base .
+docker build -t livepeer/comfyui-base:runner -f docker/Dockerfile.base .
 ```
 
 ### Build the Main Image
@@ -49,3 +51,21 @@ There are multiple options that can be passed to the Comfystream server. To see 
 ```bash
 docker run --gpus all livepeer/comfystream --help
 ```
+
+## BYOC (Bring Your Own Compute) Setup
+
+For Livepeer BYOC integration, use the docker-compose setup:
+
+```bash
+# Start the complete BYOC environment
+cd byoc
+docker-compose up --build
+```
+
+This provides:
+- **Livepeer Orchestrator** (port 8936) - Manages compute resources
+- **Livepeer Gateway** (port 8937) - HTTP ingest endpoint  
+- **ComfyStream Server** (port 8889) - AI video processing with trickle streaming
+- **Capability Registration** - Automatically registers ComfyStream with the orchestrator
+
+For detailed BYOC documentation, see [../byoc/BUILD.md](../byoc/BUILD.md).
