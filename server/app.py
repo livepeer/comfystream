@@ -393,19 +393,19 @@ async def process_capability_request(request: web.Request) -> web.Response:
                 'original': text,
                 'reversed': reversed_text
             }
+            return web.json_response(result)
         elif capability == "comfystream-video":
-            # Process video through ComfyStream pipeline
-            result = await _process_video_capability(request, request_data, header_data)
+            # Process video through ComfyStream pipeline - return response directly
+            return await start_stream(request)
         elif capability == "comfystream-image":
             # Process image through ComfyStream pipeline
             result = await _process_image_capability(request, request_data, header_data)
+            return web.json_response(result)
         else:
             return web.Response(
                 status=404,
                 text=f"Unknown capability: {capability}"
             )
-        
-        return web.json_response(result)
         
     except Exception as e:
         logger.error(f"Error processing capability request: {e}")
@@ -413,79 +413,6 @@ async def process_capability_request(request: web.Request) -> web.Response:
             status=500,
             text="An internal server error has occurred. Please try again later."
         )
-
-
-async def _process_video_capability(request: web.Request, request_data: Dict, header_data: Dict) -> Dict:
-    """Process video through ComfyStream pipeline with trickle streaming"""
-    
-    # Extract prompts and configuration
-    prompts = request_data.get('prompts', [])
-    width = request_data.get('width', 512)
-    height = request_data.get('height', 512)
-    stream_url = request_data.get('stream_url', '')
-    
-    if not prompts:
-        raise ValueError("No prompts provided for video processing")
-        
-    if not stream_url:
-        raise ValueError("No stream URL provided for video output")
-    
-    # Create a pipeline for this request
-    pipeline = Pipeline(
-        width=width,
-        height=height,
-        cwd=request.app["workspace"],
-        disable_cuda_malloc=True,
-        gpu_only=True,
-        preview_method='none',
-        comfyui_inference_log_level=request.app.get("comfui_inference_log_level", None),
-    )
-    
-    try:
-        await pipeline.set_prompts(prompts)
-        
-        # Create manifest for tracking
-        manifest_id = str(uuid.uuid4())
-        stream_manifest = StreamManifest(
-            manifest_id=manifest_id,
-            input_stream_url="",  # Will be set based on the request
-            output_stream_url=stream_url,
-            created_at=datetime.now(),
-            status='starting',
-            pipeline=pipeline,
-            frame_queue=asyncio.Queue(),
-            metadata={
-                'width': width,
-                'height': height,
-                'capability': 'comfystream-video'
-            }
-        )
-        
-        # Start the streaming pipeline
-        if stream_manifest.frame_queue is not None:
-            stream_manifest.publisher_task = asyncio.create_task(
-                high_throughput_segment_publisher(
-                    stream_manifest.output_stream_url, 
-                    stream_manifest.frame_queue, 
-                    max_fps=24.0,  # Match segmenter FPS
-                    skip_frame_on_backlog=True
-                )
-            )
-        
-        request.app["active_streams"][manifest_id] = stream_manifest
-        stream_manifest.status = 'active'
-        
-        return {
-            'success': True,
-            'manifest_id': manifest_id,
-            'stream_url': stream_url,
-            'message': 'Video processing pipeline started'
-        }
-        
-    except Exception as e:
-        await pipeline.cleanup()
-        raise e
-
 
 async def _process_image_capability(request: web.Request, request_data: Dict, header_data: Dict) -> Dict:
     """Process image through ComfyStream pipeline"""
@@ -1359,12 +1286,13 @@ async def start_stream(request: web.Request) -> web.Response:
         )
         
         # Start streaming publisher with timing control for smooth playback
+        # Should match segmenter FPS
         if stream_manifest.frame_queue is not None:
             stream_manifest.publisher_task = asyncio.create_task(
                 high_throughput_segment_publisher(
                     stream_manifest.output_stream_url, 
                     stream_manifest.frame_queue, 
-                    max_fps=24.0,  # Match segmenter FPS
+                    max_fps=24.0,
                     skip_frame_on_backlog=True
                 )
             )

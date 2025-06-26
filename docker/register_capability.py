@@ -3,8 +3,8 @@ import requests, time
 #note: price is 0 for the capability registered so will be able to use with wallets with no eth deposit/reserve
 #      if price is set above 0 will need to use an on chain Orchestrator and a Gateway with a Deposit/Reserve
 data = {
-   "name": "comfystream-runner",
-   "url": "http://byoc_reverse_text:5000",
+   "name": "comfystream-video",
+   "url": "http://byoc_reverse_text:8889",
    "capacity": 1,
    "price_per_unit": 0,
    "price_scaling": 1,
