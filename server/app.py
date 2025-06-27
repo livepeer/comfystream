@@ -25,6 +25,8 @@ from aiortc import (
 )
 # Import HTTP streaming modules
 from http_streaming.routes import setup_routes
+# Import WHIP handler
+from whip_handler import setup_whip_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
@@ -404,6 +406,10 @@ async def on_shutdown(app: web.Application):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    
+    # Clean up WHIP resources
+    if 'whip_handler' in app:
+        await app['whip_handler'].cleanup_all_resources()
 
 
 if __name__ == "__main__":
@@ -480,6 +486,9 @@ if __name__ == "__main__":
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)
+    
+    # Setup WHIP routes
+    setup_whip_routes(app, cors, get_ice_servers, VideoStreamTrack, AudioStreamTrack)
     
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
