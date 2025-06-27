@@ -24,6 +24,7 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 
 from comfystream.pipeline import Pipeline
+from comfystream.utils import DEFAULT_PROMPT
 # FPSMeter import not needed for WHIP handler currently
 # from comfystream.server.utils import FPSMeter
 
@@ -102,7 +103,9 @@ class WHIPHandler:
                     prompts = json.loads(query_params['prompts'])
                 except json.JSONDecodeError:
                     logger.warning("Invalid prompts parameter, using empty prompts")
-            
+            else:
+                prompts = [json.loads(DEFAULT_PROMPT)]
+                    
             # Create WebRTC peer connection
             ice_servers = self.get_ice_servers()
             if ice_servers:
@@ -126,7 +129,7 @@ class WHIPHandler:
             # Set prompts if provided
             if prompts:
                 await pipeline.set_prompts(prompts)
-            
+
             # Generate unique resource ID
             resource_id = self.generate_resource_id()
             
@@ -191,8 +194,9 @@ class WHIPHandler:
             h264.MIN_BITRATE = MIN_BITRATE
             
             # Warm up pipeline
-            if "m=audio" in offer_sdp:
-                await pipeline.warm_audio()
+            # TODO: support concurrent audio inference, no need to warm audio pipeline
+            #if "m=audio" in offer_sdp:
+                #await pipeline.warm_audio()
             if "m=video" in offer_sdp:
                 await pipeline.warm_video()
             
