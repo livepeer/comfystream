@@ -27,7 +27,7 @@ RUN mkdir -p /workspace/comfystream && \
     wget "https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}-Linux-x86_64.sh" -O /tmp/miniconda.sh && \
     bash /tmp/miniconda.sh -b -p /workspace/miniconda3 && \
     eval "$(/workspace/miniconda3/bin/conda shell.bash hook)" && \
-    conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=7.1.1 -c conda-forge -y && \
+    conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
 # Copy ComfyStream files into ComfyUI
@@ -45,8 +45,8 @@ COPY ./configs /workspace/comfystream/configs
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 
-# Install pytorch nightlies
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install --pre --force torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+# Install pytorch for cuda 12.8
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install --force torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # Install ComfyUI requirements
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
