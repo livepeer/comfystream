@@ -1,3 +1,4 @@
+import json
 import av
 import torch
 import numpy as np
@@ -7,6 +8,7 @@ from typing import Any, Dict, Union, List, Optional
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+from comfystream.utils import DEFAULT_PROMPT
 
 WARMUP_RUNS = 5
 
@@ -64,13 +66,17 @@ class Pipeline:
         for _ in range(WARMUP_RUNS):
             self.client.put_audio_input(dummy_frame)
             await self.client.get_audio_output()
-
+            
     async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Set the processing prompts for the pipeline.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dictionary or a list of prompt dictionaries.
+                    If an empty list is provided, uses default prompts from DEFAULT_PROMPT
         """
+        if prompts == []:
+            prompts = [json.loads(DEFAULT_PROMPT)]
+        
         if isinstance(prompts, list):
             await self.client.set_prompts(prompts)
         else:

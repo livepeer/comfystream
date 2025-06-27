@@ -18,6 +18,30 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
         "class_type": "SaveTensor",
         "_meta": {"title": "SaveTensor"},
     }
+DEFAULT_PROMPT = """
+{
+  "1": {
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "SaveTensor",
+    "_meta": {
+      "title": "SaveTensor"
+    }
+  },
+  "2": {
+    "inputs": {},
+    "class_type": "LoadTensor",
+    "_meta": {
+      "title": "LoadTensor"
+    }
+  }
+}
+"""
+
 
 
 def convert_prompt(prompt: PromptDictInput) -> Prompt:
