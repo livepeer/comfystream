@@ -19,8 +19,24 @@ RUN apt update && apt install -yqq \
     nano \
     socat \
     libsndfile1 \
-    build-essential llvm tk-dev && \
-    rm -rf /var/lib/apt/lists/*
+    build-essential \
+    llvm \
+    tk-dev \
+    libglvnd-dev \
+    cmake \
+    swig \ 
+    libprotobuf-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+#enable opengl support with nvidia gpu
+RUN printf '%s\n' \
+  '{' \
+  '    "file_format_version" : "1.0.0",' \
+  '    "ICD" : {' \
+  '        "library_path" : "libEGL_nvidia.so.0"' \
+  '    }' \
+  '}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 # Conda setup
 RUN mkdir -p /workspace/comfystream && \
@@ -30,8 +46,20 @@ RUN mkdir -p /workspace/comfystream && \
     conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
-# Copy ComfyStream files into ComfyUI
-COPY . /workspace/comfystream
+# TensorRT SDK
+WORKDIR /opt
+RUN wget --progress=dot:giga \
+    https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.9.0/tars/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz \
+    && tar -xzf TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz \
+    && rm TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz
+
+# Link libraries and update linker cache
+RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
+    && ldconfig
+
+# Install matching TensorRT Python bindings for CPython 3.11
+RUN conda run -n comfystream pip install --no-cache-dir \
+    ${TensorRT_ROOT}/python/tensorrt-10.9.0.34-cp311-none-linux_x86_64.whl
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
@@ -39,7 +67,6 @@ RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/Comfy
 # Copy only files needed for setup
 COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
 COPY ./configs /workspace/comfystream/configs
-
 
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
@@ -56,11 +83,15 @@ RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --root-user-action=ignore
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
 
+# Accept a build-arg that lets CI force-invalidate setup_nodes.py
+ARG CACHEBUST=static
+ENV CACHEBUST=${CACHEBUST}
+
 # Run setup_nodes
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
 
 # Install additional dependencies
-RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings tensorrt-cu12-libs --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 --root-user-action=ignore
 
 # Setup opencv with CUDA support
 RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda-build-blackwell
