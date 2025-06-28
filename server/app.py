@@ -27,6 +27,8 @@ from aiortc import (
 from http_streaming.routes import setup_routes
 # Import WHIP handler
 from whip_handler import setup_whip_routes
+# Import WHEP handler
+from whep_handler import setup_whep_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
@@ -121,6 +123,14 @@ class VideoStreamTrack(MediaStreamTrack):
             # Don't let frame buffer errors affect the main pipeline
             print(f"Error updating frame buffer: {e}")
 
+        # Update WHEP stream manager with the processed frame
+        try:
+            if 'whep_handler' in app and app['whep_handler'].stream_manager:
+                await app['whep_handler'].stream_manager.update_video_frame(processed_frame)
+        except Exception as e:
+            # Don't let WHEP errors affect the main pipeline
+            print(f"Error updating WHEP stream manager: {e}")
+
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
 
@@ -173,7 +183,17 @@ class AudioStreamTrack(MediaStreamTrack):
             await self.pipeline.cleanup()
 
     async def recv(self):
-        return await self.pipeline.get_processed_audio_frame()
+        processed_frame = await self.pipeline.get_processed_audio_frame()
+        
+        # Update WHEP stream manager with the processed audio frame
+        try:
+            if 'whep_handler' in app and app['whep_handler'].stream_manager:
+                await app['whep_handler'].stream_manager.update_audio_frame(processed_frame)
+        except Exception as e:
+            # Don't let WHEP errors affect the main pipeline
+            print(f"Error updating WHEP audio stream manager: {e}")
+        
+        return processed_frame
 
 
 def force_codec(pc, sender, forced_codec):
@@ -201,6 +221,20 @@ def get_twilio_token():
 def get_ice_servers():
     ice_servers = []
 
+    # Add default STUN servers
+    default_stun_servers = [
+        "stun:stun.l.google.com:19302",
+        "stun:stun.cloudflare.com:3478", 
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302"
+    ]
+    
+    for stun_url in default_stun_servers:
+        stun_server = RTCIceServer(urls=[stun_url])
+        ice_servers.append(stun_server)
+
+    # Add Twilio TURN servers if available
     token = get_twilio_token()
     if token is not None:
         # Use Twilio TURN servers
@@ -410,6 +444,10 @@ async def on_shutdown(app: web.Application):
     # Clean up WHIP resources
     if 'whip_handler' in app:
         await app['whip_handler'].cleanup_all_resources()
+        
+    # Clean up WHEP resources
+    if 'whep_handler' in app:
+        await app['whep_handler'].cleanup_all_resources()
 
 
 if __name__ == "__main__":
@@ -489,6 +527,9 @@ if __name__ == "__main__":
     
     # Setup WHIP routes
     setup_whip_routes(app, cors, get_ice_servers, VideoStreamTrack, AudioStreamTrack)
+    
+    # Setup WHEP routes
+    setup_whep_routes(app, cors, get_ice_servers)
     
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
