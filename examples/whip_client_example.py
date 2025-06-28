@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import requests
+from typing import Optional
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from aiortc.contrib.media import MediaPlayer
 
@@ -27,7 +28,7 @@ class WHIPClient:
         self.pc = None
         self.resource_url = None
         
-    async def publish(self, media_source: str = None):
+    async def publish(self, media_source: Optional[str] = None):
         """Publish media to WHIP endpoint."""
         try:
             # Create peer connection
