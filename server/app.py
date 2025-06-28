@@ -542,6 +542,89 @@ if __name__ == "__main__":
     app.router.add_get(
         "/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id
     )
+    
+    # Add processing readiness status endpoint for WHEP clients
+    async def processing_status_handler(request):
+        """Endpoint for WHEP clients to check if processed streams are ready."""
+        try:
+            status = {
+                "processing_ready": False,
+                "whip_sessions": 0,
+                "whep_sessions": 0,
+                "active_pipelines": 0,
+                "frames_available": False,
+                "message": "No active processing"
+            }
+            
+            # Check WHIP sessions (incoming streams)
+            whip_sessions = {}
+            if 'whip_handler' in app:
+                whip_sessions = app['whip_handler'].get_active_sessions()
+                status["whip_sessions"] = len(whip_sessions)
+            
+            # Check WHEP sessions (outgoing streams)
+            whep_sessions = {}
+            if 'whep_handler' in app:
+                whep_sessions = app['whep_handler'].get_active_sessions()
+                status["whep_sessions"] = len(whep_sessions)
+            
+            # Check if there are active processing pipelines
+            active_pipelines = 0
+            frames_available = False
+            
+            for session_id, session in whip_sessions.items():
+                if session.get('connection_state') == 'connected' and session.get('has_video'):
+                    active_pipelines += 1
+                    
+            # Check if frame buffer has frames available
+            try:
+                from frame_buffer import FrameBuffer
+                frame_buffer = FrameBuffer.get_instance()
+                if hasattr(frame_buffer, 'has_frames') and frame_buffer.has_frames():
+                    frames_available = True
+            except:
+                # Frame buffer not available or no frames
+                pass
+            
+            # Check WHEP stream manager for available frames
+            if 'whep_handler' in app and app['whep_handler'].stream_manager:
+                if (app['whep_handler'].stream_manager.latest_video_frame is not None):
+                    frames_available = True
+            
+            status["active_pipelines"] = active_pipelines
+            status["frames_available"] = frames_available
+            
+            # Determine overall readiness
+            if active_pipelines > 0 and frames_available:
+                status["processing_ready"] = True
+                status["message"] = f"Processing ready - {active_pipelines} active pipeline(s) with frames available"
+            elif active_pipelines > 0:
+                status["processing_ready"] = False
+                status["message"] = f"Processing warming up - {active_pipelines} pipeline(s) starting"
+            elif status["whip_sessions"] > 0:
+                status["processing_ready"] = False
+                status["message"] = "WHIP sessions active but no connected pipelines yet"
+            else:
+                status["processing_ready"] = False
+                status["message"] = "No active WHIP sessions - start publishing first"
+            
+            # Add detailed session info
+            status["details"] = {
+                "whip_sessions": whip_sessions,
+                "whep_sessions": whep_sessions
+            }
+            
+            return web.json_response(status)
+            
+        except Exception as e:
+            logger.error(f"Error in processing status handler: {e}")
+            return web.json_response({
+                "processing_ready": False,
+                "error": str(e),
+                "message": "Error checking processing status"
+            }, status=500)
+    
+    cors.add(app.router.add_get("/processing/status", processing_status_handler))
 
     # Add Prometheus metrics endpoint.
     app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
