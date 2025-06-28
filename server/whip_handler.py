@@ -258,7 +258,7 @@ class WHIPHandler:
             logger.error(f"WHIP: Error handling POST request: {e}")
             return web.Response(
                 status=500,
-                text=f"Internal server error: {str(e)}",
+                text="An internal server error occurred.",
                 content_type="text/plain"
             )
     
@@ -291,7 +291,7 @@ class WHIPHandler:
             logger.error(f"WHIP: Error handling DELETE request: {e}")
             return web.Response(
                 status=500,
-                text=f"Internal server error: {str(e)}",
+                text="An internal server error occurred.",
                 content_type="text/plain"
             )
     
@@ -318,7 +318,7 @@ class WHIPHandler:
             logger.error(f"WHIP: Error handling PATCH request: {e}")
             return web.Response(
                 status=500,
-                text=f"Internal server error: {str(e)}",
+                text="An internal server error occurred.",
                 content_type="text/plain"
             ) 
     
@@ -355,7 +355,7 @@ class WHIPHandler:
             logger.error(f"WHIP: Error handling OPTIONS request: {e}")
             return web.Response(
                 status=500,
-                text=f"Internal server error: {str(e)}",
+                text="An internal server error occurred.",
                 content_type="text/plain"
             )
     
