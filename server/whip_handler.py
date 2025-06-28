@@ -104,7 +104,7 @@ class WHIPHandler:
                 except json.JSONDecodeError:
                     logger.warning("Invalid prompts parameter, using empty prompts")
             else:
-                prompts = [json.loads(DEFAULT_PROMPT)]
+                prompts = json.loads(DEFAULT_PROMPT)
                     
             # Create WebRTC peer connection
             ice_servers = self.get_ice_servers()
@@ -372,8 +372,11 @@ class WHIPHandler:
         if resource_id in self.resources:
             resource = self.resources[resource_id]
             await resource.cleanup()
-            del self.resources[resource_id]
+            # Remove from resources dict (prevent race condition)
+            self.resources.pop(resource_id, None)
             logger.info(f"WHIP: Cleaned up resource {resource_id}")
+        else:
+            logger.debug(f"WHIP: Resource {resource_id} already cleaned up")
     
     async def cleanup_all_resources(self):
         """Clean up all WHIP resources."""
