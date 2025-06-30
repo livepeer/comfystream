@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04 \
+ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 \
     CONDA_VERSION=latest \
     PYTHON_VERSION=3.11
 
@@ -7,26 +7,24 @@ FROM "${BASE_IMAGE}"
 ARG CONDA_VERSION \
     PYTHON_VERSION
 
-ENV TensorRT_ROOT=/opt/TensorRT-10.9.0.34 \
-    DEBIAN_FRONTEND=noninteractive \
+ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
 
 # System dependencies
-RUN apt update && apt install -yqq --no-install-recommends \
+RUN apt update && apt install -yqq \
     git \
     wget \
     nano \
     socat \
     libsndfile1 \
     build-essential \
-    \
     llvm \
     tk-dev \
     libglvnd-dev \
     cmake \
-    swig \
+    swig \ 
     libprotobuf-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -51,9 +49,9 @@ RUN mkdir -p /workspace/comfystream && \
 # TensorRT SDK
 WORKDIR /opt
 RUN wget --progress=dot:giga \
-    https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.9.0/tars/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz \
-    && tar -xzf TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz \
-    && rm TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz
+    https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.12.0/tars/TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.8.tar.gz \
+    && tar -xzf TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.8.tar.gz \
+    && rm TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.8.tar.gz
 
 # Link libraries and update linker cache
 RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
@@ -61,7 +59,7 @@ RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
 
 # Install matching TensorRT Python bindings for CPython 3.11
 RUN conda run -n comfystream pip install --no-cache-dir \
-    ${TensorRT_ROOT}/python/tensorrt-10.9.0.34-cp311-none-linux_x86_64.whl
+    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp311-none-linux_x86_64.whl
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
@@ -76,6 +74,9 @@ COPY . /workspace/comfystream
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
+
+# Install pytorch for cuda 12.8
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install --force torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # Install ComfyUI requirements
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
@@ -93,10 +94,10 @@ ENV CACHEBUST=${CACHEBUST}
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
 
 # Install additional dependencies
-RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings==10.12.0.36 tensorrt-cu12-libs==10.12.0.36 --root-user-action=ignore
 
 # Setup opencv with CUDA support
-RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda
+RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda-build-blackwell
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \

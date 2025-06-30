@@ -1,4 +1,4 @@
-ARG	BASE_IMAGE=livepeer/comfyui-base:latest
+ARG	BASE_IMAGE=livepeer/comfyui-base:blackwell
 
 FROM	${BASE_IMAGE}
 
@@ -25,16 +25,9 @@ ENV	NODE_PATH="$NVM_DIR/v$NODE_VERSION/lib/node_modules" \
 
 # Create the supervisor configuration file for ComfyUI and ComfyStream
 COPY	docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY    --chmod=0755	docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
-
-WORKDIR	/workspace/comfystream/ui
-RUN npm install
-RUN	npm run build
-
-# Restore .gitkeep file after ui build for devcontainer users
-RUN touch /workspace/comfystream/nodes/web/static/.gitkeep
 
 WORKDIR	/workspace/comfystream
+COPY --chmod=0755	docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
 
 EXPOSE	8188	8889	3000
 EXPOSE	1024-65535/udp
