@@ -1,0 +1,16 @@
+ARG	BASE_IMAGE=livepeer/comfyui-base:feat-byoc-api
+FROM	${BASE_IMAGE}
+
+RUN pip install flask
+
+WORKDIR /workspace/comfystream
+
+# Refresh the comfystream package for convenience, then re-run editable install
+COPY server ./server
+COPY src ./src
+COPY nodes ./nodes
+RUN conda run -n comfystream --no-capture-output pip install -e .
+
+EXPOSE 8889
+
+CMD ["conda", "run", "-n", "comfystream", "--cwd", "/workspace/comfystream", "--no-capture-output", "python", "server/app.py", "--workspace=/workspace/ComfyUI", "--media-ports=5678", "--host=0.0.0.0", "--port=8889", "--log-level=DEBUG"]

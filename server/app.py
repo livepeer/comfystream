@@ -29,6 +29,8 @@ from http_streaming.routes import setup_routes
 from whip_handler import setup_whip_routes
 # Import WHEP handler
 from whep_handler import setup_whep_routes
+# Import BYOC handler
+from byoc_handler import setup_byoc_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
@@ -448,6 +450,10 @@ async def on_shutdown(app: web.Application):
     # Clean up WHEP resources
     if 'whep_handler' in app:
         await app['whep_handler'].cleanup_all_resources()
+        
+    # Clean up BYOC resources
+    if 'byoc_handler' in app:
+        await app['byoc_handler'].cleanup_all_sessions()
 
 
 if __name__ == "__main__":
@@ -530,6 +536,9 @@ if __name__ == "__main__":
     
     # Setup WHEP routes
     setup_whep_routes(app, cors, get_ice_servers)
+    
+    # Setup BYOC routes
+    setup_byoc_routes(app, cors, get_ice_servers, VideoStreamTrack, AudioStreamTrack)
     
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
