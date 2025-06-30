@@ -25,6 +25,10 @@ from aiortc import (
 )
 # Import HTTP streaming modules
 from http_streaming.routes import setup_routes
+# Import WHIP handler
+from whip_handler import setup_whip_routes
+# Import WHEP handler
+from whep_handler import setup_whep_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
@@ -119,6 +123,14 @@ class VideoStreamTrack(MediaStreamTrack):
             # Don't let frame buffer errors affect the main pipeline
             print(f"Error updating frame buffer: {e}")
 
+        # Update WHEP stream manager with the processed frame
+        try:
+            if 'whep_handler' in app and app['whep_handler'].stream_manager:
+                await app['whep_handler'].stream_manager.update_video_frame(processed_frame)
+        except Exception as e:
+            # Don't let WHEP errors affect the main pipeline
+            print(f"Error updating WHEP stream manager: {e}")
+
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
 
@@ -171,7 +183,17 @@ class AudioStreamTrack(MediaStreamTrack):
             await self.pipeline.cleanup()
 
     async def recv(self):
-        return await self.pipeline.get_processed_audio_frame()
+        processed_frame = await self.pipeline.get_processed_audio_frame()
+        
+        # Update WHEP stream manager with the processed audio frame
+        try:
+            if 'whep_handler' in app and app['whep_handler'].stream_manager:
+                await app['whep_handler'].stream_manager.update_audio_frame(processed_frame)
+        except Exception as e:
+            # Don't let WHEP errors affect the main pipeline
+            print(f"Error updating WHEP audio stream manager: {e}")
+        
+        return processed_frame
 
 
 def force_codec(pc, sender, forced_codec):
@@ -199,6 +221,20 @@ def get_twilio_token():
 def get_ice_servers():
     ice_servers = []
 
+    # Add default STUN servers
+    default_stun_servers = [
+        "stun:stun.l.google.com:19302",
+        "stun:stun.cloudflare.com:3478", 
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302"
+    ]
+    
+    for stun_url in default_stun_servers:
+        stun_server = RTCIceServer(urls=[stun_url])
+        ice_servers.append(stun_server)
+
+    # Add Twilio TURN servers if available
     token = get_twilio_token()
     if token is not None:
         # Use Twilio TURN servers
@@ -404,6 +440,14 @@ async def on_shutdown(app: web.Application):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    
+    # Clean up WHIP resources
+    if 'whip_handler' in app:
+        await app['whip_handler'].cleanup_all_resources()
+        
+    # Clean up WHEP resources
+    if 'whep_handler' in app:
+        await app['whep_handler'].cleanup_all_resources()
 
 
 if __name__ == "__main__":
@@ -481,6 +525,12 @@ if __name__ == "__main__":
     # Setup HTTP streaming routes
     setup_routes(app, cors)
     
+    # Setup WHIP routes
+    setup_whip_routes(app, cors, get_ice_servers, VideoStreamTrack, AudioStreamTrack)
+    
+    # Setup WHEP routes
+    setup_whep_routes(app, cors, get_ice_servers)
+    
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
 
@@ -492,6 +542,89 @@ if __name__ == "__main__":
     app.router.add_get(
         "/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id
     )
+    
+    # Add processing readiness status endpoint for WHEP clients
+    async def processing_status_handler(request):
+        """Endpoint for WHEP clients to check if processed streams are ready."""
+        try:
+            status = {
+                "processing_ready": False,
+                "whip_sessions": 0,
+                "whep_sessions": 0,
+                "active_pipelines": 0,
+                "frames_available": False,
+                "message": "No active processing"
+            }
+            
+            # Check WHIP sessions (incoming streams)
+            whip_sessions = {}
+            if 'whip_handler' in app:
+                whip_sessions = app['whip_handler'].get_active_sessions()
+                status["whip_sessions"] = len(whip_sessions)
+            
+            # Check WHEP sessions (outgoing streams)
+            whep_sessions = {}
+            if 'whep_handler' in app:
+                whep_sessions = app['whep_handler'].get_active_sessions()
+                status["whep_sessions"] = len(whep_sessions)
+            
+            # Check if there are active processing pipelines
+            active_pipelines = 0
+            frames_available = False
+            
+            for session_id, session in whip_sessions.items():
+                if session.get('connection_state') == 'connected' and session.get('has_video'):
+                    active_pipelines += 1
+                    
+            # Check if frame buffer has frames available
+            try:
+                from frame_buffer import FrameBuffer
+                frame_buffer = FrameBuffer.get_instance()
+                if hasattr(frame_buffer, 'has_frames') and frame_buffer.has_frames():
+                    frames_available = True
+            except:
+                # Frame buffer not available or no frames
+                pass
+            
+            # Check WHEP stream manager for available frames
+            if 'whep_handler' in app and app['whep_handler'].stream_manager:
+                if (app['whep_handler'].stream_manager.latest_video_frame is not None):
+                    frames_available = True
+            
+            status["active_pipelines"] = active_pipelines
+            status["frames_available"] = frames_available
+            
+            # Determine overall readiness
+            if active_pipelines > 0 and frames_available:
+                status["processing_ready"] = True
+                status["message"] = f"Processing ready - {active_pipelines} active pipeline(s) with frames available"
+            elif active_pipelines > 0:
+                status["processing_ready"] = False
+                status["message"] = f"Processing warming up - {active_pipelines} pipeline(s) starting"
+            elif status["whip_sessions"] > 0:
+                status["processing_ready"] = False
+                status["message"] = "WHIP sessions active but no connected pipelines yet"
+            else:
+                status["processing_ready"] = False
+                status["message"] = "No active WHIP sessions - start publishing first"
+            
+            # Add detailed session info
+            status["details"] = {
+                "whip_sessions": whip_sessions,
+                "whep_sessions": whep_sessions
+            }
+            
+            return web.json_response(status)
+            
+        except Exception as e:
+            logger.error(f"Error in processing status handler: {e}")
+            return web.json_response({
+                "processing_ready": False,
+                "error": str(e),
+                "message": "Error checking processing status"
+            }, status=500)
+    
+    cors.add(app.router.add_get("/processing/status", processing_status_handler))
 
     # Add Prometheus metrics endpoint.
     app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
