@@ -15,6 +15,7 @@ import tempfile
 import os
 from typing import Dict, Optional, Any
 from urllib.parse import urlparse
+from whep_handler import ProcessedStreamTrack
 
 from aiohttp import web
 from aiortc import (
@@ -33,20 +34,23 @@ logger = logging.getLogger(__name__)
 class BYOCProcessingSession:
     """Represents an active BYOC processing session."""
     
-    def __init__(self, session_id: str, capability: str, pipeline: Pipeline):
+    def __init__(self, session_id: str, capability: str, pipeline: Optional[Pipeline]):
         self.session_id = session_id
         self.capability = capability
         self.pipeline = pipeline
         self.created_at = time.time()
         self.status = "processing"
-        self.result = None
-        self.error = None
+        self.result: Optional[Dict[str, Any]] = None
+        self.error: Optional[str] = None
+        self.pc: Optional[RTCPeerConnection] = None
         
     async def cleanup(self):
         """Clean up the processing session."""
         try:
             if self.pipeline:
                 await self.pipeline.cleanup()
+            if self.pc:
+                await self.pc.close()
         except Exception as e:
             logger.error(f"Error during BYOC session cleanup: {e}")
 
@@ -65,30 +69,43 @@ class BYOCHandler:
         return secrets.token_urlsafe(32)
     
     async def handle_process_request(self, request: web.Request) -> web.Response:
-        """Handle BYOC process/request/{capability} endpoint."""
+        """Handle BYOC process requests from go-livepeer orchestrators."""
         try:
-            capability = request.match_info.get('capability')
-            if not capability:
+            # Extract capability from URL path
+            path_parts = request.path.strip('/').split('/')
+            if len(path_parts) < 3 or path_parts[1] != 'request':
                 return web.Response(
                     status=400,
-                    text=json.dumps({"error": "Missing capability parameter"}),
+                    text=json.dumps({"error": "Invalid path format"}),
                     content_type="application/json"
                 )
             
-            # Parse request body
-            try:
+            capability = path_parts[2]
+            session_id = secrets.token_urlsafe(16)
+            
+            logger.info(f"BYOC: Processing {capability} request with session {session_id}")
+            
+            # Parse request data - handle both JSON and raw SDP
+            request_data = {}
+            content_type = request.headers.get('content-type', '').lower()
+            
+            if content_type.startswith('application/sdp'):
+                # Raw SDP request
+                sdp_data = await request.text()
+                request_data = {"sdp_offer": sdp_data}
+                logger.info(f"BYOC: Received raw SDP request for {capability}")
+            elif content_type.startswith('application/json'):
+                # JSON request
                 request_data = await request.json()
-            except Exception as e:
-                return web.Response(
-                    status=400,
-                    text=json.dumps({"error": f"Invalid JSON: {str(e)}"}),
-                    content_type="application/json"
-                )
-            
-            # Generate session ID
-            session_id = self.generate_session_id()
-            
-            logger.info(f"BYOC: Processing request for capability '{capability}' (session: {session_id})")
+                logger.info(f"BYOC: Received JSON request for {capability}")
+            else:
+                # Try to parse as JSON first, then fall back to SDP
+                try:
+                    request_data = await request.json()
+                except:
+                    # Assume it's raw SDP
+                    sdp_data = await request.text()
+                    request_data = {"sdp_offer": sdp_data}
             
             # Handle different capability types
             if capability == "comfystream-video":
@@ -252,10 +269,10 @@ class BYOCHandler:
                 nonlocal video_track, audio_track
                 logger.info(f"BYOC WHIP: Track received: {track.kind}")
                 
-                if track.kind == "video":
+                if track.kind == "video" and self.VideoStreamTrack:
                     video_track = self.VideoStreamTrack(track, pipeline)
                     pc.addTrack(video_track)
-                elif track.kind == "audio":
+                elif track.kind == "audio" and self.AudioStreamTrack:
                     audio_track = self.AudioStreamTrack(track, pipeline)
                     pc.addTrack(audio_track)
             
@@ -329,12 +346,10 @@ class BYOCHandler:
             audio_track = None
             
             if "m=video" in sdp_offer:
-                from server.whep_handler import ProcessedStreamTrack
                 video_track = ProcessedStreamTrack("video", stream_manager)
                 pc.addTrack(video_track)
             
             if "m=audio" in sdp_offer:
-                from server.whep_handler import ProcessedStreamTrack
                 audio_track = ProcessedStreamTrack("audio", stream_manager)
                 pc.addTrack(audio_track)
             

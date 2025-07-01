@@ -17,6 +17,7 @@ from typing import Dict, Any, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from comfystream.utils import DEFAULT_SD_PROMPT
 
 class BYOCTestClient:
     """Client for testing BYOC endpoints."""
@@ -32,10 +33,7 @@ class BYOCTestClient:
         request_data = {
             "input": {
                 "prompts": prompts or [
-                    {
-                        "text": "a beautiful sunset over mountains",
-                        "weight": 1.0
-                    }
+                    json.loads(DEFAULT_SD_PROMPT),
                 ],
                 "width": 512,
                 "height": 512
@@ -73,10 +71,7 @@ class BYOCTestClient:
         request_data = {
             "sdp_offer": sdp_offer,
             "prompts": prompts or [
-                {
-                    "text": "a beautiful sunset over mountains",
-                    "weight": 1.0
-                }
+                json.loads(DEFAULT_SD_PROMPT)
             ],
             "width": 512,
             "height": 512
@@ -172,25 +167,84 @@ class BYOCTestClient:
 def generate_mock_sdp_offer() -> str:
     """Generate a mock SDP offer for testing purposes."""
     return """v=0
-o=- 0 0 IN IP4 127.0.0.1
+o=- 123456789 2 IN IP4 127.0.0.1
 s=-
-c=IN IP4 127.0.0.1
 t=0 0
-m=video 9 UDP/TLS/RTP/SAVPF 96
-a=rtpmap:96 H264/90000
-a=fmtp:96 profile-level-id=42e01f
-a=sendonly
+a=group:BUNDLE 0 1
+a=msid-semantic: WMS
+m=video 54400 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 127 124 125
+c=IN IP4 127.0.0.1
+a=rtcp:9 IN IP4 127.0.0.1
+a=ice-ufrag:test123
+a=ice-pwd:testpassword123
+a=ice-options:trickle
+a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF
 a=setup:actpass
 a=mid:0
-a=ice-ufrag:test
-a=ice-pwd:test
-m=audio 9 UDP/TLS/RTP/SAVPF 111
-a=rtpmap:111 opus/48000/2
 a=sendonly
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:96 VP8/90000
+a=rtcp-fb:96 goog-remb
+a=rtcp-fb:96 transport-cc
+a=rtcp-fb:96 ccm fir
+a=rtcp-fb:96 nack
+a=rtcp-fb:96 nack pli
+a=rtpmap:97 rtx/90000
+a=fmtp:97 apt=96
+a=rtpmap:98 VP9/90000
+a=rtcp-fb:98 goog-remb
+a=rtcp-fb:98 transport-cc
+a=rtcp-fb:98 ccm fir
+a=rtcp-fb:98 nack
+a=rtcp-fb:98 nack pli
+a=rtpmap:99 rtx/90000
+a=fmtp:99 apt=98
+a=rtpmap:100 H264/90000
+a=rtcp-fb:100 goog-remb
+a=rtcp-fb:100 transport-cc
+a=rtcp-fb:100 ccm fir
+a=rtcp-fb:100 nack
+a=rtcp-fb:100 nack pli
+a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+a=rtpmap:101 rtx/90000
+a=fmtp:101 apt=100
+a=rtpmap:127 red/90000
+a=rtpmap:124 rtx/90000
+a=fmtp:124 apt=127
+a=rtpmap:125 ulpfec/90000
+a=ssrc-group:FID 1234567890 1234567891
+a=ssrc:1234567890 cname:test-stream
+a=ssrc:1234567890 msid:test-stream video0
+a=ssrc:1234567891 cname:test-stream
+a=ssrc:1234567891 msid:test-stream video0
+m=audio 54401 UDP/TLS/RTP/SAVPF 111 103 9 102 0 8 105 13 110 113 126
+c=IN IP4 127.0.0.1
+a=rtcp:9 IN IP4 127.0.0.1
+a=ice-ufrag:test123
+a=ice-pwd:testpassword123
+a=ice-options:trickle
+a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF
 a=setup:actpass
 a=mid:1
-a=ice-ufrag:test
-a=ice-pwd:test"""
+a=sendonly
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:111 opus/48000/2
+a=rtcp-fb:111 transport-cc
+a=fmtp:111 minptime=10;useinbandfec=1
+a=rtpmap:103 ISAC/16000
+a=rtpmap:9 G722/8000
+a=rtpmap:102 ILBC/8000
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:105 CN/16000
+a=rtpmap:13 CN/8000
+a=rtpmap:110 telephone-event/48000
+a=rtpmap:113 telephone-event/16000
+a=rtpmap:126 telephone-event/8000
+a=ssrc:1234567892 cname:test-stream
+a=ssrc:1234567892 msid:test-stream audio0"""
 
 
 def main():

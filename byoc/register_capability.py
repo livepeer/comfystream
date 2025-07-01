@@ -1,13 +1,27 @@
 import requests, time
+import argparse
 
 #note: price is 0 for the capability registered so will be able to use with wallets with no eth deposit/reserve
 #      if price is set above 0 will need to use an on chain Orchestrator and a Gateway with a Deposit/Reserve
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Register capabilities with orchestrator')
+parser.add_argument('--orch-host', 
+                    default='byoc_orchestrator', 
+                    help='Orchestrator host (default: byoc_orchestrator)')
+parser.add_argument('--orch-port', 
+                    default='8935', 
+                    help='Orchestrator port (default: 8935)')
+args = parser.parse_args()
+
+orch_host = args.orch_host
+orch_port = args.orch_port
 
 # Define multiple capabilities to register
 capabilities = [
     {
         "name": "comfystream-video",
-        "url": "http://byoc_reverse_text:8889",
+        "url": f"http://{orch_host}:8889",
         "capacity": 1,
         "price_per_unit": 0,
         "price_scaling": 1,
@@ -15,7 +29,7 @@ capabilities = [
     },
     {
         "name": "whip-ingest",
-        "url": "http://byoc_reverse_text:8889",
+        "url": f"http://{orch_host}:8889",
         "capacity": 1,
         "price_per_unit": 0,
         "price_scaling": 1,
@@ -23,7 +37,7 @@ capabilities = [
     },
     {
         "name": "whep-subscribe",
-        "url": "http://byoc_reverse_text:8889",
+        "url": f"http://{orch_host}:8889",
         "capacity": 1,
         "price_per_unit": 0,
         "price_scaling": 1,
@@ -44,7 +58,7 @@ for capability in capabilities:
         time.sleep(1)
 
         try:
-            registered = requests.post("https://byoc_orchestrator:8935/capability/register", json=capability, headers=headers, verify=False)
+            registered = requests.post(f"https://{orch_host}:{orch_port}/capability/register", json=capability, headers=headers, verify=False)
             if registered.status_code == 200:
                 print(f"Successfully registered capability: {capability['name']}")
                 break

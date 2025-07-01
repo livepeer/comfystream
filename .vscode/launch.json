@@ -52,6 +52,22 @@
                 "action": "openExternally"
             }
         },
+        {
+            "name": "Register Capabilities",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/comfystream/byoc",
+            "program": "register_capability.py",
+            "args": [
+                "--orch-host=192.168.10.61",
+                "--orch-port=8936"
+            ],
+            "purpose": ["debug-in-terminal"],
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            },
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+        },
     ], "compounds": [
         {
             "name": "Run ComfyStream and UI",
