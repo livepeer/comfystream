@@ -201,7 +201,7 @@ if [ "$1" = "--opencv-cuda" ]; then
   if [ ! -f "/workspace/comfystream/opencv-cuda-release.tar.gz" ]; then
     # Download and extract OpenCV CUDA build
     DOWNLOAD_NAME="opencv-cuda-release.tar.gz"
-    wget -q -O "$DOWNLOAD_NAME" https://github.com/JJassonn69/ComfyUI-Stream-Pack/releases/download/v1.0/opencv-cuda-release.tar.gz
+    wget -q -O "$DOWNLOAD_NAME" "${OPEN_CV_DOWNLOAD_URL}"
     tar -xzf "$DOWNLOAD_NAME" -C /workspace/comfystream/
     rm "$DOWNLOAD_NAME"
   else
