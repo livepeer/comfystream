@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHON_VERSION="${PYTHON_VERSION}"
 
 # System dependencies
-RUN apt update && apt install -yqq \
+RUN apt update && apt install -yqq --no-install-recommends \
     git \
     wget \
     nano \
