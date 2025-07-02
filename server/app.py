@@ -32,6 +32,7 @@ from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
 import time
+from comfystream.utils import DEFAULT_PROMPT
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
@@ -219,8 +220,11 @@ async def offer(request):
     pcs = request.app["pcs"]
 
     params = await request.json()
-
-    await pipeline.set_prompts(params["prompts"])
+    
+    prompts = params["prompts"]
+    import json
+    default_prompt_parsed = json.loads(DEFAULT_PROMPT)
+    await pipeline.set_prompts(default_prompt_parsed)
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
