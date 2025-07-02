@@ -7,7 +7,8 @@ FROM "${BASE_IMAGE}"
 ARG CONDA_VERSION \
     PYTHON_VERSION
 
-ENV DEBIAN_FRONTEND=noninteractive \
+ENV TensorRT_ROOT=/opt/TensorRT-10.12.0.36 \
+    DEBIAN_FRONTEND=noninteractive \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
