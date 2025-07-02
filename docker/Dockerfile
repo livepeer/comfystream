@@ -25,7 +25,6 @@ ENV	NODE_PATH="$NVM_DIR/v$NODE_VERSION/lib/node_modules" \
 
 # Create the supervisor configuration file for ComfyUI and ComfyStream
 COPY	docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY    --chmod=0755	docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
 
 WORKDIR	/workspace/comfystream/ui
 RUN npm install
