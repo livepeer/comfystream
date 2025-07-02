@@ -7,6 +7,7 @@ from typing import Any, Dict, Union, List, Optional
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+from comfy.api.components.schema.prompt import PromptDictInput
 
 WARMUP_RUNS = 5
 
@@ -65,27 +66,28 @@ class Pipeline:
             self.client.put_audio_input(dummy_frame)
             await self.client.get_audio_output()
 
-    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    async def set_prompts(self, prompts: Union[PromptDictInput, List[PromptDictInput]]):
         """Set the processing prompts for the pipeline.
         
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
         """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        logger.info(f"Setting prompts: {prompts}")
+        # Convert single dict to list if needed
+        if isinstance(prompts, dict):
+            prompts = [prompts]
+        await self.client.set_prompts(prompts)
 
-    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    async def update_prompts(self, prompts: Union[PromptDictInput, List[PromptDictInput]]):
         """Update the existing processing prompts.
         
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
         """
-        if isinstance(prompts, list):
-            await self.client.update_prompts(prompts)
-        else:
-            await self.client.update_prompts([prompts])
+        # Convert single dict to list if needed
+        if isinstance(prompts, dict):
+            prompts = [prompts]
+        await self.client.update_prompts(prompts)
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
