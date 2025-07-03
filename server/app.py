@@ -222,9 +222,7 @@ async def offer(request):
     params = await request.json()
     
     prompts = params["prompts"]
-    import json
-    default_prompt_parsed = json.loads(DEFAULT_PROMPT)
-    await pipeline.set_prompts(default_prompt_parsed)
+    await pipeline.set_prompts(prompts)
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
