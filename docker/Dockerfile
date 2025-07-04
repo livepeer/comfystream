@@ -11,10 +11,6 @@ RUN	echo "Using base image: ${BASE_IMAGE}" && \
 	apt install -yqq supervisor && \
 	wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 
-# Copy comfystream files to refresh from base
-COPY    . /workspace/comfystream/
-RUN     conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI/custom_nodes/comfystream pip install -e .
-
 WORKDIR	/
 
 # Install node and npm
