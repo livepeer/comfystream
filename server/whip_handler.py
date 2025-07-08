@@ -10,7 +10,7 @@ import json
 import logging
 import secrets
 import time
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Any
 from urllib.parse import urlparse, parse_qs
 
 from aiohttp import web
@@ -24,9 +24,7 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 
 from comfystream.pipeline import Pipeline
-from comfystream.utils import DEFAULT_PROMPT
-# FPSMeter import not needed for WHIP handler currently
-# from comfystream.server.utils import FPSMeter
+from comfystream.prompts import DEFAULT_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +148,7 @@ class WHIPHandler:
                 logger.info(f"WHIP: Track received: {track.kind}")
                 
                 if track.kind == "video":
-                    video_track = VideoStreamTrack(track, pipeline)
+                    video_track = VideoStreamTrack(track, pipeline, request.app)
                     sender = pc.addTrack(video_track)
                     
                     # Store video track in app for stats
@@ -170,7 +168,7 @@ class WHIPHandler:
                         logger.warning(f"Could not set codec preference: {e}")
                         
                 elif track.kind == "audio":
-                    audio_track = AudioStreamTrack(track, pipeline)
+                    audio_track = AudioStreamTrack(track, pipeline, request.app)
                     pc.addTrack(audio_track)
                 
                 @track.on("ended")
@@ -193,12 +191,16 @@ class WHIPHandler:
             h264.MAX_BITRATE = MAX_BITRATE
             h264.MIN_BITRATE = MIN_BITRATE
             
-            # Warm up pipeline
-            # TODO: support concurrent audio inference, no need to warm audio pipeline
-            #if "m=audio" in offer_sdp:
-                #await pipeline.warm_audio()
-            if "m=video" in offer_sdp:
-                await pipeline.warm_video()
+            # Warm up pipeline only if requested
+            if request.app.get("warm_pipeline", False):
+                # TODO: support concurrent audio inference, no need to warm audio pipeline
+                #if "m=audio" in offer_sdp:
+                    #await pipeline.warm_audio()
+                if "m=video" in offer_sdp:
+                    await pipeline.warm_video()
+                    logger.info(f"WHIP: Pipeline warmed for session {resource_id}")
+            else:
+                logger.info(f"WHIP: Pipeline warming skipped for session {resource_id} (use --warm-pipeline to enable)")
             
             # Create answer
             answer = await pc.createAnswer()
@@ -383,15 +385,17 @@ class WHIPHandler:
         for resource_id in list(self.resources.keys()):
             await self.cleanup_resource(resource_id)
     
-    def get_active_sessions(self) -> Dict:
+    def get_active_sessions(self) -> Dict[str, Dict[str, Any]]:
         """Get information about active WHIP sessions."""
         sessions = {}
         for resource_id, resource in self.resources.items():
             sessions[resource_id] = {
-                'created_at': resource.created_at,
-                'connection_state': resource.pc.connectionState,
-                'has_video': resource.video_track is not None,
-                'has_audio': resource.audio_track is not None,
+                "resource_id": resource_id,
+                "created_at": resource.created_at,
+                "connection_state": resource.pc.connectionState if resource.pc else "unknown",
+                "ice_connection_state": resource.pc.iceConnectionState if resource.pc else "unknown",
+                "has_video": resource.video_track is not None,
+                "has_audio": resource.audio_track is not None
             }
         return sessions
 

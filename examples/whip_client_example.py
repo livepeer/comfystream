@@ -16,7 +16,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from aiortc.contrib.media import MediaPlayer
 from av.video.frame import VideoFrame
 from fractions import Fraction
-from comfystream.utils import DEFAULT_PROMPT
+from comfystream.prompts import DEFAULT_PROMPT
 import time
 
 # Configure logging

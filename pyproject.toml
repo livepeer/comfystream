@@ -31,8 +31,8 @@ DisplayName = "ComfyStream"
 Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/icon-light-120px.svg" # SVG, PNG, JPG or GIF (MAX. 800x400px)
 
 [tool.setuptools]
-package-dir = {"" = "src", "server" = "server"}
-packages = {find = {where = ["src", "nodes"]}}
+package-dir = {"" = "src", "comfystream.server" = "server"}
+packages = {find = {where = ["src", "nodes", "server"]}}
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
