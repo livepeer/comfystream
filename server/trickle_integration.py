@@ -10,6 +10,8 @@ import logging
 import torch
 import numpy as np
 import av
+import traceback
+from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque
 from collections import deque
 from trickle_app import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
@@ -149,7 +151,6 @@ class ComfyStreamTrickleProcessor:
                             self.processed_frame_count += 1
                             
                             # Create a dummy VideoFrame to hold the processed tensor
-                            from fractions import Fraction
                             timestamp = self.processed_frame_count * (1/30)  # 30 FPS
                             time_base = Fraction(1, 30)
                             processed_frame = VideoFrame(
@@ -257,15 +258,34 @@ class ComfyStreamTrickleProcessor:
         try:
             if not self.running:
                 logger.warning(f"Processor not running for request {self.request_id}")
+                # Use last processed frame if available to avoid flickering
+                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
+                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
+                    return VideoOutput(output_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
             
             # Check if pipeline is ready
             if not self.pipeline_ready:
                 # Buffer the frame until pipeline is ready
                 self.frame_buffer.add_frame(frame)
+                # Use last processed frame if available, otherwise original
+                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
+                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
+                    return VideoOutput(output_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
             
-            # Pipeline is ready - put frame through ComfyUI processing
+            # Pipeline is ready - check for new processed frames first
+            if not self.processed_frame_buffer.is_empty():
+                processed_frame = self.processed_frame_buffer.get_frame()
+                if processed_frame:
+                    # Use the NEW processed frame's tensor
+                    output_frame = frame.replace_tensor(processed_frame.tensor)
+                    # Update the last processed frame for fallback use
+                    self.last_processed_frame = processed_frame
+                    self.frame_count += 1
+                    return VideoOutput(output_frame, self.request_id)
+            
+            # No new processed frames available - submit this frame for processing
             try:
                 self.frame_count += 1
                 
@@ -285,31 +305,29 @@ class ComfyStreamTrickleProcessor:
                 # Put frame into the pipeline client - this will be processed by ComfyUI
                 self.pipeline.client.put_video_input(av_frame)
                 
-                # Check if we have any processed frames available in the buffer
-                if not self.processed_frame_buffer.is_empty():
-                    processed_frame = self.processed_frame_buffer.get_frame()
-                    if processed_frame:
-                        # Use the processed frame's tensor but keep original frame metadata
-                        output_frame = frame.replace_tensor(processed_frame.tensor)
-                        # Store this as the last processed frame for consistency
-                        self.last_processed_frame = processed_frame
-                        return VideoOutput(output_frame, self.request_id)
-                
-                # If no processed frame available but we have a previous processed frame, use it
-                # This prevents flickering back to original frames
+                # While processing, use last processed frame if available to prevent flickering
+                # Only return original frame if we've never had any processed frames
                 if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
                     output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
                     return VideoOutput(output_frame, self.request_id)
-                
-                # Only return original frame if we've never had any processed frames
-                return VideoOutput(frame, self.request_id)
+                else:
+                    # Very first frames before any processing is complete
+                    return VideoOutput(frame, self.request_id)
                 
             except Exception as e:
                 logger.error(f"Error processing frame {self.frame_count}: {e}")
+                # On error, use last processed frame if available
+                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
+                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
+                    return VideoOutput(output_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
                 
         except Exception as e:
             logger.error(f"Error in sync frame processing: {e}")
+            # On error, use last processed frame if available
+            if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
+                output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
+                return VideoOutput(output_frame, self.request_id)
             return VideoOutput(frame, self.request_id)
     
     async def _process_frame_internal(self, frame: VideoFrame) -> VideoOutput:
@@ -339,7 +357,6 @@ class ComfyStreamTrickleProcessor:
             
         except Exception as e:
             logger.error(f"Error in internal frame processing {self.frame_count}: {e}")
-            import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             # Return original frame on error
             return VideoOutput(frame, self.request_id)
@@ -495,10 +512,9 @@ class TrickleStreamHandler:
             pipeline_already_warmed = self.app_context.get("warm_pipeline", False)
             
             if pipeline_already_warmed:
-                logger.info("Pipeline was already warmed on startup, but still need to wait for prompt-specific models to load")
-                # Even if warmed, we need to wait for the specific models for this prompt to load
-                # The warmup only used dummy frames, but setting prompts triggers actual model loading
-                await self._wait_for_prompt_models_to_load()
+                logger.info("Pipeline was already warmed on startup, skipping additional warmup")
+                # Pipeline is already warmed, just mark it as ready immediately
+                await self.processor.set_pipeline_ready()
             else:
                 # Pipeline wasn't warmed on startup, we should warm it now
                 logger.info("Pipeline not warmed on startup, warming now...")
@@ -553,8 +569,6 @@ class TrickleStreamHandler:
         # Try to process a test frame to ensure models are loaded
         try:
             # Create a test frame with proper dimensions (like pipeline warmup does)
-            import numpy as np
-            
             # Create a dummy RGB frame with the pipeline dimensions
             width = self.pipeline.width
             height = self.pipeline.height

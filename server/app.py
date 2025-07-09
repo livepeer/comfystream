@@ -34,6 +34,9 @@ from comfystream.prompts import DEFAULT_PROMPT, INVERTED_PROMPT, DEFAULT_SD_PROM
 from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
+# Import trickle API functions - trickle-app should always be installed
+from trickle_api import setup_trickle_routes, cleanup_trickle_streams
+from frame_buffer import FrameBuffer
 import time
 
 logger = logging.getLogger(__name__)
@@ -118,7 +121,6 @@ class VideoStreamTrack(MediaStreamTrack):
 
                 # Update the frame buffer with the processed frame
         try:
-            from frame_buffer import FrameBuffer
             frame_buffer = FrameBuffer.get_instance()
             frame_buffer.update_frame(processed_frame)
         except Exception as e:
@@ -454,13 +456,9 @@ async def on_shutdown(app: web.Application) -> None:
     await asyncio.gather(*coros)
     pcs.clear()
     
-    # Cleanup trickle streams if available
-    try:
-        from trickle_api import cleanup_trickle_streams
-        await cleanup_trickle_streams()
-        logger.info("Trickle streams cleaned up")
-    except ImportError:
-        pass  # Trickle not available
+    # Cleanup trickle streams - trickle-app should always be installed
+    await cleanup_trickle_streams()
+    logger.info("Trickle streams cleaned up")
 
 
 if __name__ == "__main__":
@@ -545,13 +543,9 @@ if __name__ == "__main__":
     # Setup HTTP streaming routes
     setup_routes(app, cors)
     
-    # Setup Trickle API routes
-    try:
-        from trickle_api import setup_trickle_routes
-        setup_trickle_routes(app, cors)
-        logger.info("Trickle API routes enabled")
-    except ImportError as e:
-        logger.warning(f"Trickle API not available: {e}")
+    # Setup Trickle API routes - trickle-app should always be installed
+    setup_trickle_routes(app, cors)
+    logger.info("Trickle API routes enabled")
     
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
