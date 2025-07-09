@@ -11,6 +11,7 @@ import torch
 import numpy as np
 import av
 import traceback
+import warnings
 from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque
 from collections import deque
@@ -85,20 +86,23 @@ class ComfyStreamTrickleProcessor:
         self.pipeline = pipeline
         self.request_id = request_id
         self.frame_count = 0
-        self.processing_queue = asyncio.Queue()
-        self.output_queue = asyncio.Queue()
-        self.processing_task = None
         self.running = False
         
-        # Frame buffer for storing frames during pipeline initialization
-        self.frame_buffer = FrameBuffer(max_frames=300)  # 10 seconds at 30fps
+        # Pipeline readiness
         self.pipeline_ready = False
         self.pipeline_ready_event = asyncio.Event()
         
-        # Buffer for processed frames from ComfyUI
-        self.processed_frame_buffer = FrameBuffer(max_frames=60)  # Buffer for ~2 seconds of processed frames
-        self.processed_frame_count = 0
-        self.last_processed_frame = None  # Store last processed frame to prevent flickering
+        # Frame buffer for storing frames during pipeline initialization
+        self.frame_buffer = FrameBuffer(max_frames=300)  # 10 seconds at 30fps
+        
+        # For fallback frames to prevent flickering
+        self.last_processed_frame = None
+        
+        # Background task for collecting processed outputs
+        self.output_collector_task = None
+        
+        # Lock to prevent frame processing during shutdown
+        self.processing_lock = asyncio.Lock()
         
     async def start_processing(self):
         """Start the background processing task."""
@@ -106,89 +110,116 @@ class ComfyStreamTrickleProcessor:
             return
         
         self.running = True
-        self.processing_task = asyncio.create_task(self._processing_loop())
-        logger.info(f"Started processing loop for request {self.request_id}")
+        # Start background task to collect processed outputs
+        self.output_collector_task = asyncio.create_task(self._collect_outputs())
+        logger.info(f"Started processing for request {self.request_id}")
         
     async def stop_processing(self):
         """Stop the background processing task."""
         if not self.running:
             return
+        
+        # Acquire processing lock to block new frame processing
+        async with self.processing_lock:
+            self.running = False
+            logger.info(f"Acquired processing lock for shutdown of request {self.request_id}")
             
-        self.running = False
-        if self.processing_task:
-            self.processing_task.cancel()
+            # Cancel running ComfyUI prompts and clear queues
             try:
-                await self.processing_task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(self.pipeline.client.cancel_running_prompts(), timeout=3.0)
+                logger.info(f"Cancelled running prompts for request {self.request_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout cancelling prompts for request {self.request_id}")
+            except Exception as e:
+                logger.warning(f"Error cancelling prompts: {e}")
+            
+            # Clear input/output queues to stop processing
+            try:
+                await asyncio.wait_for(self.pipeline.client.cleanup_queues(), timeout=2.0)
+                logger.info(f"Cleared processing queues for request {self.request_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout clearing queues for request {self.request_id}")
+            except Exception as e:
+                logger.warning(f"Error clearing queues: {e}")
+            
+            # Stop the output collector task
+            if self.output_collector_task:
+                self.output_collector_task.cancel()
+                try:
+                    # Add timeout to prevent hanging during shutdown
+                    await asyncio.wait_for(self.output_collector_task, timeout=2.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    # Task was cancelled or timed out, which is expected
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error stopping output collector: {e}")
+                finally:
+                    # Ensure the task reference is cleared to help with cleanup
+                    self.output_collector_task = None
+            
+            logger.info(f"Stopped processing for request {self.request_id}")
         
-        logger.info(f"Stopped processing loop for request {self.request_id}")
-        
-    async def _processing_loop(self):
-        """Background processing loop that handles frame processing."""
-        logger.info(f"Processing loop started for request {self.request_id}")
+    async def _collect_outputs(self):
+        """Background task to collect processed outputs from the pipeline."""
+        logger.info(f"Output collector started for request {self.request_id}")
         
         try:
             while self.running:
-                try:
-                    # If pipeline is ready, try to get processed outputs from ComfyUI
-                    if self.pipeline_ready:
-                        try:
-                            # Get processed output from ComfyUI client (like ai-runner does)
-                            result_tensor = await asyncio.wait_for(
-                                self.pipeline.client.get_video_output(), 
-                                timeout=0.5  # Slightly longer timeout
-                            )
-                            
-                            # logger.info(f"Received processed output from ComfyUI for request {self.request_id}")
-                            # logger.info(f"Output tensor shape: {result_tensor.shape}, dtype: {result_tensor.dtype}")
-                            
-                            # Convert ComfyUI output back to trickle format
-                            processed_tensor = self._convert_comfy_output_to_trickle(result_tensor)
-                            # logger.info(f"Converted tensor shape: {processed_tensor.shape}, range: [{processed_tensor.min():.3f}, {processed_tensor.max():.3f}]")
-                            
-                            # Store the processed tensor in a buffer for the sync method to use
-                            self.processed_frame_count += 1
-                            
-                            # Create a dummy VideoFrame to hold the processed tensor
-                            timestamp = self.processed_frame_count * (1/30)  # 30 FPS
-                            time_base = Fraction(1, 30)
-                            processed_frame = VideoFrame(
-                                tensor=processed_tensor,
-                                timestamp=timestamp,
-                                time_base=time_base
-                            )
-                            
-                            # Add to processed frame buffer
-                            self.processed_frame_buffer.add_frame(processed_frame)
-                            
-                        except asyncio.TimeoutError:
-                            # No processed output available yet, continue
-                            await asyncio.sleep(0.1)
-                            continue
-                        except Exception as e:
-                            logger.error(f"Error getting ComfyUI output: {e}")
-                            await asyncio.sleep(0.1)
-                            continue
-                    else:
-                        # Pipeline not ready, just wait
-                        await asyncio.sleep(0.1)
-                        continue
-                        
-                except asyncio.TimeoutError:
-                    # No frame to process, continue
-                    continue
-                except Exception as e:
-                    logger.error(f"Error in processing loop: {e}")
+                # Check for cancellation more frequently
+                if not self.pipeline_ready:
                     await asyncio.sleep(0.1)
+                    if not self.running:  # Check again after sleep
+                        break
+                    continue
+                
+                try:
+                    # Try to get processed output with shorter timeout for faster cancellation response
+                    output_tensor = await asyncio.wait_for(
+                        self.pipeline.client.get_video_output(), 
+                        timeout=0.05  # Reduced from 0.1 to be more responsive
+                    )
+                    
+                    # Check if we're still running before processing
+                    if not self.running:
+                        break
+                    
+                    # Convert ComfyUI output back to trickle format
+                    processed_tensor = self._convert_comfy_output_to_trickle(output_tensor)
+                    
+                    # Create a dummy frame with the processed tensor
+                    # Note: We don't have the original frame timing here, but that's OK
+                    # The sync method will handle timing preservation
+                    dummy_frame = VideoFrame(
+                        tensor=processed_tensor,
+                        timestamp=0,  # Will be updated in sync method
+                        time_base=Fraction(1, 30)
+                    )
+                    
+                    # Store for fallback use
+                    self.last_processed_frame = dummy_frame
+                    
+                except asyncio.TimeoutError:
+                    # No output available yet, continue
+                    # Use shorter sleep for more responsive cancellation
+                    await asyncio.sleep(0.005)  # Reduced from 0.01
+                    continue
+                except asyncio.CancelledError:
+                    # Re-raise cancellation to handle it in outer try block
+                    raise
+                except Exception as e:
+                    logger.error(f"Error collecting output: {e}")
+                    await asyncio.sleep(0.1)
+                    if not self.running:  # Check again after sleep
+                        break
                     continue
                     
         except asyncio.CancelledError:
-            logger.info(f"Processing loop cancelled for request {self.request_id}")
+            logger.info(f"Output collector cancelled for request {self.request_id}")
+            raise  # Re-raise to ensure proper cancellation handling
         except Exception as e:
-            logger.error(f"Processing loop error for request {self.request_id}: {e}")
+            logger.error(f"Output collector error for request {self.request_id}: {e}")
         finally:
-            logger.info(f"Processing loop ended for request {self.request_id}")
+            logger.info(f"Output collector ended for request {self.request_id}")
             
     async def set_pipeline_ready(self):
         """Mark the pipeline as ready and process buffered frames."""
@@ -198,22 +229,6 @@ class ComfyStreamTrickleProcessor:
         logger.info(f"Pipeline ready for request {self.request_id}")
         self.pipeline_ready = True
         self.pipeline_ready_event.set()
-        
-        # Process buffered frames
-        buffered_frames = self.frame_buffer.get_all_frames()
-        if buffered_frames:
-            logger.info(f"Processing {len(buffered_frames)} buffered frames")
-            
-            # Process buffered frames through pipeline
-            for frame in buffered_frames:
-                try:
-                    output = await self._process_frame_internal(frame)
-                    await self.output_queue.put(output)
-                except Exception as e:
-                    logger.error(f"Error processing buffered frame: {e}")
-                    # Create dummy output on error
-                    output = VideoOutput(frame, self.request_id)
-                    await self.output_queue.put(output)
     
     async def wait_for_pipeline_ready(self, timeout: float = 30.0) -> bool:
         """Wait for the pipeline to be ready.
@@ -231,135 +246,127 @@ class ComfyStreamTrickleProcessor:
             logger.error(f"Timeout waiting for pipeline ready after {timeout}s")
             return False
     
-    async def process_frame(self, frame: VideoFrame) -> VideoOutput:
-        """Process a video frame through the ComfyStream pipeline."""
-        try:
-            if not self.running:
-                logger.warning(f"Processor not running for request {self.request_id}, returning original frame")
-                return VideoOutput(frame, self.request_id)
-                
-            # Queue frame for processing
-            await self.processing_queue.put(frame)
-            
-            # Wait for processed result (with timeout) - increased for ComfyUI processing
-            try:
-                result = await asyncio.wait_for(self.output_queue.get(), timeout=60.0)  # Increased from 10.0
-                return result
-            except asyncio.TimeoutError:
-                logger.warning(f"Processing timeout (60s) for frame {self.frame_count}, returning original")
-                return VideoOutput(frame, self.request_id)
-                
-        except Exception as e:
-            logger.error(f"Error processing frame {self.frame_count}: {e}")
-            return VideoOutput(frame, self.request_id)
-    
     def process_frame_sync(self, frame: VideoFrame) -> VideoOutput:
-        """Synchronous interface for frame processing with actual processing."""
+        """Synchronous interface for frame processing using proper pipeline methods."""
         try:
+            # Check if we're shutting down first (before acquiring lock)
             if not self.running:
                 logger.warning(f"Processor not running for request {self.request_id}")
                 # Use last processed frame if available to avoid flickering
-                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
-                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
-                    return VideoOutput(output_frame, self.request_id)
+                if self.last_processed_frame is not None:
+                    return VideoOutput(self.last_processed_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
+            
+            # Try to acquire processing lock (non-blocking)
+            try:
+                # Check if processing lock is available (if not, we're shutting down)
+                if self.processing_lock.locked():
+                    logger.debug(f"Processing locked during shutdown for request {self.request_id}")
+                    if self.last_processed_frame is not None:
+                        return VideoOutput(self.last_processed_frame, self.request_id)
+                    return VideoOutput(frame, self.request_id)
+            except Exception:
+                # Lock check failed, just continue
+                pass
             
             # Check if pipeline is ready
             if not self.pipeline_ready:
                 # Buffer the frame until pipeline is ready
                 self.frame_buffer.add_frame(frame)
                 # Use last processed frame if available, otherwise original
-                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
-                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
-                    return VideoOutput(output_frame, self.request_id)
+                if self.last_processed_frame is not None:
+                    return VideoOutput(self.last_processed_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
             
-            # Pipeline is ready - check for new processed frames first
-            if not self.processed_frame_buffer.is_empty():
-                processed_frame = self.processed_frame_buffer.get_frame()
-                if processed_frame:
-                    # Use the NEW processed frame's tensor
-                    output_frame = frame.replace_tensor(processed_frame.tensor)
-                    # Update the last processed frame for fallback use
-                    self.last_processed_frame = processed_frame
-                    self.frame_count += 1
-                    return VideoOutput(output_frame, self.request_id)
+            # Pipeline is ready - process frame synchronously to preserve timing
+            self.frame_count += 1
             
-            # No new processed frames available - submit this frame for processing
             try:
-                self.frame_count += 1
+                # Convert trickle frame to av.VideoFrame with preserved timing
+                av_frame = self._tensor_to_av_frame(frame.tensor)
                 
-                # Follow ai-runner pattern: set up the frame with ComfyUI data and put it through
-                tensor = frame.tensor
-                if tensor.is_cuda:
-                    tensor = tensor.clone()
+                # Store original timing information from trickle frame
+                original_timestamp = frame.timestamp
+                original_time_base = frame.time_base
                 
-                # Convert to av.VideoFrame for the pipeline
-                av_frame = self._tensor_to_av_frame(tensor)
-                
-                # Set up frame like ai-runner does
+                # Process frame using pipeline preprocessing to match app.py behavior
                 preprocessed_tensor = self.pipeline.video_preprocess(av_frame)
-                av_frame.side_data.input = preprocessed_tensor
-                av_frame.side_data.skipped = True
+                # Set side_data attributes (these are dynamic attributes used by comfystream)
+                # pylint: disable=attribute-defined-outside-init
+                av_frame.side_data.input = preprocessed_tensor  # type: ignore
+                av_frame.side_data.skipped = True  # type: ignore
                 
-                # Put frame into the pipeline client - this will be processed by ComfyUI
+                # Put frame directly into pipeline client (like the original approach)
                 self.pipeline.client.put_video_input(av_frame)
                 
-                # While processing, use last processed frame if available to prevent flickering
-                # Only return original frame if we've never had any processed frames
-                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
-                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
-                    return VideoOutput(output_frame, self.request_id)
-                else:
-                    # Very first frames before any processing is complete
+                # Since we're in a sync context but there might be an async loop running,
+                # we'll just submit the frame and use fallback strategy
+                # Check if there's a running event loop
+                try:
+                    current_loop = asyncio.get_running_loop()
+                    # We're in an async context, so we can't use run_until_complete
+                    # Instead, just put the frame in and return fallback for now
+                    # The processing will happen asynchronously
+                    if self.last_processed_frame is not None:
+                        # Create new frame with last processed tensor but current timing
+                        fallback_frame = VideoFrame(
+                            tensor=self.last_processed_frame.tensor,
+                            timestamp=original_timestamp,
+                            time_base=original_time_base
+                        )
+                        return VideoOutput(fallback_frame, self.request_id)
+                    return VideoOutput(frame, self.request_id)
+                    
+                except RuntimeError:
+                    # No running event loop, but in trickle context this shouldn't happen
+                    # Just use fallback strategy
+                    if self.last_processed_frame is not None:
+                        # Create new frame with last processed tensor but current timing
+                        fallback_frame = VideoFrame(
+                            tensor=self.last_processed_frame.tensor,
+                            timestamp=original_timestamp,
+                            time_base=original_time_base
+                        )
+                        return VideoOutput(fallback_frame, self.request_id)
                     return VideoOutput(frame, self.request_id)
                 
             except Exception as e:
                 logger.error(f"Error processing frame {self.frame_count}: {e}")
                 # On error, use last processed frame if available
-                if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
-                    output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
-                    return VideoOutput(output_frame, self.request_id)
+                if self.last_processed_frame is not None:
+                    return VideoOutput(self.last_processed_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
                 
         except Exception as e:
             logger.error(f"Error in sync frame processing: {e}")
             # On error, use last processed frame if available
-            if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
-                output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
-                return VideoOutput(output_frame, self.request_id)
+            if self.last_processed_frame is not None:
+                return VideoOutput(self.last_processed_frame, self.request_id)
             return VideoOutput(frame, self.request_id)
     
-    async def _process_frame_internal(self, frame: VideoFrame) -> VideoOutput:
-        """Internal frame processing method."""
+    def _convert_comfy_output_to_trickle(self, comfy_tensor):
+        """Convert ComfyUI output tensor to trickle format."""
         try:
-            self.frame_count += 1
+            # ComfyUI typically outputs in [1, H, W, C] format
+            if comfy_tensor.dim() == 4 and comfy_tensor.shape[0] == 1:
+                # Remove batch dimension: [1, H, W, C] -> [H, W, C]
+                tensor = comfy_tensor.squeeze(0)
+            else:
+                tensor = comfy_tensor
             
-            # Convert trickle VideoFrame tensor to av.VideoFrame for pipeline
-            tensor = frame.tensor
-            if tensor.is_cuda:
-                tensor = tensor.clone()
+            # Ensure tensor is in [0, 1] range for trickle
+            if tensor.max() > 1.0:
+                tensor = tensor / 255.0
             
-            # Convert tensor to av.VideoFrame with proper format
-            av_frame = self._tensor_to_av_frame(tensor)
+            # Clamp to valid range
+            tensor = torch.clamp(tensor, 0.0, 1.0)
             
-            # Use the pipeline (like app.py does) - this will set up side_data correctly
-            await self.pipeline.put_video_frame(av_frame)
-            processed_av_frame = await self.pipeline.get_processed_video_frame()
-            
-            # Convert processed av.VideoFrame back to tensor
-            processed_tensor = self._av_frame_to_tensor(processed_av_frame)
-            
-            # Create output frame with the processed tensor
-            output_frame = frame.replace_tensor(processed_tensor)
-            
-            return VideoOutput(output_frame, self.request_id)
+            return tensor
             
         except Exception as e:
-            logger.error(f"Error in internal frame processing {self.frame_count}: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Return original frame on error
-            return VideoOutput(frame, self.request_id)
+            logger.error(f"Error converting ComfyUI output: {e}")
+            # Return zeros tensor as fallback
+            return torch.zeros(512, 512, 3)
     
     def _tensor_to_av_frame(self, tensor: torch.Tensor) -> av.VideoFrame:
         """Convert trickle tensor to av.VideoFrame for ComfyUI pipeline."""
@@ -413,52 +420,6 @@ class ComfyStreamTrickleProcessor:
         except Exception as e:
             logger.error(f"Error converting tensor to av.VideoFrame: {e}")
             raise
-    
-    def _av_frame_to_tensor(self, av_frame: av.VideoFrame) -> torch.Tensor:
-        """Convert av.VideoFrame back to tensor for trickle output."""
-        try:
-            # Convert av.VideoFrame to numpy array
-            frame_np = av_frame.to_ndarray(format="rgb24")
-            
-            # Convert to tensor and normalize to [0, 1] range (trickle expects this)
-            tensor = torch.from_numpy(frame_np.copy()).float() / 255.0
-            
-            # Ensure tensor is in [H, W, C] format as expected by trickle
-            if tensor.dim() != 3:
-                raise ValueError(f"Expected 3D tensor, got {tensor.dim()}D")
-            
-            # Ensure values are in [0, 1] range
-            tensor = torch.clamp(tensor, 0.0, 1.0)
-            
-            return tensor
-            
-        except Exception as e:
-            logger.error(f"Error converting av.VideoFrame to tensor: {e}")
-            raise
-
-    def _convert_comfy_output_to_trickle(self, comfy_tensor):
-        """Convert ComfyUI output tensor to trickle format."""
-        try:
-            # ComfyUI typically outputs in [1, H, W, C] format
-            if comfy_tensor.dim() == 4 and comfy_tensor.shape[0] == 1:
-                # Remove batch dimension: [1, H, W, C] -> [H, W, C]
-                tensor = comfy_tensor.squeeze(0)
-            else:
-                tensor = comfy_tensor
-            
-            # Ensure tensor is in [0, 1] range for trickle
-            if tensor.max() > 1.0:
-                tensor = tensor / 255.0
-            
-            # Clamp to valid range
-            tensor = torch.clamp(tensor, 0.0, 1.0)
-            
-            return tensor
-            
-        except Exception as e:
-            logger.error(f"Error converting ComfyUI output: {e}")
-            # Return zeros tensor as fallback
-            return torch.zeros(512, 512, 3)
 
 class TrickleStreamHandler:
     """Handles a complete trickle stream with ComfyStream integration."""
@@ -559,92 +520,77 @@ class TrickleStreamHandler:
             await self.processor.stop_processing()
             return False
     
-    async def _wait_for_prompt_models_to_load(self):
-        """Wait for the prompt-specific models to finish loading."""
-        logger.info("Waiting for prompt-specific models to load...")
-        
-        # Give models some time to start loading
-        await asyncio.sleep(2.0)
-        
-        # Try to process a test frame to ensure models are loaded
-        try:
-            # Create a test frame with proper dimensions (like pipeline warmup does)
-            # Create a dummy RGB frame with the pipeline dimensions
-            width = self.pipeline.width
-            height = self.pipeline.height
-            
-            # Create numpy array with proper shape [height, width, 3] for RGB
-            dummy_rgb = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
-            
-            # Create av.VideoFrame from the numpy array
-            test_frame = av.VideoFrame.from_ndarray(dummy_rgb, format="rgb24")
-            
-            logger.info(f"Testing pipeline with actual prompt using {width}x{height} test frame...")
-            
-            # Try processing through the pipeline
-            start_time = asyncio.get_event_loop().time()
-            timeout = 120.0  # Increased from 30.0 to 120.0 seconds for initial model loading
-            
-            while True:
-                current_time = asyncio.get_event_loop().time()
-                if current_time - start_time > timeout:
-                    logger.error(f"Timeout waiting for prompt models to load after {timeout}s")
-                    break
-                    
-                try:
-                    # Use the pipeline to process the test frame
-                    await self.pipeline.put_video_frame(test_frame)
-                    processed_frame = await asyncio.wait_for(
-                        self.pipeline.get_processed_video_frame(), 
-                        timeout=30.0  # Increased from 5.0 to 30.0 seconds per frame
-                    )
-                    
-                    logger.info("Prompt-specific models loaded successfully - pipeline is ready")
-                    break
-                    
-                except asyncio.TimeoutError:
-                    logger.warning("Timeout waiting for prompt model processing, retrying...")
-                    await asyncio.sleep(2.0)  # Increased sleep time between retries
-                    continue
-                except Exception as e:
-                    logger.warning(f"Error testing prompt models: {e}, retrying...")
-                    await asyncio.sleep(2.0)  # Increased sleep time between retries
-                    continue
-                    
-        except Exception as e:
-            logger.error(f"Error in prompt model loading test: {e}")
-        
-        # Mark pipeline as ready after model loading is confirmed
-        await self.processor.set_pipeline_ready()
+
     
+    def _silence_cancelled_errors(self, loop, context):
+        """Custom exception handler to silence CancelledError warnings during shutdown."""
+        if 'exception' in context:
+            exc = context['exception']
+            if isinstance(exc, asyncio.CancelledError):
+                # Silently ignore CancelledError during shutdown
+                return
+        # For other exceptions, use default handling
+        loop.default_exception_handler(context)
+
     async def stop(self) -> bool:
         """Stop the trickle stream handler."""
         if not self.running:
             return True
         
+        # Set up exception handler to silence CancelledError warnings
+        loop = asyncio.get_running_loop()
+        original_handler = loop.get_exception_handler()
+        loop.set_exception_handler(self._silence_cancelled_errors)
+        
         try:
             logger.info(f"Stopping trickle stream handler for {self.request_id}")
             
-            # Stop the client
-            await self.client.stop()
+            # STEP 1: Stop the processor first to block new frame processing and cancel ComfyUI prompts
+            try:
+                await asyncio.wait_for(self.processor.stop_processing(), timeout=8.0)
+                logger.info(f"Processor stopped for {self.request_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Processor stop timed out for {self.request_id}")
+            except Exception as e:
+                logger.warning(f"Error stopping processor: {e}")
             
-            # Cancel the task if it's still running
+            # STEP 2: Stop the trickle client to stop frame ingestion
+            try:
+                await asyncio.wait_for(self.client.stop(), timeout=5.0)
+                logger.info(f"Trickle client stopped for {self.request_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Trickle client stop timed out for {self.request_id}")
+            except Exception as e:
+                logger.warning(f"Error stopping trickle client: {e}")
+            
+            # STEP 3: Cancel the main task if it's still running
             if self._task and not self._task.done():
                 self._task.cancel()
                 try:
-                    await self._task
+                    await asyncio.wait_for(self._task, timeout=3.0)
+                    logger.info(f"Main task cancelled for {self.request_id}")
                 except asyncio.CancelledError:
+                    # Task was cancelled, which is exactly what we wanted
                     pass
+                except asyncio.TimeoutError:
+                    # Task didn't cancel in time, but that's OK
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error cancelling task: {e}")
             
-            # Stop the processor
-            await self.processor.stop_processing()
+            # Give a moment for any remaining cleanup to complete
+            await asyncio.sleep(0.1)
             
             self.running = False
             return True
             
         except Exception as e:
             logger.error(f"Error stopping stream handler {self.request_id}: {e}")
+            self.running = False  # Mark as stopped even on error
             return False
+        finally:
+            # Restore original exception handler
+            loop.set_exception_handler(original_handler)
     
     def get_status(self) -> Dict[str, Any]:
         """Get the current status of the stream handler."""
@@ -740,7 +686,51 @@ class TrickleStreamManager:
     async def cleanup_all(self):
         """Stop and cleanup all streams."""
         async with self.lock:
+            if not self.handlers:
+                logger.info("No trickle streams to clean up")
+                return
+                
+            logger.info(f"Cleaning up {len(self.handlers)} trickle streams...")
+            
+            # Stop all streams with individual timeouts
+            cleanup_tasks = []
             for request_id in list(self.handlers.keys()):
-                await self.handlers[request_id].stop()
+                cleanup_tasks.append(self._stop_stream_with_timeout(request_id))
+            
+            # Wait for all cleanup tasks with a global timeout
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*cleanup_tasks, return_exceptions=True),
+                    timeout=15.0  # Global timeout for all streams
+                )
+                # Process results to handle any exceptions properly
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        request_id = list(self.handlers.keys())[i] if i < len(self.handlers) else f"stream_{i}"
+                        logger.warning(f"Exception during cleanup of {request_id}: {result}")
+                        
+            except asyncio.TimeoutError:
+                logger.warning("Global cleanup timeout reached, forcing cleanup")
+            except Exception as e:
+                logger.warning(f"Unexpected error during cleanup: {e}")
+            
+            # Force clear all handlers
             self.handlers.clear()
             logger.info("All trickle streams cleaned up")
+    
+    async def _stop_stream_with_timeout(self, request_id: str) -> bool:
+        """Stop a single stream with timeout."""
+        try:
+            if request_id in self.handlers:
+                handler = self.handlers[request_id]
+                success = await asyncio.wait_for(handler.stop(), timeout=8.0)
+                if success:
+                    logger.info(f"Successfully stopped stream {request_id}")
+                else:
+                    logger.warning(f"Failed to stop stream {request_id}")
+                return success
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout stopping stream {request_id}")
+        except Exception as e:
+            logger.error(f"Error stopping stream {request_id}: {e}")
+        return False
