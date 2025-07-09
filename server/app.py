@@ -314,12 +314,17 @@ async def offer(request):
                         # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Warm the video pipeline with the new resolution only if requested
-                        if request.app.get("warm_pipeline", False) and "m=video" in pc.remoteDescription.sdp:
+                        # Warm the video pipeline with the new resolution only if requested and not already warmed
+                        if (request.app.get("warm_pipeline", False) and "m=video" in pc.remoteDescription.sdp 
+                            and not request.app.get("pipeline_warmed", {}).get("video", False)):
                             await pipeline.warm_video()
+                            request.app["pipeline_warmed"]["video"] = True
                             logger.info(f"[Control] Pipeline warmed with new resolution {params['width']}x{params['height']}")
                         elif "m=video" in pc.remoteDescription.sdp:
-                            logger.info(f"[Control] Pipeline warming skipped for resolution update (use --warm-pipeline to enable)")
+                            if request.app.get("pipeline_warmed", {}).get("video", False):
+                                logger.info(f"[Control] Video pipeline already warmed on startup")
+                            else:
+                                logger.info(f"[Control] Pipeline warming skipped for resolution update (use --warm-pipeline to enable)")
                             
                         response = {
                             "type": "resolution_updated",
@@ -371,12 +376,9 @@ async def offer(request):
 
     await pc.setRemoteDescription(offer)
 
-    # Only warm audio here if requested, video warming happens after resolution update
-    if request.app.get("warm_pipeline", False) and "m=audio" in pc.remoteDescription.sdp:
-        await pipeline.warm_audio()
-        logger.info("[WebRTC] Audio pipeline warmed")
-    elif "m=audio" in pc.remoteDescription.sdp:
-        logger.info("[WebRTC] Audio pipeline warming skipped (use --warm-pipeline to enable)")
+    # Audio pipeline warming is not supported
+    if "m=audio" in pc.remoteDescription.sdp:
+        logger.info("[WebRTC] Audio pipeline warming is not supported")
     
     # We no longer warm video here - it will be warmed after receiving resolution
 
@@ -433,11 +435,15 @@ async def on_startup(app: web.Application) -> None:
     except Exception as e:
         logger.error(f"Error setting default prompts: {e}")
     
+    # Track warming status to avoid redundant warming
+    app["pipeline_warmed"] = {"video": False}
+    
     # Only warm up pipeline if explicitly requested
     if app.get("warm_pipeline", False):
         try:
             logger.info("Warming up video pipeline on startup...")
             await app["pipeline"].warm_video()
+            app["pipeline_warmed"]["video"] = True
             logger.info("Video pipeline warmed up successfully on startup")
         except Exception as e:
             logger.error(f"Error warming up pipeline on startup: {e}")
