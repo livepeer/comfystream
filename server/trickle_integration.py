@@ -160,7 +160,6 @@ class ComfyStreamTrickleProcessor:
                             
                             # Add to processed frame buffer
                             self.processed_frame_buffer.add_frame(processed_frame)
-                            logger.info(f"Stored processed frame {self.processed_frame_count} in buffer")
                             
                         except asyncio.TimeoutError:
                             # No processed output available yet, continue
@@ -262,7 +261,6 @@ class ComfyStreamTrickleProcessor:
             
             # Check if pipeline is ready
             if not self.pipeline_ready:
-                logger.debug(f"Pipeline not ready, buffering frame for request {self.request_id}")
                 # Buffer the frame until pipeline is ready
                 self.frame_buffer.add_frame(frame)
                 return VideoOutput(frame, self.request_id)
@@ -270,7 +268,6 @@ class ComfyStreamTrickleProcessor:
             # Pipeline is ready - put frame through ComfyUI processing
             try:
                 self.frame_count += 1
-                logger.debug(f"Processing frame {self.frame_count} for request {self.request_id}")
                 
                 # Follow ai-runner pattern: set up the frame with ComfyUI data and put it through
                 tensor = frame.tensor
@@ -292,7 +289,6 @@ class ComfyStreamTrickleProcessor:
                 if not self.processed_frame_buffer.is_empty():
                     processed_frame = self.processed_frame_buffer.get_frame()
                     if processed_frame:
-                        logger.debug(f"Returning processed frame for input frame {self.frame_count}")
                         # Use the processed frame's tensor but keep original frame metadata
                         output_frame = frame.replace_tensor(processed_frame.tensor)
                         # Store this as the last processed frame for consistency
@@ -302,12 +298,10 @@ class ComfyStreamTrickleProcessor:
                 # If no processed frame available but we have a previous processed frame, use it
                 # This prevents flickering back to original frames
                 if hasattr(self, 'last_processed_frame') and self.last_processed_frame is not None:
-                    logger.debug(f"Using last processed frame for input frame {self.frame_count} (buffer empty)")
                     output_frame = frame.replace_tensor(self.last_processed_frame.tensor)
                     return VideoOutput(output_frame, self.request_id)
                 
                 # Only return original frame if we've never had any processed frames
-                logger.debug(f"Frame {self.frame_count} sent to ComfyUI, no processed frame ready yet (returning original)")
                 return VideoOutput(frame, self.request_id)
                 
             except Exception as e:
@@ -322,7 +316,6 @@ class ComfyStreamTrickleProcessor:
         """Internal frame processing method."""
         try:
             self.frame_count += 1
-            logger.debug(f"Processing frame {self.frame_count} for request {self.request_id}")
             
             # Convert trickle VideoFrame tensor to av.VideoFrame for pipeline
             tensor = frame.tensor
