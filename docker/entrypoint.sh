@@ -191,6 +191,4 @@ if [ "$1" = "--server" ]; then
   shift
 fi
 
-cd /workspace/comfystream
-
-exec "$@"
+exit 0
