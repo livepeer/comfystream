@@ -138,8 +138,7 @@ class MockTrickleIntegration:
                 if request_id in self.streams:
                     self.streams[request_id]['frame_count'] = frame_count
                     
-                if frame_count % 100 == 0:  # Log every 100 frames
-                    logger.debug(f"Mock: Processed {frame_count} frames for stream {request_id}")
+                # Frame count updated silently to avoid log spam
                     
         except asyncio.CancelledError:
             logger.info(f"Mock: Processing loop cancelled for stream {request_id}")
