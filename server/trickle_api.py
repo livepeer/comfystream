@@ -12,15 +12,11 @@ from typing import Dict, Optional
 from aiohttp import web
 from comfystream.pipeline import Pipeline
 
-# Import the actual trickle integration, not the fallback
-try:
-    from trickle_integration import TrickleStreamManager
-    logger = logging.getLogger(__name__)
-    logger.info("Using real trickle integration")
-except ImportError:
-    from trickle_integration_fallback import TrickleStreamManager
-    logger = logging.getLogger(__name__)
-    logger.warning("Trickle integration not available (No module named 'trickle_app'), using mock implementation")
+# Import the trickle integration - trickle-app should always be installed
+from trickle_integration import TrickleStreamManager
+
+logger = logging.getLogger(__name__)
+logger.info("Using trickle integration")
 
 # Global stream manager instance - will be initialized in setup_trickle_routes
 stream_manager: Optional[TrickleStreamManager] = None
