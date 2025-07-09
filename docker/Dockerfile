@@ -36,6 +36,10 @@ RUN touch /workspace/comfystream/nodes/web/static/.gitkeep
 
 WORKDIR	/workspace/comfystream
 
+# Temp fix for deps
+#RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0"
+#RUN conda run -n comfystream --no-capture-output pip install "opencv-contrib-python==4.9.0.80" "opencv-python-headless==4.9.0.80" "thinc==8.2.5"
+
 EXPOSE	8188	8889	3000
 EXPOSE	1024-65535/udp
 

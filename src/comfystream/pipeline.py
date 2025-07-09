@@ -54,6 +54,47 @@ class Pipeline:
         for _ in range(WARMUP_RUNS):
             self.client.put_video_input(dummy_frame)
             await self.client.get_video_output()
+            
+    async def wait_for_first_processed_frame(self, timeout: float = 30.0) -> bool:
+        """Wait for the first successful model-processed frame to ensure pipeline is ready.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if first frame was processed successfully, False on timeout
+        """
+        logger.info("Waiting for first processed frame to confirm pipeline readiness...")
+        
+        start_time = asyncio.get_event_loop().time()
+        
+        # Create a test frame
+        test_frame = av.VideoFrame()
+        test_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+        
+        while True:
+            current_time = asyncio.get_event_loop().time()
+            if current_time - start_time > timeout:
+                logger.error(f"Timeout waiting for first processed frame after {timeout}s")
+                return False
+                
+            try:
+                # Put test frame through pipeline
+                self.client.put_video_input(test_frame)
+                
+                # Try to get output with a short timeout
+                output = await asyncio.wait_for(self.client.get_video_output(), timeout=5.0)
+                
+                logger.info("First processed frame received successfully - pipeline is ready")
+                return True
+                
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for processed frame, retrying...")
+                continue
+            except Exception as e:
+                logger.error(f"Error processing test frame: {e}")
+                await asyncio.sleep(1.0)
+                continue
 
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
@@ -170,8 +211,12 @@ class Pipeline:
             frame = await self.video_incoming_frames.get()
 
         processed_frame = self.video_postprocess(out_tensor)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
+        
+        # Copy timing information from original frame if available
+        if frame.pts is not None:
+            processed_frame.pts = frame.pts
+        if frame.time_base is not None:
+            processed_frame.time_base = frame.time_base
         
         return processed_frame
 
@@ -190,8 +235,12 @@ class Pipeline:
         self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
 
         processed_frame = self.audio_postprocess(out_data)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
+        
+        # Copy timing information from original frame if available
+        if frame.pts is not None:
+            processed_frame.pts = frame.pts
+        if frame.time_base is not None:
+            processed_frame.time_base = frame.time_base
         processed_frame.sample_rate = frame.sample_rate
         
         return processed_frame
