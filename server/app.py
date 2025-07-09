@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
-CURRENT_PROMPT = DEFAULT_SD_PROMPT
+CURRENT_PROMPT = DEFAULT_PROMPT
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
