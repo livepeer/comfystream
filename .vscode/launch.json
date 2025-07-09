@@ -4,22 +4,22 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        // {
-        //     "name": "Run ComfyUI",
-        //     "type": "debugpy",
-        //     "request": "launch",
-        //     "cwd": "/workspace/ComfyUI",
-        //     "program": "main.py",
-        //     "purpose": ["debug-in-terminal"],
-        //     "env": {
-        //         "PYDEVD_DISABLE_FILE_VALIDATION": "1"
-        //     },
-        //     "args": [
-        //         "--listen",
-        //         "--disable-cuda-malloc"
-        //     ],
-        //     "python": "/workspace/miniconda3/envs/comfystream/bin/python"
-        // },
+        {
+            "name": "Run ComfyUI",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/ComfyUI",
+            "program": "main.py",
+            "purpose": ["debug-in-terminal"],
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+            },
+            "args": [
+                "--listen",
+                "--disable-cuda-malloc"
+            ],
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+        },
         {
             "name": "Run ComfyStream",
             "type": "debugpy",
@@ -36,19 +36,6 @@
             ],
             "python": "/workspace/miniconda3/envs/comfystream/bin/python"
         },
-        // {
-        //     "name": "Run Relay",
-        //     "type": "debugpy",
-        //     "request": "launch",
-        //     "cwd": "/workspace/comfystream/server",
-        //     "program": "main.py",
-        //     "args": [
-        //         "--host=0.0.0.0",
-        //         "--port=9876",
-        //         "--media-ports=5678,5679,5680,5681",
-        //     ],
-        //     "python": "/workspace/miniconda3/envs/comfystream/bin/python"
-        // },
         {
             "name": "Run ComfyStream UI (Node.js)",
             "type": "node",
