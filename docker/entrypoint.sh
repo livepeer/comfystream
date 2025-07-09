@@ -26,7 +26,9 @@ show_help() {
   echo "  --download-models       Download default models"
   echo "  --build-engines         Build TensorRT engines for default models"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
-  echo "  --server                Start the Comfystream server, UI and ComfyUI"
+  echo "  --comfyui               Start ComfyUI with ComfyStream custom node (http://0.0.0.0:8188)"
+  echo "  --api                   Start ComfyStream API server only (http://0.0.0.0:8889)"
+  echo "  --ui                    Start ComfyStream UI (https://0.0.0.0:3001)"
   echo "  --help                  Show this help message"
   echo ""
 }
@@ -170,8 +172,23 @@ if [ "$1" = "--opencv-cuda" ]; then
   shift
 fi
 
-if [ "$1" = "--server" ]; then
+if [ "$1" = "--comfyui" ]; then
   /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
+  shift
+fi
+
+if [ "$1" = "--api" ]; then
+  cd /workspace/comfystream
+  conda activate comfystream
+  python server/app.py --workspace /workspace/ComfyUI --port 8889 --host 0.0.0.0
+  shift
+fi
+
+if [ "$1" = "--ui" ]; then
+  cd /workspace/comfystream
+  conda activate comfystream
+  cd ui
+  npm run dev:https
   shift
 fi
 
