@@ -7,6 +7,8 @@ import sys
 import time
 import secrets
 import torch
+import av
+from typing import Dict, Optional, Union
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
@@ -28,6 +30,7 @@ from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
+from comfystream.prompts import DEFAULT_PROMPT, INVERTED_PROMPT, DEFAULT_SD_PROMPT
 from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
@@ -37,6 +40,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
+CURRENT_PROMPT = DEFAULT_SD_PROMPT
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
@@ -83,7 +87,9 @@ class VideoStreamTrack(MediaStreamTrack):
             while self.running:
                 try:
                     frame = await self.track.recv()
-                    await self.pipeline.put_video_frame(frame)
+                    # Check if frame is a VideoFrame before passing to pipeline
+                    if isinstance(frame, av.VideoFrame):
+                        await self.pipeline.put_video_frame(frame)
                 except asyncio.CancelledError:
                     logger.info("Frame collection cancelled")
                     break
@@ -149,7 +155,9 @@ class AudioStreamTrack(MediaStreamTrack):
             while self.running:
                 try:
                     frame = await self.track.recv()
-                    await self.pipeline.put_audio_frame(frame)
+                    # Check if frame is an AudioFrame before passing to pipeline
+                    if isinstance(frame, av.AudioFrame):
+                        await self.pipeline.put_audio_frame(frame)
                 except asyncio.CancelledError:
                     logger.info("Audio frame collection cancelled")
                     break
@@ -199,15 +207,29 @@ def get_twilio_token():
 def get_ice_servers():
     ice_servers = []
 
+    # Add default STUN servers
+    default_stun_servers = [
+        "stun:stun.l.google.com:19302",
+        "stun:stun.cloudflare.com:3478", 
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302"
+    ]
+    
+    for stun_url in default_stun_servers:
+        stun_server = RTCIceServer(urls=[stun_url])
+        ice_servers.append(stun_server)
+
+    # Add Twilio TURN servers if available
     token = get_twilio_token()
-    if token is not None:
+    if token is not None and hasattr(token, 'ice_servers') and token.ice_servers:
         # Use Twilio TURN servers
         for server in token.ice_servers:
-            if server["url"].startswith("turn:"):
+            if isinstance(server, dict) and server.get("url", "").startswith("turn:"):
                 turn = RTCIceServer(
-                    urls=[server["urls"]],
-                    credential=server["credential"],
-                    username=server["username"],
+                    urls=[server.get("urls", "")],
+                    credential=server.get("credential", ""),
+                    username=server.get("username", ""),
                 )
                 ice_servers.append(turn)
 
@@ -235,7 +257,7 @@ async def offer(request):
 
     pcs.add(pc)
 
-    tracks = {"video": None, "audio": None}
+    tracks: Dict[str, Union[VideoStreamTrack, AudioStreamTrack, None]] = {"video": None, "audio": None}
     
     # Flag to track if we've received resolution update
     resolution_received = {"value": False}
@@ -290,9 +312,12 @@ async def offer(request):
                         # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Warm the video pipeline with the new resolution
-                        if "m=video" in pc.remoteDescription.sdp:
+                        # Warm the video pipeline with the new resolution only if requested
+                        if request.app.get("warm_pipeline", False) and "m=video" in pc.remoteDescription.sdp:
                             await pipeline.warm_video()
+                            logger.info(f"[Control] Pipeline warmed with new resolution {params['width']}x{params['height']}")
+                        elif "m=video" in pc.remoteDescription.sdp:
+                            logger.info(f"[Control] Pipeline warming skipped for resolution update (use --warm-pipeline to enable)")
                             
                         response = {
                             "type": "resolution_updated",
@@ -344,9 +369,12 @@ async def offer(request):
 
     await pc.setRemoteDescription(offer)
 
-    # Only warm audio here, video warming happens after resolution update
-    if "m=audio" in pc.remoteDescription.sdp:
+    # Only warm audio here if requested, video warming happens after resolution update
+    if request.app.get("warm_pipeline", False) and "m=audio" in pc.remoteDescription.sdp:
         await pipeline.warm_audio()
+        logger.info("[WebRTC] Audio pipeline warmed")
+    elif "m=audio" in pc.remoteDescription.sdp:
+        logger.info("[WebRTC] Audio pipeline warming skipped (use --warm-pipeline to enable)")
     
     # We no longer warm video here - it will be warmed after receiving resolution
 
@@ -378,11 +406,11 @@ async def set_prompt(request):
     return web.Response(content_type="application/json", text="OK")
     
 
-def health(_):
+async def health(_):
     return web.Response(content_type="application/json", text="OK")
 
 
-async def on_startup(app: web.Application):
+async def on_startup(app: web.Application) -> None:
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
@@ -395,15 +423,44 @@ async def on_startup(app: web.Application):
         preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
     )
+    
+    # Set default prompts for the pipeline using the pattern from main.py
+    try:
+        await app["pipeline"].set_prompts(json.loads(CURRENT_PROMPT))
+        logger.info("Default prompts set for pipeline")
+    except Exception as e:
+        logger.error(f"Error setting default prompts: {e}")
+    
+    # Only warm up pipeline if explicitly requested
+    if app.get("warm_pipeline", False):
+        try:
+            logger.info("Warming up video pipeline on startup...")
+            await app["pipeline"].warm_video()
+            logger.info("Video pipeline warmed up successfully on startup")
+        except Exception as e:
+            logger.error(f"Error warming up pipeline on startup: {e}")
+            # Don't raise the exception to allow the application to start
+            # The pipeline will be warmed when needed
+    else:
+        logger.info("Pipeline warming skipped (use --warm-pipeline to enable)")
+    
     app["pcs"] = set()
     app["video_tracks"] = {}
 
 
-async def on_shutdown(app: web.Application):
+async def on_shutdown(app: web.Application) -> None:
     pcs = app["pcs"]
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    
+    # Cleanup trickle streams if available
+    try:
+        from trickle_api import cleanup_trickle_streams
+        await cleanup_trickle_streams()
+        logger.info("Trickle streams cleaned up")
+    except ImportError:
+        pass  # Trickle not available
 
 
 if __name__ == "__main__":
@@ -446,6 +503,12 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
+    parser.add_argument(
+        "--warm-pipeline",
+        default=False,
+        action="store_true",
+        help="Warm up the pipeline on startup (similar to main.py)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -457,6 +520,7 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
+    app["warm_pipeline"] = args.warm_pipeline
     
     # Setup CORS
     cors = setup_cors(app, defaults={
@@ -480,6 +544,14 @@ if __name__ == "__main__":
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)
+    
+    # Setup Trickle API routes
+    try:
+        from trickle_api import setup_trickle_routes
+        setup_trickle_routes(app, cors)
+        logger.info("Trickle API routes enabled")
+    except ImportError as e:
+        logger.warning(f"Trickle API not available: {e}")
     
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
@@ -514,7 +586,8 @@ if __name__ == "__main__":
     # Allow overriding of ComyfUI log levels.
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
-        logging.getLogger("comfy").setLevel(log_level)
+        if log_level is not None:
+            logging.getLogger("comfy").setLevel(log_level)
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 
