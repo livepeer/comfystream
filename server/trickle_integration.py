@@ -428,6 +428,8 @@ class TrickleStreamHandler:
         self, 
         subscribe_url: str,
         publish_url: str,
+        control_url: str,
+        events_url: str,
         request_id: str,
         pipeline: Pipeline,
         width: int = 512,
@@ -436,6 +438,8 @@ class TrickleStreamHandler:
     ):
         self.subscribe_url = subscribe_url
         self.publish_url = publish_url
+        self.control_url = control_url
+        self.events_url = events_url
         self.request_id = request_id
         self.pipeline = pipeline
         self.width = width
@@ -449,6 +453,8 @@ class TrickleStreamHandler:
         self.client = TrickleClient(
             subscribe_url=subscribe_url,
             publish_url=publish_url,
+            control_url=control_url,
+            events_url=events_url,
             width=width,
             height=height,
             frame_processor=self.processor.process_frame_sync  # Use sync interface as expected by trickle-app
@@ -456,6 +462,58 @@ class TrickleStreamHandler:
         
         self.running = False
         self._task: Optional[asyncio.Task] = None
+        self._stats_task: Optional[asyncio.Task] = None
+    
+    async def _send_stats_periodically(self):
+        """Send stats to monitoring every 20 seconds."""
+        logger.info(f"Starting stats monitoring for {self.request_id}")
+        
+        try:
+            while self.running:
+                try:
+                    # Collect stats from processor and client
+                    stats = {
+                        "type": "stream_stats",
+                        "request_id": self.request_id,
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "processor": {
+                            "frame_count": self.processor.frame_count,
+                            "pipeline_ready": self.processor.pipeline_ready,
+                            "buffer_stats": self.processor.frame_buffer.get_stats(),
+                            "last_processed_frame_available": self.processor.last_processed_frame is not None
+                        },
+                        "stream": {
+                            "running": self.running,
+                            "width": self.width,
+                            "height": self.height
+                        }
+                    }
+                    
+                    # Add client stats if available
+                    if hasattr(self.client, 'get_stats'):
+                        try:
+                            client_stats = self.client.get_stats()
+                            stats["client"] = client_stats
+                        except Exception as e:
+                            logger.debug(f"Could not get client stats: {e}")
+                    
+                    # Emit the stats
+                    await self.client.protocol.emit_monitoring_event(stats, "stream_stats")
+                    logger.debug(f"Sent stats for stream {self.request_id}: {stats['processor']['frame_count']} frames processed")
+                    
+                except Exception as e:
+                    logger.error(f"Error sending stats for {self.request_id}: {e}")
+                
+                # Wait 20 seconds before next stats send
+                await asyncio.sleep(20.0)
+                
+        except asyncio.CancelledError:
+            logger.info(f"Stats monitoring cancelled for {self.request_id}")
+            raise
+        except Exception as e:
+            logger.error(f"Stats monitoring error for {self.request_id}: {e}")
+        finally:
+            logger.info(f"Stats monitoring ended for {self.request_id}")
     
     async def start(self) -> bool:
         """Start the trickle stream handler."""
@@ -468,7 +526,7 @@ class TrickleStreamHandler:
             
             # Start the processor first (this will start buffering frames)
             await self.processor.start_processing()
-            
+            await self.client.protocol.emit_monitoring_event({"type": "stream_started", "request_id": self.request_id}, "stream_trace")
             # Check if pipeline was already warmed on startup
             pipeline_already_warmed = self.app_context.get("warm_pipeline", False)
             
@@ -509,6 +567,14 @@ class TrickleStreamHandler:
             logger.info("Starting trickle client...")
             self._task = asyncio.create_task(self.client.start(self.request_id))
             self.running = True
+            
+            # Start the stats monitoring task
+            try:
+                self._stats_task = asyncio.create_task(self._send_stats_periodically())
+                logger.info(f"Started stats monitoring for {self.request_id}")
+            except Exception as e:
+                logger.warning(f"Failed to start stats monitoring for {self.request_id}: {e}")
+                # Don't fail the entire stream start for stats monitoring failure
             
             logger.info(f"Trickle stream handler started successfully for {self.request_id}")
             return True
@@ -578,6 +644,34 @@ class TrickleStreamHandler:
                 except Exception as e:
                     logger.warning(f"Error cancelling task: {e}")
             
+            # STEP 4: Cancel the stats monitoring task if it's running
+            if self._stats_task and not self._stats_task.done():
+                self._stats_task.cancel()
+                try:
+                    await asyncio.wait_for(self._stats_task, timeout=3.0)
+                    logger.info(f"Stats task cancelled for {self.request_id}")
+                except asyncio.CancelledError:
+                    # Task was cancelled, which is expected
+                    pass
+                except asyncio.TimeoutError:
+                    # Task didn't cancel in time, but that's OK
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error cancelling stats task: {e}")
+            
+            # Send final stats before shutdown
+            try:
+                final_stats = {
+                    "type": "stream_stopped",
+                    "request_id": self.request_id,
+                    "timestamp": asyncio.get_event_loop().time(),
+                    "final_frame_count": self.processor.frame_count
+                }
+                await self.client.protocol.emit_monitoring_event(final_stats, "stream_trace")
+                logger.info(f"Sent final stats for {self.request_id}")
+            except Exception as e:
+                logger.debug(f"Could not send final stats: {e}")
+            
             # Give a moment for any remaining cleanup to complete
             await asyncio.sleep(0.1)
             
@@ -601,7 +695,9 @@ class TrickleStreamHandler:
             'publish_url': self.publish_url,
             'width': self.width,
             'height': self.height,
-            'frame_count': self.processor.frame_count
+            'frame_count': self.processor.frame_count,
+            'stats_monitoring_active': self._stats_task is not None and not self._stats_task.done(),
+            'pipeline_ready': self.processor.pipeline_ready
         }
 
 class TrickleStreamManager:
@@ -617,6 +713,8 @@ class TrickleStreamManager:
         request_id: str,
         subscribe_url: str,
         publish_url: str,
+        control_url: str,
+        events_url: str,
         pipeline: Pipeline,
         width: int = 512,
         height: int = 512
@@ -631,6 +729,8 @@ class TrickleStreamManager:
                 handler = TrickleStreamHandler(
                     subscribe_url=subscribe_url,
                     publish_url=publish_url,
+                    control_url=control_url,
+                    events_url=events_url,
                     request_id=request_id,
                     pipeline=pipeline,
                     width=width,
