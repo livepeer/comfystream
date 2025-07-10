@@ -270,6 +270,57 @@ async def get_current_stream_status(request):
             'message': f'Internal server error: {str(e)}'
         }, status=500)
 
+async def update_stream_params(request):
+    """Update parameters for a specific stream.
+    
+    Expected request format:
+    {
+        "prompts": {...}
+    }
+    """
+    try:
+        if not stream_manager:
+            return web.json_response({'error': 'Stream manager not initialized'}, status=500)
+            
+        request_id = request.match_info.get('request_id')
+        if not request_id:
+            return web.json_response({'error': 'Missing request_id'}, status=400)
+        
+        # Check if stream exists
+        stream_status = await stream_manager.get_stream_status(request_id)
+        if not stream_status:
+            return web.json_response({
+                'error': f'Stream {request_id} not found'
+            }, status=404)
+        
+        # Parse request data
+        data = await request.json()
+        
+        # Get the stream handler
+        handler = stream_manager.handlers.get(request_id)
+        if not handler:
+            return web.json_response({
+                'error': f'Stream handler {request_id} not found'
+            }, status=404)
+        
+        # Process the parameter update using the same handler as control messages
+        await handler._handle_control_message(data)
+        
+        return web.json_response({
+            'status': 'success',
+            'message': f'Prompts updated for stream {request_id}',
+            'request_id': request_id
+        })
+        
+    except json.JSONDecodeError:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        logger.error(f"Error updating stream parameters: {e}")
+        return web.json_response({
+            'status': 'error',
+            'message': f'Internal server error: {str(e)}'
+        }, status=500)
+
 async def health_check(request):
     """Health check endpoint (webrtc-worker compatible)."""
     try:
@@ -304,6 +355,7 @@ async def root_info(request):
                 'stop_by_id': 'POST /stream/{request_id}/stop - Stop specific stream',
                 'status': 'GET /stream/status - Get current stream status',
                 'status_by_id': 'GET /stream/{request_id}/status - Get specific stream status',
+                'params': 'POST /stream/{request_id}/params - Update stream prompts',
                 'list': 'GET /streams - List all active streams',
                 'health': 'GET /health - Health check',
                 'live_video': 'POST /live-video-to-video - Start live video processing'
@@ -336,6 +388,7 @@ def setup_trickle_routes(app, cors):
     cors.add(app.router.add_post("/stream/{request_id}/stop", stop_stream))
     cors.add(app.router.add_get("/stream/{request_id}/status", get_stream_status))
     cors.add(app.router.add_get("/streams", list_streams))
+    cors.add(app.router.add_post("/stream/{request_id}/params", update_stream_params))
     
     # Process capability compatible routes (for byoc worker compatibility)
     cors.add(app.router.add_post("/stream/stop", stop_current_stream))
