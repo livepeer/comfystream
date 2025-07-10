@@ -26,7 +26,9 @@ async def start_stream(request):
     Expected request format:
     {
         "subscribe_url": "http://192.168.10.61:3389/sample",
-        "publish_url": "http://192.168.10.61:3389/sample-output", 
+        "publish_url": "http://192.168.10.61:3389/sample-output",
+        "control_url": "http://192.168.10.61:3389/sample-control",
+        "events_url": "http://192.168.10.61:3389/sample-events",
         "gateway_request_id": "sample2",
         "params": {
             "width": 512,
@@ -110,12 +112,15 @@ async def start_stream(request):
             request_id=request_id,
             subscribe_url=data['subscribe_url'],
             publish_url=data['publish_url'],
+            control_url=data['control_url'],
+            events_url=data['events_url'],
             pipeline=pipeline,
             width=width,
             height=height
         )
         
         if success:
+            
             return web.json_response({
                 'status': 'success',
                 'message': f'Stream {request_id} started successfully',
