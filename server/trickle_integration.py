@@ -13,12 +13,15 @@ import av
 import traceback
 import warnings
 from fractions import Fraction
-from typing import Optional, Callable, Dict, Any, Deque
+from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
 from trickle_app import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
+from comfystream.server.utils import parse_prompts_parameter
 from comfystream.pipeline import Pipeline
+import json
 
 logger = logging.getLogger(__name__)
+
 
 class FrameBuffer:
     """Rolling frame buffer that keeps a fixed number of frames and discards older ones."""
@@ -460,9 +463,89 @@ class TrickleStreamHandler:
             frame_processor=self.processor.process_frame_sync  # Use sync interface as expected by trickle-app
         )
         
+        # Control channel subscription
+        self.control_subscriber = None
+        if control_url and control_url.strip():
+            self.control_subscriber = TrickleSubscriber(control_url)
+        
         self.running = False
         self._task: Optional[asyncio.Task] = None
         self._stats_task: Optional[asyncio.Task] = None
+        self._control_task: Optional[asyncio.Task] = None
+        
+    async def _control_loop(self):
+        """Background task to handle control channel messages."""
+        if not self.control_subscriber:
+            logger.info(f"No control URL provided for stream {self.request_id}, skipping control loop")
+            return
+        
+        logger.info(f"Starting control loop for stream {self.request_id} at {self.control_url}")
+        keepalive_message = {"keep": "alive"}
+        
+        try:
+            while self.running:
+                try:
+                    segment = await self.control_subscriber.next()
+                    if not segment or segment.eos():
+                        logger.info(f"Control channel closed for stream {self.request_id}")
+                        break
+                    
+                    # Read control message
+                    params_data = await segment.read()
+                    if not params_data:
+                        continue
+                    
+                    # Parse JSON control message
+                    try:
+                        params = json.loads(params_data.decode('utf-8'))
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        logger.error(f"Invalid control message JSON for stream {self.request_id}: {e}")
+                        continue
+                    
+                    # Ignore keepalive messages
+                    if params == keepalive_message:
+                        continue
+                    
+                    logger.info(f"Received control message for stream {self.request_id}: {params}")
+                    
+                    # Process control message
+                    await self._handle_control_message(params)
+                    
+                except Exception as e:
+                    logger.error(f"Error in control loop for stream {self.request_id}: {e}")
+                    # Continue on error to keep control loop running
+                    await asyncio.sleep(0.1)
+                    
+        except asyncio.CancelledError:
+            logger.info(f"Control loop cancelled for stream {self.request_id}")
+            raise
+        except Exception as e:
+            logger.error(f"Control loop error for stream {self.request_id}: {e}")
+        finally:
+            logger.info(f"Control loop ended for stream {self.request_id}")
+    
+    async def _handle_control_message(self, params: Dict[str, Any]):
+        """Handle control channel messages - simplified to only handle prompts updates."""
+        try:
+            # Check if prompts field exists
+            if "prompts" not in params:
+                logger.warning(f"[Control] Missing prompts field in control message for stream {self.request_id}")
+                return
+            
+            try:
+                # Parse prompts parameter (handles both dict/list and JSON string)
+                parsed_prompts = parse_prompts_parameter(params["prompts"])
+                # Use set_prompts instead of update_prompts to completely replace the workflow
+                # and cancel any currently running prompts
+                await self.pipeline.set_prompts(parsed_prompts)
+                logger.info(f"[Control] Set new prompts for stream {self.request_id}")
+            except ValueError as e:
+                logger.error(f"[Control] Invalid prompts format for stream {self.request_id}: {e}")
+            except Exception as e:
+                logger.error(f"[Control] Error setting prompts for stream {self.request_id}: {e}")
+                
+        except Exception as e:
+            logger.error(f"[Control] Error handling control message for stream {self.request_id}: {e}")
     
     async def _send_stats_periodically(self):
         """Send stats to monitoring every 20 seconds."""
@@ -492,7 +575,7 @@ class TrickleStreamHandler:
                     # Add client stats if available
                     if hasattr(self.client, 'get_stats'):
                         try:
-                            client_stats = self.client.get_stats()
+                            client_stats = self.client.get_stats()  # type: ignore
                             stats["client"] = client_stats
                         except Exception as e:
                             logger.debug(f"Could not get client stats: {e}")
@@ -576,6 +659,14 @@ class TrickleStreamHandler:
                 logger.warning(f"Failed to start stats monitoring for {self.request_id}: {e}")
                 # Don't fail the entire stream start for stats monitoring failure
             
+            # Start the control loop task
+            if self.control_url and self.control_url.strip():
+                try:
+                    self._control_task = asyncio.create_task(self._control_loop())
+                    logger.info(f"Started control loop for {self.request_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to start control loop for {self.request_id}: {e}")
+            
             logger.info(f"Trickle stream handler started successfully for {self.request_id}")
             return True
             
@@ -658,6 +749,29 @@ class TrickleStreamHandler:
                     pass
                 except Exception as e:
                     logger.warning(f"Error cancelling stats task: {e}")
+            
+            # STEP 5: Cancel the control loop task if it's running
+            if self._control_task and not self._control_task.done():
+                self._control_task.cancel()
+                try:
+                    await asyncio.wait_for(self._control_task, timeout=3.0)
+                    logger.info(f"Control loop cancelled for {self.request_id}")
+                except asyncio.CancelledError:
+                    # Task was cancelled, which is expected
+                    pass
+                except asyncio.TimeoutError:
+                    # Task didn't cancel in time, but that's OK
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error cancelling control loop: {e}")
+            
+            # STEP 6: Close the control subscriber
+            if self.control_subscriber:
+                try:
+                    await self.control_subscriber.close()
+                    logger.info(f"Control subscriber closed for {self.request_id}")
+                except Exception as e:
+                    logger.warning(f"Error closing control subscriber: {e}")
             
             # Send final stats before shutdown
             try:

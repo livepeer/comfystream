@@ -4,11 +4,9 @@ import json
 import logging
 import os
 import sys
-import time
-import secrets
 import torch
 import av
-from typing import Dict, Optional, Union
+from typing import Dict, Union, List, Any
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
@@ -31,13 +29,12 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
 from twilio.rest import Client
-from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter, parse_prompts_parameter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
 from comfystream.server.workflows import get_default_workflow, get_inverted_workflow, get_default_sd_workflow, load_workflow
 # Import trickle API functions - trickle-app should always be installed
 from trickle_api import setup_trickle_routes, cleanup_trickle_streams
 from frame_buffer import FrameBuffer
-import time
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
@@ -246,7 +243,16 @@ async def offer(request):
 
     params = await request.json()
 
-    await pipeline.set_prompts(params["prompts"])
+    # Parse prompts parameter (handles both dict/list and JSON string)
+    try:
+        parsed_prompts = parse_prompts_parameter(params["prompts"])
+        await pipeline.set_prompts(parsed_prompts)
+    except ValueError as e:
+        logger.error(f"[Offer] Invalid prompts format: {e}")
+        return web.Response(status=400, text=f"Invalid prompts format: {e}")
+    except Exception as e:
+        logger.error(f"[Offer] Error setting prompts: {e}")
+        return web.Response(status=500, text=f"Error setting prompts: {e}")
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -299,9 +305,15 @@ async def offer(request):
                             )
                             return
                         try:
-                            await pipeline.update_prompts(params["prompts"])
+                            # Parse prompts parameter (handles both dict/list and JSON string)
+                            parsed_prompts = parse_prompts_parameter(params["prompts"])
+                            # Use set_prompts instead of update_prompts to completely replace the workflow
+                            # and cancel any currently running prompts
+                            await pipeline.set_prompts(parsed_prompts)
+                        except ValueError as e:
+                            logger.error(f"[Control] Invalid prompts format: {e}")
                         except Exception as e:
-                            logger.error(f"Error updating prompt: {str(e)}")
+                            logger.error(f"Error setting prompts: {str(e)}")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
@@ -404,7 +416,17 @@ async def set_prompt(request):
     pipeline = request.app["pipeline"]
 
     prompt = await request.json()
-    await pipeline.set_prompts(prompt)
+    
+    # Parse prompts parameter (handles both dict/list and JSON string)
+    try:
+        parsed_prompts = parse_prompts_parameter(prompt)
+        await pipeline.set_prompts(parsed_prompts)
+    except ValueError as e:
+        logger.error(f"[SetPrompt] Invalid prompts format: {e}")
+        return web.Response(status=400, text=f"Invalid prompts format: {e}")
+    except Exception as e:
+        logger.error(f"[SetPrompt] Error setting prompts: {e}")
+        return web.Response(status=500, text=f"Error setting prompts: {e}")
 
     return web.Response(content_type="application/json", text="OK")
     
