@@ -9,7 +9,7 @@ Real-time video streaming with trickle protocol, using the same pipeline as WebR
 pip install git+https://github.com/eliteprox/py-trickle.git
 
 # Start server
-python server/app.py --workspace /path/to/comfyui --port 8889 --warm-pipeline
+python server/app.py --workspace /path/to/comfyui --port 8889
 
 # Start stream
 curl -X POST http://localhost:8889/stream/start -H "Content-Type: application/json" -d '{
@@ -73,11 +73,11 @@ curl -X POST http://localhost:8889/stream/my-stream/stop
 
 - **Shared pipeline** with WebRTC for consistency
 - **Stable timing** for reliable encoding
-- **Fast startup** with `--warm-pipeline`
+- **Fast startup** with automatic pipeline warming
 - **Graceful fallback** during processing delays
 
 ## Troubleshooting
 
 - **Won't start**: Check trickle URLs accessible
 - **No processing**: Verify ComfyUI workspace/models loaded  
-- **Performance**: Use `--warm-pipeline` flag 
+- **Performance**: Pipeline warming is enabled by default (use `--skip-warmup` to disable, or `--warmup-workflow <filename>` to specify a custom workflow for warmup from `workflows/comfystream/` directory) 
