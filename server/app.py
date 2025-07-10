@@ -93,6 +93,8 @@ class VideoStreamTrack(MediaStreamTrack):
                     # Check if frame is a VideoFrame before passing to pipeline
                     if isinstance(frame, av.VideoFrame):
                         await self.pipeline.put_video_frame(frame)
+                    else:
+                        logger.error(f"Received non-video frame as VideoStreamTrack: {type(frame)}")
                 except asyncio.CancelledError:
                     logger.info("Frame collection cancelled")
                     break
@@ -160,6 +162,8 @@ class AudioStreamTrack(MediaStreamTrack):
                     # Check if frame is an AudioFrame before passing to pipeline
                     if isinstance(frame, av.AudioFrame):
                         await self.pipeline.put_audio_frame(frame)
+                    else:
+                        logger.error(f"Received non-audio frame as AudioStreamTrack: {type(frame)}")
                 except asyncio.CancelledError:
                     logger.info("Audio frame collection cancelled")
                     break
