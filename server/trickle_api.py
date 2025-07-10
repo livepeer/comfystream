@@ -85,24 +85,8 @@ async def start_stream(request):
                 )
         else:
             # Set a default simple inversion workflow for testing
-            default_workflow = {
-                "1": {
-                    "inputs": {
-                        "images": ["2", 0]
-                    },
-                    "class_type": "SaveTensor"
-                },
-                "2": {
-                    "inputs": {},
-                    "class_type": "LoadTensor"
-                },
-                "3": {
-                    "inputs": {
-                        "images": ["2", 0]
-                    },
-                    "class_type": "ImageInvert"
-                }
-            }
+            from comfystream.server.workflows import get_inverted_prompt
+            default_workflow = get_inverted_prompt()
             await pipeline.set_prompts(default_workflow)
             logger.info(f"Set default inversion workflow for stream {request_id}")
         
