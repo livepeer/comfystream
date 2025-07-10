@@ -30,10 +30,10 @@ from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
-from comfystream.prompts import DEFAULT_PROMPT, INVERTED_PROMPT, DEFAULT_SD_PROMPT
 from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
+from comfystream.server.workflows import get_default_workflow, get_inverted_workflow, get_default_sd_workflow, load_workflow
 # Import trickle API functions - trickle-app should always be installed
 from trickle_api import setup_trickle_routes, cleanup_trickle_streams
 from frame_buffer import FrameBuffer
@@ -42,8 +42,6 @@ import time
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
-
-CURRENT_PROMPT = DEFAULT_PROMPT
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
@@ -318,17 +316,14 @@ async def offer(request):
                         # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Warm the video pipeline with the new resolution only if requested and not already warmed
-                        if (request.app.get("warm_pipeline", False) and "m=video" in pc.remoteDescription.sdp 
-                            and not request.app.get("pipeline_warmed", {}).get("video", False)):
-                            await pipeline.warm_video()
-                            request.app["pipeline_warmed"]["video"] = True
-                            logger.info(f"[Control] Pipeline warmed with new resolution {params['width']}x{params['height']}")
-                        elif "m=video" in pc.remoteDescription.sdp:
-                            if request.app.get("pipeline_warmed", {}).get("video", False):
-                                logger.info(f"[Control] Video pipeline already warmed on startup")
+                        # Warm the video pipeline with the new resolution if pipeline is not already warmed
+                        if "m=video" in pc.remoteDescription.sdp: 
+                            if not request.app.get("pipeline_warmed", {}).get("video", False):
+                                await pipeline.warm_video()
+                                request.app["pipeline_warmed"]["video"] = True
+                                logger.info(f"[Control] Pipeline warmed with new resolution {params['width']}x{params['height']}")
                             else:
-                                logger.info(f"[Control] Pipeline warming skipped for resolution update (use --warm-pipeline to enable)")
+                                logger.info(f"[Control] Video pipeline already warmed on startup")
                             
                         response = {
                             "type": "resolution_updated",
@@ -432,18 +427,27 @@ async def on_startup(app: web.Application) -> None:
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
     )
     
-    # Set default prompts for the pipeline using the pattern from main.py
+    # Set prompts for the pipeline (either warmup workflow or default)
     try:
-        await app["pipeline"].set_prompts(json.loads(CURRENT_PROMPT))
-        logger.info("Default prompts set for pipeline")
+        warmup_workflow = app.get("warmup_workflow")
+        if warmup_workflow:
+            logger.info(f"Using warmup workflow: {warmup_workflow}")
+            warmup_prompt = load_workflow(warmup_workflow)
+        else:
+            logger.info("Using default workflow for warmup")
+            warmup_prompt = get_default_workflow()
+        
+        await app["pipeline"].set_prompts([warmup_prompt])
+        logger.info("Warmup prompts set for pipeline")
     except Exception as e:
-        logger.error(f"Error setting default prompts: {e}")
+        logger.error(f"Error setting prompts, warmup failed on startup: {e}")
+        
     
     # Track warming status to avoid redundant warming
     app["pipeline_warmed"] = {"video": False}
     
-    # Only warm up pipeline if explicitly requested
-    if app.get("warm_pipeline", False):
+    # Warm up pipeline by default unless explicitly skipped
+    if app.get("warm_pipeline", True):
         try:
             logger.info("Warming up video pipeline on startup...")
             await app["pipeline"].warm_video()
@@ -454,7 +458,7 @@ async def on_startup(app: web.Application) -> None:
             # Don't raise the exception to allow the application to start
             # The pipeline will be warmed when needed
     else:
-        logger.info("Pipeline warming skipped (use --warm-pipeline to enable)")
+        logger.info("Pipeline warming skipped on startup")
     
     app["pcs"] = set()
     app["video_tracks"] = {}
@@ -512,10 +516,15 @@ if __name__ == "__main__":
         help="Set the logging level for ComfyUI inference",
     )
     parser.add_argument(
-        "--warm-pipeline",
+        "--skip-warmup",
         default=False,
         action="store_true",
-        help="Warm up the pipeline on startup (similar to main.py)",
+        help="Skip warming the pipeline on startup (reduces startup time but increases latency for first user)",
+    )
+    parser.add_argument(
+        "--warmup-workflow",
+        default=None,
+        help="Specify a workflow file name to use for pipeline warmup (e.g., 'sd15-tensorrt-api.json'). If not specified, uses default workflow.",
     )
     args = parser.parse_args()
 
@@ -528,7 +537,8 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
-    app["warm_pipeline"] = args.warm_pipeline
+    app["warm_pipeline"] = not args.skip_warmup
+    app["warmup_workflow"] = args.warmup_workflow
     
     # Setup CORS
     cors = setup_cors(app, defaults={

@@ -34,6 +34,10 @@ Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/ic
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = {find = {where = ["src", "nodes"]}}
+include-package-data = true
+
+[tool.setuptools.package-data]
+"comfystream" = ["workflows/*.json"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
