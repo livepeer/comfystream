@@ -411,7 +411,7 @@ async def set_prompt(request):
     
 
 async def health(_):
-    return web.Response(content_type="application/json", text="OK")
+    return web.json_response({"status": "OK"})
 
 
 async def on_startup(app: web.Application) -> None:
