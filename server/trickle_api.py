@@ -11,7 +11,6 @@ import logging
 from typing import Dict, Optional
 from aiohttp import web
 
-# Import the trickle integration - trickle-app should always be installed
 from trickle_integration import TrickleStreamManager
 
 logger = logging.getLogger(__name__)
