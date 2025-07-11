@@ -5,10 +5,9 @@ This module implements REST API endpoints for streaming with trickle protocol in
 Handles ingress/egress to ComfyStream pipeline using the trickle-app package.
 """
 
-import asyncio
 import json
 import logging
-from typing import Dict, Optional
+from typing import Optional
 from aiohttp import web
 
 from trickle_integration import TrickleStreamManager
@@ -83,12 +82,6 @@ async def start_stream(request):
                     {'error': f'Invalid prompt JSON: {str(e)}'}, 
                     status=400
                 )
-        else:
-            # Set a default simple inversion workflow for testing
-            from comfystream.server.workflows import get_inverted_prompt
-            default_workflow = get_inverted_prompt()
-            await pipeline.set_prompts(default_workflow)
-            logger.info(f"Set default inversion workflow for stream {request_id}")
         
         # Start the stream using the shared pipeline
         success = await stream_manager.create_stream(
@@ -103,7 +96,6 @@ async def start_stream(request):
         )
         
         if success:
-            
             return web.json_response({
                 'status': 'success',
                 'message': f'Stream {request_id} started successfully',
