@@ -1,0 +1,135 @@
+"""
+Pydantic models for ComfyStream API parameters.
+
+This module defines reusable BaseModel classes for validating and serializing
+API request parameters used across the ComfyStream trickle API endpoints.
+"""
+
+import json
+from typing import Any, Dict, List, Optional, Union
+from pydantic import BaseModel, Field, field_validator
+
+from comfystream.server.workflows import get_default_workflow
+DEFAULT_WORKFLOW_JSON = get_default_workflow()
+DEFAULT_WIDTH = 512
+DEFAULT_HEIGHT = 512
+
+class ComfyUIParams(BaseModel):
+    class Config:
+        extra = "forbid"
+
+    prompts: Union[str, dict] = DEFAULT_WORKFLOW_JSON
+    width: int = DEFAULT_WIDTH
+    height: int = DEFAULT_HEIGHT
+
+    @field_validator('prompts', mode='before')
+    @classmethod
+    def validate_prompts(cls, v) -> dict:
+        if v == "":
+            return DEFAULT_WORKFLOW_JSON
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if not isinstance(parsed, dict):
+                    raise ValueError("Parsed prompt JSON must be a dictionary/object")
+                return parsed
+            except json.JSONDecodeError:
+                raise ValueError("Provided prompt string must be valid JSON")
+        raise ValueError("Prompt must be either a JSON object or such JSON object serialized as a string")
+
+    @field_validator('width', 'height', mode='before')
+    @classmethod
+    def convert_dimensions_to_int(cls, v):
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                raise ValueError(f"Invalid dimension value: {v} cannot be converted to integer")
+        return v
+
+class StreamStartRequest(BaseModel):
+    subscribe_url: str = Field(..., description="URL for subscribing to input video stream")
+    publish_url: str = Field(..., description="URL for publishing output video stream")
+    control_url: Optional[str] = Field(default=None, description="URL for control channel communication")
+    events_url: Optional[str] = Field(default=None, description="URL for events channel communication")
+    gateway_request_id: str = Field(..., description="Unique identifier for the stream request")
+    
+    # Optional fields that may be present in the request
+    manifest_id: Optional[str] = Field(default=None, description="Manifest identifier")
+    model_id: Optional[str] = Field(default=None, description="Model identifier")
+    stream_id: Optional[str] = Field(default=None, description="Stream identifier")
+    
+    # Make params optional with default values
+    params: Optional[ComfyUIParams] = Field(
+        default=None, 
+        description="ComfyUI workflow parameters (prompt, width, height). If not provided, defaults will be used."
+    )
+    
+    # Allow direct specification of ComfyUI parameters at top level (for backward compatibility)
+    prompts: Optional[Union[str, dict]] = Field(default=None, description="ComfyUI workflow prompts")
+    width: Optional[int] = Field(default=None, description="Video width")
+    height: Optional[int] = Field(default=None, description="Video height")
+    
+    def get_comfy_params(self) -> ComfyUIParams:
+        """Get the ComfyUI parameters, either from params field or from top-level fields, or use defaults."""
+        if self.params is not None:
+            return self.params
+        
+        # Use top-level fields if available
+        prompts = self.prompts if self.prompts is not None else DEFAULT_WORKFLOW_JSON
+        width = self.width if self.width is not None else DEFAULT_WIDTH
+        height = self.height if self.height is not None else DEFAULT_HEIGHT
+        
+        return ComfyUIParams(prompts=prompts, width=width, height=height)
+
+class StreamParamsUpdateRequest(BaseModel):
+    """Request model for updating stream parameters with flat structure."""
+    width: int = Field(default=DEFAULT_WIDTH, description="Width of the generated video")
+    height: int = Field(default=DEFAULT_HEIGHT, description="Height of the generated video")  
+    prompts: Union[str, Dict[str, Any]] = Field(..., description="ComfyUI workflow as JSON string or dict")
+    
+    @field_validator('prompts', mode='before')
+    @classmethod
+    def validate_prompts(cls, v) -> dict:
+        if v == "":
+            return DEFAULT_WORKFLOW_JSON
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if not isinstance(parsed, dict):
+                    raise ValueError("Parsed prompt JSON must be a dictionary/object")
+                return parsed
+            except json.JSONDecodeError:
+                raise ValueError("Provided prompt string must be valid JSON")
+        raise ValueError("Prompt must be either a JSON object or such JSON object serialized as a string")
+
+class StreamResponse(BaseModel):
+    status: str = Field(..., description="Operation status (success/error)")
+    message: str = Field(..., description="Human-readable message")
+    request_id: Optional[str] = Field(default=None, description="Stream request ID")
+    config: Optional[dict] = Field(default=None, description="Stream configuration details")
+
+class StreamStatusResponse(BaseModel):
+    processing_active: bool = Field(..., description="Whether stream processing is active")
+    stream_count: int = Field(..., description="Number of active streams")
+    message: Optional[str] = Field(default=None, description="Status message")
+    current_stream: Optional[dict] = Field(default=None, description="Current stream details")
+    all_streams: Optional[dict] = Field(default=None, description="All active streams")
+
+class HealthCheckResponse(BaseModel):
+    status: str = Field(..., description="Service health status")
+    service: str = Field(..., description="Service name")
+    version: str = Field(..., description="Service version")
+    stream_manager_ready: Optional[bool] = Field(default=None, description="Whether stream manager is ready")
+    error: Optional[str] = Field(default=None, description="Error message if unhealthy")
+
+class ServiceInfoResponse(BaseModel):
+    service: str = Field(..., description="Service name")
+    version: str = Field(..., description="Service version")
+    description: str = Field(..., description="Service description")
+    capabilities: list = Field(..., description="List of service capabilities")
+    endpoints: dict = Field(..., description="Available API endpoints") 
