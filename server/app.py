@@ -257,7 +257,7 @@ class VideoStreamTrack(MediaStreamTrack):
             frame_buffer.update_frame(processed_frame)
         except Exception as e:
             # Don't let frame buffer errors affect the main pipeline
-            print(f"Error updating frame buffer: {e}")
+            logger.error(f"Error updating frame buffer: {e}")
 
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()

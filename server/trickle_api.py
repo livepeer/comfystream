@@ -34,22 +34,16 @@ async def start_stream(request):
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
         data = await request.json()
         
-        # Debug logging to see what data is being received
-        logger.info(f"[DEBUG] Received request data: {data}")
-        logger.info(f"[DEBUG] Request data type: {type(data)}")
-        logger.info(f"[DEBUG] Request data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-        
         try:
             stream_request = StreamStartRequest(**data)
         except ValidationError as e:
-            logger.error(f"[DEBUG] Pydantic validation failed: {e}")
-            logger.error(f"[DEBUG] Validation errors: {e.errors()}")
+            logger.error(f"Pydantic validation failed: {e}")
             return web.json_response({
                 'error': 'Validation error',
                 'details': e.errors()
             }, status=400)
         except Exception as e:
-            logger.error(f"[DEBUG] Unexpected error during validation: {e}")
+            logger.error(f"Unexpected error during validation: {e}")
             return web.json_response({
                 'error': 'Unexpected validation error',
                 'details': str(e)
@@ -109,7 +103,7 @@ async def start_stream(request):
             )
             return web.json_response(response_data.model_dump(), status=500)
     except json.JSONDecodeError as e:
-        logger.error(f"[DEBUG] JSON decode error: {e}")
+        logger.error(f"JSON decode error: {e}")
         return web.json_response({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.error(f"Error starting stream: {e}")
@@ -162,17 +156,6 @@ async def get_stream_status(request):
         status = await stream_manager.get_stream_status(request_id)
         
         if status:
-            # Add current prompts info to status for debugging
-            handler = stream_manager.handlers.get(request_id)
-            if handler and handler.pipeline:
-                try:
-                    current_prompts = handler.pipeline.client.current_prompts
-                    status['current_prompts'] = current_prompts
-                    status['prompts_count'] = len(current_prompts)
-                except Exception as e:
-                    logger.debug(f"Could not get current prompts: {e}")
-                    status['prompts_error'] = str(e)
-            
             return web.json_response(status)
         else:
             return web.json_response({
@@ -295,14 +278,13 @@ async def update_stream_params(request):
         try:
             params_request = StreamParamsUpdateRequest(**data)
         except ValidationError as e:
-            logger.error(f"[DEBUG] Pydantic validation failed in update_stream_params: {e}")
-            logger.error(f"[DEBUG] Validation errors: {e.errors()}")
+            logger.error(f"Pydantic validation failed in update_stream_params: {e}")
             return web.json_response({
                 'error': 'Validation error',
                 'details': e.errors()
             }, status=400)
         except Exception as e:
-            logger.error(f"[DEBUG] Unexpected error during validation in update_stream_params: {e}")
+            logger.error(f"Unexpected error during validation in update_stream_params: {e}")
             return web.json_response({
                 'error': 'Unexpected validation error',
                 'details': str(e)
@@ -352,83 +334,7 @@ async def health_check(request):
         )
         return web.json_response(response_data.model_dump(), status=500)
 
-async def get_stream_prompts(request):
-    """Get current prompts for a specific stream (debugging)."""
-    try:
-        if not stream_manager:
-            return web.json_response({'error': 'Stream manager not initialized'}, status=500)
-        
-        request_id = request.match_info.get('request_id')
-        if not request_id:
-            return web.json_response({'error': 'Missing request_id'}, status=400)
-        
-        handler = stream_manager.handlers.get(request_id)
-        if not handler:
-            return web.json_response({'error': f'Stream {request_id} not found'}, status=404)
-        
-        try:
-            current_prompts = handler.pipeline.client.current_prompts
-            running_prompts = list(handler.pipeline.client.running_prompts.keys())
-            
-            return web.json_response({
-                'request_id': request_id,
-                'current_prompts': current_prompts,
-                'running_prompts': running_prompts,
-                'prompts_count': len(current_prompts)
-            })
-        except Exception as e:
-            return web.json_response({
-                'error': f'Error getting prompts: {str(e)}',
-                'request_id': request_id
-            }, status=500)
-            
-    except Exception as e:
-        logger.error(f"Error getting stream prompts: {e}")
-        return web.json_response({
-            'error': f'Internal server error: {str(e)}'
-        }, status=500)
 
-async def set_stream_prompts(request):
-    """Set prompts for a specific stream directly (debugging)."""
-    try:
-        if not stream_manager:
-            return web.json_response({'error': 'Stream manager not initialized'}, status=500)
-        
-        request_id = request.match_info.get('request_id')
-        if not request_id:
-            return web.json_response({'error': 'Missing request_id'}, status=400)
-        
-        handler = stream_manager.handlers.get(request_id)
-        if not handler:
-            return web.json_response({'error': f'Stream {request_id} not found'}, status=404)
-        
-        data = await request.json()
-        prompts = data.get('prompts')
-        if not prompts:
-            return web.json_response({'error': 'Missing prompts field'}, status=400)
-        
-        try:
-            # Set prompts directly on the pipeline
-            await handler.pipeline.set_prompts([prompts])
-            logger.info(f"[Debug] Manually set prompts for stream {request_id}")
-            
-            return web.json_response({
-                'status': 'success',
-                'message': f'Prompts set for stream {request_id}',
-                'request_id': request_id
-            })
-        except Exception as e:
-            logger.error(f"Error setting prompts for stream {request_id}: {e}")
-            return web.json_response({
-                'error': f'Error setting prompts: {str(e)}',
-                'request_id': request_id
-            }, status=500)
-            
-    except Exception as e:
-        logger.error(f"Error in set_stream_prompts: {e}")
-        return web.json_response({
-            'error': f'Internal server error: {str(e)}'
-        }, status=500)
 
 async def root_info(request):
     """Root endpoint with service info (webrtc-worker compatible)."""
@@ -445,8 +351,7 @@ async def root_info(request):
                 'status': 'GET /stream/status - Get current stream status',
                 'status_by_id': 'GET /stream/{request_id}/status - Get specific stream status',
                 'params': 'POST /stream/{request_id}/params - Update stream prompts',
-                'prompts': 'GET /stream/{request_id}/prompts - Get current prompts (debug)',
-                'set_prompts': 'POST /stream/{request_id}/prompts - Set prompts directly (debug)',
+
                 'list': 'GET /streams - List all active streams',
                 'health': 'GET /health - Health check',
                 'live_video': 'POST /live-video-to-video - Start live video processing'
@@ -482,8 +387,6 @@ def setup_trickle_routes(app, cors):
     cors.add(app.router.add_get("/stream/{request_id}/status", get_stream_status))
     cors.add(app.router.add_get("/streams", list_streams))
     cors.add(app.router.add_post("/stream/{request_id}/params", update_stream_params))
-    cors.add(app.router.add_get("/stream/{request_id}/prompts", get_stream_prompts))
-    cors.add(app.router.add_post("/stream/{request_id}/prompts", set_stream_prompts))
     
     # Process capability compatible routes (for byoc worker compatibility)
     cors.add(app.router.add_post("/stream/stop", stop_current_stream))

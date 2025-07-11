@@ -263,7 +263,6 @@ class ComfyStreamTrickleProcessor:
             try:
                 # Check if processing lock is available (if not, we're shutting down)
                 if self.processing_lock.locked():
-                    logger.debug(f"Processing locked during shutdown for request {self.request_id}")
                     if self.last_processed_frame is not None:
                         return VideoOutput(self.last_processed_frame, self.request_id)
                     return VideoOutput(frame, self.request_id)
@@ -482,12 +481,10 @@ class TrickleStreamHandler:
     async def _emit_monitoring_event(self, data: Dict[str, Any], event_type: str):
         """Safely emit monitoring events, handling the case when events_url is not provided."""
         if not self.events_available:
-            logger.debug(f"Monitoring event skipped (no events URL): {event_type} for {self.request_id}")
             return
         
         try:
             await self.client.protocol.emit_monitoring_event(data, event_type)
-            logger.debug(f"Emitted monitoring event: {event_type} for {self.request_id}")
         except Exception as e:
             logger.warning(f"Failed to emit monitoring event {event_type} for {self.request_id}: {e}")
         
@@ -568,13 +565,11 @@ class TrickleStreamHandler:
             try:
                 current_prompts = self.pipeline.client.current_prompts
                 logger.info(f"[Control] Current prompts before update for stream {self.request_id}: {len(current_prompts)} prompts")
-                logger.debug(f"[Control] Current prompts content: {current_prompts}")
             except Exception as e:
                 logger.debug(f"[Control] Could not get current prompts: {e}")
             
             try:
                 logger.info(f"[Control] Updating prompts for stream {self.request_id} with: {type(prompts)}")
-                logger.debug(f"[Control] New prompts content: {prompts}")
 
                 # Use update_prompts to update the workflow without canceling currently running prompts
                 # Pipeline now handles prompt parsing internally
@@ -631,7 +626,6 @@ class TrickleStreamHandler:
                     
                     # Emit the stats
                     await self._emit_monitoring_event(stats, "stream_stats")
-                    logger.debug(f"Sent stats for stream {self.request_id}: {stats['processor']['frame_count']} frames processed")
                     
                 except Exception as e:
                     logger.error(f"Error sending stats for {self.request_id}: {e}")
