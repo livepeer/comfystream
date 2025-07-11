@@ -9,8 +9,17 @@ import json
 import logging
 from typing import Optional
 from aiohttp import web
+from pydantic import ValidationError
 
 from trickle_integration import TrickleStreamManager
+from api_spec import (
+    StreamStartRequest, 
+    StreamParamsUpdateRequest, 
+    StreamResponse, 
+    StreamStatusResponse, 
+    HealthCheckResponse, 
+    ServiceInfoResponse
+)
 
 logger = logging.getLogger(__name__)
 logger.info("Using trickle integration")
@@ -19,108 +28,96 @@ logger.info("Using trickle integration")
 stream_manager: Optional[TrickleStreamManager] = None
 
 async def start_stream(request):
-    """Start a new trickle stream.
-    
-    Expected request format:
-    {
-        "subscribe_url": "http://192.168.10.61:3389/sample",
-        "publish_url": "http://192.168.10.61:3389/sample-output",
-        "control_url": "http://192.168.10.61:3389/sample-control",
-        "events_url": "http://192.168.10.61:3389/sample-events",
-        "gateway_request_id": "sample2",
-        "params": {
-            "width": 512,
-            "height": 512,
-            "prompt": "{\"1\":{\"inputs\":{\"images\":[\"2\",0]},\"class_type\":\"SaveTensor\"},...}"
-        }
-    }
-    """
+    """Start a new trickle stream."""
     try:
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
-            
         data = await request.json()
         
-        # Validate required fields
-        required_fields = ['subscribe_url', 'publish_url', 'gateway_request_id']
-        for field in required_fields:
-            if field not in data:
-                return web.json_response(
-                    {'error': f'Missing required field: {field}'}, 
-                    status=400
-                )
+        # Debug logging to see what data is being received
+        logger.info(f"[DEBUG] Received request data: {data}")
+        logger.info(f"[DEBUG] Request data type: {type(data)}")
+        logger.info(f"[DEBUG] Request data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
         
-        # Extract configuration
-        request_id = data['gateway_request_id']
-        params = data.get('params', {})
-        
-        width = params.get('width', 512)
-        height = params.get('height', 512)
-        
-        # Use the shared pipeline from app.py instead of creating a new one
+        try:
+            stream_request = StreamStartRequest(**data)
+        except ValidationError as e:
+            logger.error(f"[DEBUG] Pydantic validation failed: {e}")
+            logger.error(f"[DEBUG] Validation errors: {e.errors()}")
+            return web.json_response({
+                'error': 'Validation error',
+                'details': e.errors()
+            }, status=400)
+        except Exception as e:
+            logger.error(f"[DEBUG] Unexpected error during validation: {e}")
+            return web.json_response({
+                'error': 'Unexpected validation error',
+                'details': str(e)
+            }, status=400)
+            
+        request_id = stream_request.gateway_request_id
+        params = stream_request.get_comfy_params()
+        width = params.width
+        height = params.height
+        prompts = params.prompts
         pipeline = request.app.get('pipeline')
         if not pipeline:
-            return web.json_response({
-                'error': 'Pipeline not initialized in app'
-            }, status=500)
-        
-        # Update pipeline resolution if different from current
+            return web.json_response({'error': 'Pipeline not initialized in app'}, status=500)
         if pipeline.width != width or pipeline.height != height:
             pipeline.width = width
             pipeline.height = height
             logger.info(f"Updated pipeline resolution to {width}x{height} for stream {request_id}")
+        # Set prompts - prompts is already a single workflow object, wrap in array for set_prompts
+        try:
+            await pipeline.set_prompts([prompts])
+            logger.info(f"Set prompts for stream {request_id}")
+        except Exception as e:
+            logger.error(f"Invalid prompt for stream {request_id}: {e}")
+            return web.json_response({'error': f'Invalid prompt: {str(e)}'}, status=400)
         
-        # Set prompts if provided
-        if 'prompt' in params:
-            try:
-                prompt_data = json.loads(params['prompt'])
-                await pipeline.set_prompts(prompt_data)
-                logger.info(f"Set prompts for stream {request_id}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid prompt JSON for stream {request_id}: {e}")
-                return web.json_response(
-                    {'error': f'Invalid prompt JSON: {str(e)}'}, 
-                    status=400
-                )
+        # Log if control_url is not provided
+        if not stream_request.control_url:
+            logger.info(f"Control URL not provided for stream {request_id} - parameter updates will not be read from orchestrator")
         
-        # Start the stream using the shared pipeline
         success = await stream_manager.create_stream(
             request_id=request_id,
-            subscribe_url=data['subscribe_url'],
-            publish_url=data['publish_url'],
-            control_url=data['control_url'],
-            events_url=data['events_url'],
+            subscribe_url=stream_request.subscribe_url,
+            publish_url=stream_request.publish_url,
+            control_url=stream_request.control_url or "",
+            events_url=stream_request.events_url or "",
             pipeline=pipeline,
             width=width,
             height=height
         )
-        
         if success:
-            return web.json_response({
-                'status': 'success',
-                'message': f'Stream {request_id} started successfully',
-                'request_id': request_id,
-                'config': {
-                    'subscribe_url': data['subscribe_url'],
-                    'publish_url': data['publish_url'],
+            response_data = StreamResponse(
+                status='success',
+                message=f'Stream {request_id} started successfully',
+                request_id=request_id,
+                config={
+                    'subscribe_url': stream_request.subscribe_url,
+                    'publish_url': stream_request.publish_url,
                     'width': width,
                     'height': height
                 }
-            })
+            )
+            return web.json_response(response_data.model_dump())
         else:
-            return web.json_response({
-                'status': 'error',
-                'message': f'Failed to start stream {request_id}'
-            }, status=500)
-            
-    except json.JSONDecodeError:
+            response_data = StreamResponse(
+                status='error',
+                message=f'Failed to start stream {request_id}'
+            )
+            return web.json_response(response_data.model_dump(), status=500)
+    except json.JSONDecodeError as e:
+        logger.error(f"[DEBUG] JSON decode error: {e}")
         return web.json_response({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.error(f"Error starting stream: {e}")
-        return web.json_response({
-            'status': 'error',
-            'message': f'Internal server error: {str(e)}'
-        }, status=500)
+        response_data = StreamResponse(
+            status='error',
+            message=f'Internal server error: {str(e)}'
+        )
+        return web.json_response(response_data.model_dump(), status=500)
 
 async def stop_stream(request):
     """Stop a trickle stream."""
@@ -165,6 +162,17 @@ async def get_stream_status(request):
         status = await stream_manager.get_stream_status(request_id)
         
         if status:
+            # Add current prompts info to status for debugging
+            handler = stream_manager.handlers.get(request_id)
+            if handler and handler.pipeline:
+                try:
+                    current_prompts = handler.pipeline.client.current_prompts
+                    status['current_prompts'] = current_prompts
+                    status['prompts_count'] = len(current_prompts)
+                except Exception as e:
+                    logger.debug(f"Could not get current prompts: {e}")
+                    status['prompts_error'] = str(e)
+            
             return web.json_response(status)
         else:
             return web.json_response({
@@ -246,22 +254,24 @@ async def get_current_stream_status(request):
         streams = await stream_manager.list_streams()
         
         if not streams:
-            return web.json_response({
-                'processing_active': False,
-                'stream_count': 0,
-                'message': 'No active streams'
-            })
+            response_data = StreamStatusResponse(
+                processing_active=False,
+                stream_count=0,
+                message='No active streams'
+            )
+            return web.json_response(response_data.model_dump())
         
         # Return status compatible with webrtc-worker format
         stream_id = next(iter(streams.keys()))  # Get first stream
         stream_status = streams[stream_id]
         
-        return web.json_response({
-            'processing_active': stream_status.get('running', False),
-            'stream_count': len(streams),
-            'current_stream': stream_status,
-            'all_streams': streams
-        })
+        response_data = StreamStatusResponse(
+            processing_active=stream_status.get('running', False),
+            stream_count=len(streams),
+            current_stream=stream_status,
+            all_streams=streams
+        )
+        return web.json_response(response_data.model_dump())
         
     except Exception as e:
         logger.error(f"Error getting current stream status: {e}")
@@ -271,55 +281,53 @@ async def get_current_stream_status(request):
         }, status=500)
 
 async def update_stream_params(request):
-    """Update parameters for a specific stream.
-    
-    Expected request format:
-    {
-        "prompts": {...}
-    }
-    """
+    """Update parameters for a specific stream."""
     try:
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
-            
         request_id = request.match_info.get('request_id')
         if not request_id:
             return web.json_response({'error': 'Missing request_id'}, status=400)
-        
-        # Check if stream exists
         stream_status = await stream_manager.get_stream_status(request_id)
         if not stream_status:
-            return web.json_response({
-                'error': f'Stream {request_id} not found'
-            }, status=404)
-        
-        # Parse request data
+            return web.json_response({'error': f'Stream {request_id} not found'}, status=404)
         data = await request.json()
-        
-        # Get the stream handler
+        try:
+            params_request = StreamParamsUpdateRequest(**data)
+        except ValidationError as e:
+            logger.error(f"[DEBUG] Pydantic validation failed in update_stream_params: {e}")
+            logger.error(f"[DEBUG] Validation errors: {e.errors()}")
+            return web.json_response({
+                'error': 'Validation error',
+                'details': e.errors()
+            }, status=400)
+        except Exception as e:
+            logger.error(f"[DEBUG] Unexpected error during validation in update_stream_params: {e}")
+            return web.json_response({
+                'error': 'Unexpected validation error',
+                'details': str(e)
+            }, status=400)
         handler = stream_manager.handlers.get(request_id)
         if not handler:
-            return web.json_response({
-                'error': f'Stream handler {request_id} not found'
-            }, status=404)
-        
-        # Process the parameter update using the same handler as control messages
-        await handler._handle_control_message(data)
-        
-        return web.json_response({
-            'status': 'success',
-            'message': f'Prompts updated for stream {request_id}',
-            'request_id': request_id
-        })
-        
+            return web.json_response({'error': f'Stream handler {request_id} not found'}, status=404)
+        # Use the validated prompts directly from the request
+        # HTTP API uses 'prompts' (plural) - single workflow object
+        await handler._handle_control_message({'prompts': params_request.prompts, 'width': params_request.width, 'height': params_request.height})
+        response_data = StreamResponse(
+            status='success',
+            message=f'Parameters updated for stream {request_id}',
+            request_id=request_id
+        )
+        return web.json_response(response_data.model_dump())
     except json.JSONDecodeError:
         return web.json_response({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.error(f"Error updating stream parameters: {e}")
-        return web.json_response({
-            'status': 'error',
-            'message': f'Internal server error: {str(e)}'
-        }, status=500)
+        response_data = StreamResponse(
+            status='error',
+            message=f'Internal server error: {str(e)}'
+        )
+        return web.json_response(response_data.model_dump(), status=500)
 
 async def health_check(request):
     """Health check endpoint (webrtc-worker compatible)."""
@@ -327,40 +335,124 @@ async def health_check(request):
         # Check if stream manager is initialized
         manager_healthy = stream_manager is not None
         
-        return web.json_response({
-            'status': 'healthy',
-            'service': 'trickle-stream-processor',
-            'version': '1.0.0',
-            'stream_manager_ready': manager_healthy
-        })
+        response_data = HealthCheckResponse(
+            status='healthy',
+            service='trickle-stream-processor',
+            version='1.0.0',
+            stream_manager_ready=manager_healthy
+        )
+        return web.json_response(response_data.model_dump())
     except Exception as e:
         logger.error(f"Error in health check: {e}")
+        response_data = HealthCheckResponse(
+            status='unhealthy',
+            service='trickle-stream-processor',
+            version='1.0.0',
+            error=str(e)
+        )
+        return web.json_response(response_data.model_dump(), status=500)
+
+async def get_stream_prompts(request):
+    """Get current prompts for a specific stream (debugging)."""
+    try:
+        if not stream_manager:
+            return web.json_response({'error': 'Stream manager not initialized'}, status=500)
+        
+        request_id = request.match_info.get('request_id')
+        if not request_id:
+            return web.json_response({'error': 'Missing request_id'}, status=400)
+        
+        handler = stream_manager.handlers.get(request_id)
+        if not handler:
+            return web.json_response({'error': f'Stream {request_id} not found'}, status=404)
+        
+        try:
+            current_prompts = handler.pipeline.client.current_prompts
+            running_prompts = list(handler.pipeline.client.running_prompts.keys())
+            
+            return web.json_response({
+                'request_id': request_id,
+                'current_prompts': current_prompts,
+                'running_prompts': running_prompts,
+                'prompts_count': len(current_prompts)
+            })
+        except Exception as e:
+            return web.json_response({
+                'error': f'Error getting prompts: {str(e)}',
+                'request_id': request_id
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"Error getting stream prompts: {e}")
         return web.json_response({
-            'status': 'unhealthy',
-            'service': 'trickle-stream-processor',
-            'error': str(e)
+            'error': f'Internal server error: {str(e)}'
+        }, status=500)
+
+async def set_stream_prompts(request):
+    """Set prompts for a specific stream directly (debugging)."""
+    try:
+        if not stream_manager:
+            return web.json_response({'error': 'Stream manager not initialized'}, status=500)
+        
+        request_id = request.match_info.get('request_id')
+        if not request_id:
+            return web.json_response({'error': 'Missing request_id'}, status=400)
+        
+        handler = stream_manager.handlers.get(request_id)
+        if not handler:
+            return web.json_response({'error': f'Stream {request_id} not found'}, status=404)
+        
+        data = await request.json()
+        prompts = data.get('prompts')
+        if not prompts:
+            return web.json_response({'error': 'Missing prompts field'}, status=400)
+        
+        try:
+            # Set prompts directly on the pipeline
+            await handler.pipeline.set_prompts([prompts])
+            logger.info(f"[Debug] Manually set prompts for stream {request_id}")
+            
+            return web.json_response({
+                'status': 'success',
+                'message': f'Prompts set for stream {request_id}',
+                'request_id': request_id
+            })
+        except Exception as e:
+            logger.error(f"Error setting prompts for stream {request_id}: {e}")
+            return web.json_response({
+                'error': f'Error setting prompts: {str(e)}',
+                'request_id': request_id
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"Error in set_stream_prompts: {e}")
+        return web.json_response({
+            'error': f'Internal server error: {str(e)}'
         }, status=500)
 
 async def root_info(request):
     """Root endpoint with service info (webrtc-worker compatible)."""
     try:
-        return web.json_response({
-            'service': 'Trickle Stream Processor',
-            'version': '1.0.0',
-            'description': 'ComfyStream trickle streaming processor for real-time video processing',
-            'capabilities': ['video-processing', 'trickle-streaming'],
-            'endpoints': {
+        response_data = ServiceInfoResponse(
+            service='Trickle Stream Processor',
+            version='1.0.0',
+            description='ComfyStream trickle streaming processor for real-time video processing',
+            capabilities=['video-processing', 'trickle-streaming'],
+            endpoints={
                 'start': 'POST /stream/start - Start stream processing',
                 'stop': 'POST /stream/stop - Stop current stream processing',
                 'stop_by_id': 'POST /stream/{request_id}/stop - Stop specific stream',
                 'status': 'GET /stream/status - Get current stream status',
                 'status_by_id': 'GET /stream/{request_id}/status - Get specific stream status',
                 'params': 'POST /stream/{request_id}/params - Update stream prompts',
+                'prompts': 'GET /stream/{request_id}/prompts - Get current prompts (debug)',
+                'set_prompts': 'POST /stream/{request_id}/prompts - Set prompts directly (debug)',
                 'list': 'GET /streams - List all active streams',
                 'health': 'GET /health - Health check',
                 'live_video': 'POST /live-video-to-video - Start live video processing'
             }
-        })
+        )
+        return web.json_response(response_data.model_dump())
     except Exception as e:
         logger.error(f"Error in root info: {e}")
         return web.json_response({
@@ -380,7 +472,8 @@ def setup_trickle_routes(app, cors):
     stream_manager = TrickleStreamManager(app_context={
         'warm_pipeline': app.get('warm_pipeline', False),
         'workspace': app.get('workspace'),
-        'pipeline': app.get('pipeline')  # This will be set later during startup
+        'pipeline': app.get('pipeline'),  # This will be set later during startup
+        'health_manager': app.get('health_manager')  # Pass health manager for stream tracking
     })
 
     # Core trickle streaming routes
@@ -389,6 +482,8 @@ def setup_trickle_routes(app, cors):
     cors.add(app.router.add_get("/stream/{request_id}/status", get_stream_status))
     cors.add(app.router.add_get("/streams", list_streams))
     cors.add(app.router.add_post("/stream/{request_id}/params", update_stream_params))
+    cors.add(app.router.add_get("/stream/{request_id}/prompts", get_stream_prompts))
+    cors.add(app.router.add_post("/stream/{request_id}/prompts", set_stream_prompts))
     
     # Process capability compatible routes (for byoc worker compatibility)
     cors.add(app.router.add_post("/stream/stop", stop_current_stream))

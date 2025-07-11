@@ -66,40 +66,6 @@ def add_prefix_to_app_routes(app: web.Application, prefix: str):
         new_path = prefix + route.resource.canonical
         app.router.add_route(route.method, new_path, route.handler)
 
-
-def parse_prompts_parameter(prompts_param: Any) -> Union[Dict[Any, Any], List[Dict[Any, Any]]]:
-    """
-    Parse prompts parameter, handling both dict/list and JSON string formats.
-    
-    Args:
-        prompts_param: The prompts parameter which can be:
-            - A dictionary (workflow object)
-            - A list of dictionaries
-            - A JSON string representing a workflow or list of workflows
-    
-    Returns:
-        Parsed prompts as dict or list of dicts
-    
-    Raises:
-        ValueError: If the prompts parameter cannot be parsed
-    """
-    if isinstance(prompts_param, (dict, list)):
-        # Already parsed, return as-is
-        return prompts_param
-    elif isinstance(prompts_param, str):
-        # Try to parse as JSON
-        try:
-            parsed = json.loads(prompts_param)
-            if isinstance(parsed, (dict, list)):
-                return parsed
-            else:
-                raise ValueError(f"Parsed JSON is not a dict or list, got {type(parsed)}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in prompts parameter: {e}")
-    else:
-        raise ValueError(f"Prompts parameter must be dict, list, or JSON string, got {type(prompts_param)}")
-
-
 @asynccontextmanager
 async def temporary_log_level(logger_name: str, level: int):
     """Temporarily set the log level of a logger.

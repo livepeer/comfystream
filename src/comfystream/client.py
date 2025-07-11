@@ -21,6 +21,7 @@ class ComfyStreamClient:
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
 
+    # Starts a new task to run frames with prompts - used primarily when starting a new stream
     async def set_prompts(self, prompts: List[PromptDictInput]):
         await self.cancel_running_prompts()
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
@@ -28,6 +29,7 @@ class ComfyStreamClient:
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
 
+    # Updates the existing prompts without starting new tasks
     async def update_prompts(self, prompts: List[PromptDictInput]):
         async with self._prompt_update_lock:
             # TODO: currently under the assumption that only already running prompts are updated

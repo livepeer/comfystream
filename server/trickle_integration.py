@@ -12,13 +12,12 @@ import numpy as np
 import av
 import traceback
 import warnings
+import json
 from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
 from trickle_app import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
-from comfystream.server.utils import parse_prompts_parameter
 from comfystream.pipeline import Pipeline
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -467,11 +466,30 @@ class TrickleStreamHandler:
         self.control_subscriber = None
         if control_url and control_url.strip():
             self.control_subscriber = TrickleSubscriber(control_url)
+        else:
+            logger.info(f"No control URL provided for stream {self.request_id}, control messages will not be received")
+        
+        # Events channel availability check
+        self.events_available = bool(events_url and events_url.strip())
+        if not self.events_available:
+            logger.info(f"No events URL provided for stream {self.request_id}, monitoring events will not be published")
         
         self.running = False
         self._task: Optional[asyncio.Task] = None
         self._stats_task: Optional[asyncio.Task] = None
         self._control_task: Optional[asyncio.Task] = None
+    
+    async def _emit_monitoring_event(self, data: Dict[str, Any], event_type: str):
+        """Safely emit monitoring events, handling the case when events_url is not provided."""
+        if not self.events_available:
+            logger.debug(f"Monitoring event skipped (no events URL): {event_type} for {self.request_id}")
+            return
+        
+        try:
+            await self.client.protocol.emit_monitoring_event(data, event_type)
+            logger.debug(f"Emitted monitoring event: {event_type} for {self.request_id}")
+        except Exception as e:
+            logger.warning(f"Failed to emit monitoring event {event_type} for {self.request_id}: {e}")
         
     async def _control_loop(self):
         """Background task to handle control channel messages."""
@@ -525,27 +543,58 @@ class TrickleStreamHandler:
             logger.info(f"Control loop ended for stream {self.request_id}")
     
     async def _handle_control_message(self, params: Dict[str, Any]):
-        """Handle control channel messages - simplified to only handle prompts updates."""
+        """Handle control channel messages - handles both HTTP API and RTC control messages."""
         try:
-            # Check if prompts field exists
-            if "prompts" not in params:
-                logger.warning(f"[Control] Missing prompts field in control message for stream {self.request_id}")
+            logger.info(f"[Control] Received control message for stream {self.request_id}: {params}")
+            
+            # Handle 'prompts' field (now standardized across all APIs)
+            if "prompts" in params:
+                # Parse JSON string if needed (control channel may send JSON strings)
+                prompts = params["prompts"]
+                if isinstance(prompts, str):
+                    try:
+                        prompts = json.loads(prompts)
+                        logger.info(f"[Control] Parsed JSON prompts for stream {self.request_id}")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"[Control] Invalid JSON in prompts for stream {self.request_id}: {e}")
+                        return
+                else:
+                    logger.info(f"[Control] Prompts received for stream {self.request_id}")
+            else:
+                logger.info(f"[Control] No prompts field in control message for stream {self.request_id}, ignoring")
                 return
             
+            # Log current prompts before changing
             try:
-                # Parse prompts parameter (handles both dict/list and JSON string)
-                parsed_prompts = parse_prompts_parameter(params["prompts"])
-                # Use set_prompts instead of update_prompts to completely replace the workflow
-                # and cancel any currently running prompts
-                await self.pipeline.set_prompts(parsed_prompts)
-                logger.info(f"[Control] Set new prompts for stream {self.request_id}")
+                current_prompts = self.pipeline.client.current_prompts
+                logger.info(f"[Control] Current prompts before update for stream {self.request_id}: {len(current_prompts)} prompts")
+                logger.debug(f"[Control] Current prompts content: {current_prompts}")
+            except Exception as e:
+                logger.debug(f"[Control] Could not get current prompts: {e}")
+            
+            try:
+                logger.info(f"[Control] Updating prompts for stream {self.request_id} with: {type(prompts)}")
+                logger.debug(f"[Control] New prompts content: {prompts}")
+
+                # Use update_prompts to update the workflow without canceling currently running prompts
+                # Pipeline now handles prompt parsing internally
+                await self.pipeline.update_prompts(prompts)
+                logger.info(f"[Control] Successfully updated prompts for stream {self.request_id}")
             except ValueError as e:
                 logger.error(f"[Control] Invalid prompts format for stream {self.request_id}: {e}")
             except Exception as e:
-                logger.error(f"[Control] Error setting prompts for stream {self.request_id}: {e}")
+                logger.error(f"[Control] Error updating prompts for stream {self.request_id}: {e}")
+                # Update health manager with error
+                health_manager = self.app_context.get('health_manager')
+                if health_manager:
+                    health_manager.set_error(f"Error updating prompts for trickle stream {self.request_id}: {e}")
                 
         except Exception as e:
             logger.error(f"[Control] Error handling control message for stream {self.request_id}: {e}")
+            # Update health manager with error
+            health_manager = self.app_context.get('health_manager')
+            if health_manager:
+                health_manager.set_error(f"Error handling control message for stream {self.request_id}: {e}")
     
     async def _send_stats_periodically(self):
         """Send stats to monitoring every 20 seconds."""
@@ -581,7 +630,7 @@ class TrickleStreamHandler:
                             logger.debug(f"Could not get client stats: {e}")
                     
                     # Emit the stats
-                    await self.client.protocol.emit_monitoring_event(stats, "stream_stats")
+                    await self._emit_monitoring_event(stats, "stream_stats")
                     logger.debug(f"Sent stats for stream {self.request_id}: {stats['processor']['frame_count']} frames processed")
                     
                 except Exception as e:
@@ -609,7 +658,7 @@ class TrickleStreamHandler:
             
             # Start the processor first (this will start buffering frames)
             await self.processor.start_processing()
-            await self.client.protocol.emit_monitoring_event({"type": "stream_started", "request_id": self.request_id}, "stream_trace")
+            await self._emit_monitoring_event({"type": "stream_started", "request_id": self.request_id}, "stream_trace")
             # Check if pipeline was already warmed on startup
             pipeline_already_warmed = self.app_context.get("warm_pipeline", False)
             
@@ -781,7 +830,7 @@ class TrickleStreamHandler:
                     "timestamp": asyncio.get_event_loop().time(),
                     "final_frame_count": self.processor.frame_count
                 }
-                await self.client.protocol.emit_monitoring_event(final_stats, "stream_trace")
+                await self._emit_monitoring_event(final_stats, "stream_trace")
                 logger.info(f"Sent final stats for {self.request_id}")
             except Exception as e:
                 logger.debug(f"Could not send final stats: {e}")
@@ -807,6 +856,9 @@ class TrickleStreamHandler:
             'running': self.running,
             'subscribe_url': self.subscribe_url,
             'publish_url': self.publish_url,
+            'control_url': self.control_url,
+            'events_url': self.events_url,
+            'events_available': self.events_available,
             'width': self.width,
             'height': self.height,
             'frame_count': self.processor.frame_count,
@@ -856,6 +908,8 @@ class TrickleStreamManager:
                 if success:
                     self.handlers[request_id] = handler
                     logger.info(f"Created and started stream {request_id}")
+                    # Update health manager with new stream count
+                    self._update_health_manager()
                     return True
                 else:
                     logger.error(f"Failed to start stream {request_id}")
@@ -863,6 +917,10 @@ class TrickleStreamManager:
                     
             except Exception as e:
                 logger.error(f"Error creating stream {request_id}: {e}")
+                # Update health manager with error
+                health_manager = self.app_context.get('health_manager')
+                if health_manager:
+                    health_manager.set_error(f"Error creating trickle stream {request_id}: {e}")
                 return False
     
     async def stop_stream(self, request_id: str) -> bool:
@@ -878,8 +936,17 @@ class TrickleStreamManager:
             if success:
                 del self.handlers[request_id]
                 logger.info(f"Stopped and removed stream {request_id}")
+                # Update health manager with new stream count
+                self._update_health_manager()
             
             return success
+    
+    def _update_health_manager(self):
+        """Update the health manager with current stream count."""
+        health_manager = self.app_context.get('health_manager')
+        if health_manager:
+            stream_count = len(self.handlers)
+            health_manager.update_trickle_streams(stream_count)
     
     async def get_stream_status(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a specific stream."""
