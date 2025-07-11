@@ -3,10 +3,13 @@ import torch
 import numpy as np
 import asyncio
 import logging
-from typing import Any, Dict, Union, List, Optional
+from typing import Any, Dict, Union, List, Optional, cast
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+
+# Import for JSON parsing
+import json
 
 WARMUP_RUNS = 5
 
@@ -106,27 +109,44 @@ class Pipeline:
             self.client.put_audio_input(dummy_frame)
             await self.client.get_audio_output()
 
-    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    def _parse_prompt_data(self, prompt_data: Union[Dict, List[Dict]]) -> List[Dict]:
+        """Parse prompt data into a list of prompt dictionaries.
+        
+        Args:
+            prompt_data: Either a single prompt dict or list of prompt dicts
+            
+        Returns:
+            List of prompt dictionaries
+            
+        Raises:
+            ValueError: If the prompt data format is invalid
+        """
+        if isinstance(prompt_data, dict):
+            return [prompt_data]
+        elif isinstance(prompt_data, list):
+            if not all(isinstance(prompt, dict) for prompt in prompt_data):
+                raise ValueError("All prompts in list must be dictionaries")
+            return prompt_data
+        else:
+            raise ValueError("Prompts must be either a dict or list of dicts")
+
+    async def set_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Set the processing prompts for the pipeline.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dict or list of prompt dicts
         """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        parsed_prompts = self._parse_prompt_data(prompts)
+        await self.client.set_prompts(parsed_prompts)
 
-    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    async def update_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Update the existing processing prompts.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dict or list of prompt dicts
         """
-        if isinstance(prompts, list):
-            await self.client.update_prompts(prompts)
-        else:
-            await self.client.update_prompts([prompts])
+        parsed_prompts = self._parse_prompt_data(prompts)
+        await self.client.update_prompts(parsed_prompts)
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.

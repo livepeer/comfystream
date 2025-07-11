@@ -4,18 +4,15 @@ import json
 import logging
 import os
 import sys
-import time
-import secrets
 import torch
 import av
-from typing import Dict, Optional, Union
-
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
 
+from typing import Dict, Union, Any, Optional
+from pydantic import BaseModel, Field, field_validator
 
-from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiohttp import web
 from aiortc import (
@@ -33,11 +30,9 @@ from comfystream.pipeline import Pipeline
 from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
-from comfystream.server.workflows import get_default_workflow, get_inverted_workflow, get_default_sd_workflow, load_workflow
-# Import trickle API functions - trickle-app should always be installed
+from comfystream.server.workflows import get_default_workflow, load_workflow
 from trickle_api import setup_trickle_routes, cleanup_trickle_streams
 from frame_buffer import FrameBuffer
-import time
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
@@ -45,6 +40,143 @@ logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
+
+
+class HealthStateManager:
+    """Manages the health state of the ComfyStream server."""
+    
+    def __init__(self):
+        self.state = "LOADING"  # Initial state during startup
+        self.error_message = None
+        self.is_pipeline_warming = False
+        self.pipeline_ready = False
+        self.active_webrtc_streams = 0
+        self.active_trickle_streams = 0
+        self.startup_complete = False
+        
+    def set_loading(self, reason: Optional[str] = None):
+        """Set state to LOADING (pipeline warming up)."""
+        self.state = "LOADING"
+        self.error_message = None
+        logger.info(f"Health state: LOADING{f' - {reason}' if reason else ''}")
+        
+    def set_idle(self):
+        """Set state to IDLE (no active streams)."""
+        if self.state == "ERROR":
+            return  # Don't change from ERROR state unless explicitly cleared
+        self.state = "IDLE"
+        self.error_message = None
+        logger.debug("Health state: IDLE")
+        
+    def set_ok(self):
+        """Set state to OK (streams active)."""
+        if self.state == "ERROR":
+            return  # Don't change from ERROR state unless explicitly cleared
+        self.state = "OK"
+        self.error_message = None
+        logger.debug("Health state: OK")
+        
+    def set_error(self, message: str):
+        """Set state to ERROR with error message."""
+        self.state = "ERROR"
+        self.error_message = message
+        logger.error(f"Health state: ERROR - {message}")
+        
+    def clear_error(self):
+        """Clear error state and recalculate appropriate state."""
+        self.error_message = None
+        self._update_state()
+        
+    def set_pipeline_warming(self, warming: bool):
+        """Set pipeline warming state."""
+        self.is_pipeline_warming = warming
+        if warming:
+            self.set_loading("Pipeline warming")
+        else:
+            self._update_state()
+    
+    def set_pipeline_ready(self, ready: bool):
+        """Set pipeline ready state."""
+        self.pipeline_ready = ready
+        if ready and not self.is_pipeline_warming:
+            self._update_state()
+            
+    def set_startup_complete(self):
+        """Mark startup as complete."""
+        self.startup_complete = True
+        self._update_state()
+        
+    def update_webrtc_streams(self, count: int):
+        """Update count of active WebRTC streams."""
+        self.active_webrtc_streams = count
+        self._update_state()
+        
+    def update_trickle_streams(self, count: int):
+        """Update count of active trickle streams."""
+        self.active_trickle_streams = count
+        self._update_state()
+        
+    def _update_state(self):
+        """Internal method to update state based on current conditions."""
+        if self.state == "ERROR":
+            return  # Don't change from ERROR state
+            
+        # Check if we should be in LOADING state
+        if not self.startup_complete or self.is_pipeline_warming:
+            self.set_loading("Startup in progress" if not self.startup_complete else "Pipeline warming")
+            return
+            
+        # Check if we have active streams
+        total_streams = self.active_webrtc_streams + self.active_trickle_streams
+        if total_streams > 0:
+            self.set_ok()
+        else:
+            self.set_idle()
+            
+    def get_status(self) -> dict:
+        """Get current health status."""
+        return {
+            "status": self.state,
+            "error_message": self.error_message,
+            "pipeline_ready": self.pipeline_ready,
+            "active_webrtc_streams": self.active_webrtc_streams,
+            "active_trickle_streams": self.active_trickle_streams,
+            "startup_complete": self.startup_complete
+        }
+
+
+# Simplified models - use centralized validation functions instead of custom Pydantic validators
+
+class OfferRequest(BaseModel):
+    """Pydantic model for WebRTC offer requests."""
+    
+    offer: Dict[str, Any] = Field(..., description="WebRTC offer parameters")
+    prompts: Any = Field(..., description="Prompt data - can be a JSON string, single prompt dict, or list of prompt dicts")
+
+
+class ControlMessage(BaseModel):
+    """Pydantic model for WebRTC control channel messages."""
+    
+    type: str = Field(..., description="Message type")
+    prompts: Any = Field(None, description="Prompt data - can be a JSON string, single prompt dict, or list of prompt dicts")
+    width: Union[int, str, None] = Field(None, description="Video width")
+    height: Union[int, str, None] = Field(None, description="Video height")
+    
+    @field_validator('width', 'height', mode='before')
+    @classmethod
+    def parse_dimensions(cls, v):
+        """Parse width/height from string to int if needed."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                raise ValueError(f"Invalid dimension value: {v}")
+        return v
+
+
+
 
 
 class VideoStreamTrack(MediaStreamTrack):
@@ -125,7 +257,7 @@ class VideoStreamTrack(MediaStreamTrack):
             frame_buffer.update_frame(processed_frame)
         except Exception as e:
             # Don't let frame buffer errors affect the main pipeline
-            print(f"Error updating frame buffer: {e}")
+            logger.error(f"Error updating frame buffer: {e}")
 
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
@@ -246,7 +378,17 @@ async def offer(request):
 
     params = await request.json()
 
-    await pipeline.set_prompts(params["prompts"])
+    # Parse and validate request using Pydantic model
+    try:
+        offer_request = OfferRequest(**params)
+        # Pipeline now handles prompt parsing internally
+        await pipeline.set_prompts(offer_request.prompts)
+    except ValueError as e:
+        logger.error(f"[Offer] Invalid prompt format: {e}")
+        return web.Response(status=400, text=f"Invalid prompt format: {e}")
+    except Exception as e:
+        logger.error(f"[Offer] Error setting prompts: {e}")
+        return web.Response(status=500, text=f"Error setting prompts: {e}")
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -287,49 +429,79 @@ async def offer(request):
             async def on_message(message):
                 try:
                     params = json.loads(message)
+                    
+                    # Parse and validate message using Pydantic model
+                    try:
+                        control_msg = ControlMessage(**params)
+                    except ValueError as e:
+                        logger.error(f"[Control] Invalid message format: {e}")
+                        return
 
-                    if params.get("type") == "get_nodes":
+                    if control_msg.type == "get_nodes":
                         nodes_info = await pipeline.get_nodes_info()
                         response = {"type": "nodes_info", "nodes": nodes_info}
                         channel.send(json.dumps(response))
-                    elif params.get("type") == "update_prompts":
-                        if "prompts" not in params:
+                    elif control_msg.type == "update_prompts":
+                        if control_msg.prompts is None:
                             logger.warning(
-                                "[Control] Missing prompt in update_prompt message"
+                                "[Control] Missing prompts in update_prompts message"
                             )
                             return
                         try:
-                            await pipeline.update_prompts(params["prompts"])
+                            # Pipeline now handles prompt parsing internally
+                            await pipeline.update_prompts(control_msg.prompts)
+                        except ValueError as e:
+                            logger.error(f"[Control] Invalid prompt format: {e}")
                         except Exception as e:
-                            logger.error(f"Error updating prompt: {str(e)}")
+                            logger.error(f"Error updating prompts: {str(e)}")
+                            health_manager = request.app["health_manager"]
+                            health_manager.set_error(f"Error updating prompts: {str(e)}")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
-                    elif params.get("type") == "update_resolution":
-                        if "width" not in params or "height" not in params:
+                    elif control_msg.type == "update_resolution":
+                        if control_msg.width is None or control_msg.height is None:
                             logger.warning("[Control] Missing width or height in update_resolution message")
                             return
-                        # Update pipeline resolution for future frames
-                        pipeline.width = params["width"]
-                        pipeline.height = params["height"]
-                        logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
-                        
-                        # Mark that we've received resolution
-                        resolution_received["value"] = True
-                        
-                        # Warm the video pipeline with the new resolution if pipeline is not already warmed
-                        if "m=video" in pc.remoteDescription.sdp: 
-                            if not request.app.get("pipeline_warmed", {}).get("video", False):
-                                await pipeline.warm_video()
-                                request.app["pipeline_warmed"]["video"] = True
-                                logger.info(f"[Control] Pipeline warmed with new resolution {params['width']}x{params['height']}")
-                            else:
-                                logger.info(f"[Control] Video pipeline already warmed on startup")
+                        try:
+                            # Width and height are already validated and converted by Pydantic
+                            width = control_msg.width
+                            height = control_msg.height
                             
-                        response = {
-                            "type": "resolution_updated",
-                            "success": True
-                        }
-                        channel.send(json.dumps(response))
+                            # Update pipeline resolution for future frames
+                            pipeline.width = width
+                            pipeline.height = height
+                            logger.info(f"[Control] Updated resolution to {width}x{height}")
+                            
+                            # Mark that we've received resolution
+                            resolution_received["value"] = True
+                            
+                            # Warm the video pipeline with the new resolution if pipeline is not already warmed
+                            if "m=video" in pc.remoteDescription.sdp: 
+                                if not request.app.get("pipeline_warmed", {}).get("video", False):
+                                    health_manager = request.app["health_manager"]
+                                    health_manager.set_pipeline_warming(True)
+                                    await pipeline.warm_video()
+                                    request.app["pipeline_warmed"]["video"] = True
+                                    health_manager.set_pipeline_warming(False)
+                                    logger.info(f"[Control] Pipeline warmed with new resolution {width}x{height}")
+                                else:
+                                    logger.info(f"[Control] Video pipeline already warmed on startup")
+                                
+                            response = {
+                                "type": "resolution_updated",
+                                "success": True
+                            }
+                            channel.send(json.dumps(response))
+                        except Exception as e:
+                            logger.error(f"[Control] Error updating resolution: {e}")
+                            health_manager = request.app["health_manager"]
+                            health_manager.set_error(f"Error updating resolution: {e}")
+                            response = {
+                                "type": "resolution_updated",
+                                "success": False,
+                                "error": f"Error updating resolution: {e}"
+                            }
+                            channel.send(json.dumps(response))
                     else:
                         logger.warning(
                             "[Server] Invalid message format - missing required fields"
@@ -342,6 +514,8 @@ async def offer(request):
     @pc.on("track")
     def on_track(track):
         logger.info(f"Track received: {track.kind}")
+        health_manager = request.app["health_manager"]
+        
         if track.kind == "video":
             videoTrack = VideoStreamTrack(track, pipeline)
             tracks["video"] = videoTrack
@@ -358,10 +532,15 @@ async def offer(request):
             tracks["audio"] = audioTrack
             pc.addTrack(audioTrack)
 
+        # Update stream count for health tracking
+        health_manager.update_webrtc_streams(len(request.app["video_tracks"]))
+
         @track.on("ended")
         async def on_ended():
             logger.info(f"{track.kind} track ended")
             request.app["video_tracks"].pop(track.id, None)
+            # Update stream count after track ends
+            health_manager.update_webrtc_streams(len(request.app["video_tracks"]))
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -402,18 +581,35 @@ async def cancel_collect_frames(track):
 
 async def set_prompt(request):
     pipeline = request.app["pipeline"]
+    health_manager = request.app["health_manager"]
 
-    prompt = await request.json()
-    await pipeline.set_prompts(prompt)
+    prompt_data = await request.json()
+    
+    # Pipeline now handles prompt parsing internally
+    try:
+        await pipeline.set_prompts(prompt_data)
+    except ValueError as e:
+        logger.error(f"[SetPrompt] Invalid prompt format: {e}")
+        return web.Response(status=400, text=f"Invalid prompt format: {e}")
+    except Exception as e:
+        logger.error(f"[SetPrompt] Error setting prompts: {e}")
+        health_manager.set_error(f"Error setting prompts: {e}")
+        return web.Response(status=500, text=f"Error setting prompts: {e}")
 
     return web.Response(content_type="application/json", text="OK")
     
 
-async def health(_):
-    return web.json_response({"status": "OK"})
+async def health(request):
+    health_manager = request.app["health_manager"]
+    status = health_manager.get_status()
+    return web.json_response({"status": status["status"]})
 
 
 async def on_startup(app: web.Application) -> None:
+    # Initialize health state manager
+    health_manager = HealthStateManager()
+    app["health_manager"] = health_manager
+    
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
@@ -441,6 +637,7 @@ async def on_startup(app: web.Application) -> None:
         logger.info("Warmup prompts set for pipeline")
     except Exception as e:
         logger.error(f"Error setting prompts, warmup failed on startup: {e}")
+        health_manager.set_error(f"Error setting prompts on startup: {e}")
         
     
     # Track warming status to avoid redundant warming
@@ -450,18 +647,30 @@ async def on_startup(app: web.Application) -> None:
     if app.get("warm_pipeline", True):
         try:
             logger.info("Warming up video pipeline on startup...")
+            health_manager.set_pipeline_warming(True)
             await app["pipeline"].warm_video()
             app["pipeline_warmed"]["video"] = True
+            health_manager.set_pipeline_warming(False)
+            health_manager.set_pipeline_ready(True)
             logger.info("Video pipeline warmed up successfully on startup")
         except Exception as e:
             logger.error(f"Error warming up pipeline on startup: {e}")
+            health_manager.set_error(f"Error warming up pipeline on startup: {e}")
             # Don't raise the exception to allow the application to start
             # The pipeline will be warmed when needed
     else:
         logger.info("Pipeline warming skipped on startup")
+        health_manager.set_pipeline_ready(True)
     
     app["pcs"] = set()
     app["video_tracks"] = {}
+    
+    # Setup trickle routes now that health manager is initialized
+    setup_trickle_routes(app, app["cors"])
+    logger.info("Trickle API routes enabled")
+    
+    # Mark startup as complete
+    health_manager.set_startup_complete()
 
 
 async def on_shutdown(app: web.Application) -> None:
@@ -470,7 +679,7 @@ async def on_shutdown(app: web.Application) -> None:
     await asyncio.gather(*coros)
     pcs.clear()
     
-    # Cleanup trickle streams - trickle-app should always be installed
+    # Cleanup trickle streams
     await cleanup_trickle_streams()
     logger.info("Trickle streams cleaned up")
 
@@ -549,6 +758,9 @@ if __name__ == "__main__":
             allow_methods=["GET", "POST", "OPTIONS"]
         )
     })
+    
+    # Store cors in app for use in startup
+    app["cors"] = cors
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -562,10 +774,6 @@ if __name__ == "__main__":
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)
-    
-    # Setup Trickle API routes - trickle-app should always be installed
-    setup_trickle_routes(app, cors)
-    logger.info("Trickle API routes enabled")
     
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
