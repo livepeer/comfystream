@@ -17,6 +17,7 @@ from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
 from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
+from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ class ComfyStreamTrickleProcessor:
             
             try:
                 # Convert trickle frame to av.VideoFrame with preserved timing
-                av_frame = self._tensor_to_av_frame(frame.tensor)
+                av_frame = tensor_to_av_frame(frame.tensor)
                 
                 # Store original timing information from trickle frame
                 original_timestamp = frame.timestamp
@@ -368,59 +369,6 @@ class ComfyStreamTrickleProcessor:
             logger.error(f"Error converting ComfyUI output: {e}")
             # Return zeros tensor as fallback
             return torch.zeros(512, 512, 3)
-    
-    def _tensor_to_av_frame(self, tensor: torch.Tensor) -> av.VideoFrame:
-        """Convert trickle tensor to av.VideoFrame for ComfyUI pipeline."""
-        try:
-            # Handle tensor format conversion - trickle uses [B, H, W, C] or [H, W, C]
-            if tensor.dim() == 4:
-                # Expected format: [B, H, W, C] where B=1
-                if tensor.shape[0] != 1:
-                    raise ValueError(f"Expected batch size 1, got {tensor.shape[0]}")
-                tensor = tensor.squeeze(0)  # Remove batch dimension: [H, W, C]
-            elif tensor.dim() == 3:
-                # Already in [H, W, C] format
-                pass
-            else:
-                raise ValueError(f"Expected 3D or 4D tensor, got {tensor.dim()}D tensor with shape {tensor.shape}")
-            
-            # Validate tensor format
-            if tensor.dim() != 3:
-                raise ValueError(f"Expected 3D tensor after conversion, got {tensor.dim()}D")
-            if tensor.shape[2] not in [1, 3, 4]:
-                raise ValueError(f"Expected 1, 3, or 4 channels, got {tensor.shape[2]}")
-            
-            # Convert tensor to numpy array for av.VideoFrame
-            # Handle different tensor value ranges
-            if tensor.dtype in [torch.float32, torch.float64]:
-                if tensor.max() <= 1.0:
-                    # Tensor is in [0, 1] range, convert to [0, 255]
-                    tensor_np = (tensor * 255.0).clamp(0, 255).to(torch.uint8).cpu().numpy()
-                else:
-                    # Tensor is already in [0, 255] range
-                    tensor_np = tensor.clamp(0, 255).to(torch.uint8).cpu().numpy()
-            elif tensor.dtype == torch.uint8:
-                tensor_np = tensor.cpu().numpy()
-            else:
-                # Convert other types to uint8
-                tensor_np = tensor.clamp(0, 255).to(torch.uint8).cpu().numpy()
-            
-            # Ensure numpy array is contiguous
-            if not tensor_np.flags.c_contiguous:
-                tensor_np = np.ascontiguousarray(tensor_np)
-            
-            # Handle grayscale to RGB conversion if needed
-            if tensor_np.shape[2] == 1:
-                tensor_np = np.repeat(tensor_np, 3, axis=2)
-            
-            # Create av.VideoFrame from numpy array
-            av_frame = av.VideoFrame.from_ndarray(tensor_np, format="rgb24")
-            
-            return av_frame
-            
-        except Exception as e:
-            logger.error(f"Error converting tensor to av.VideoFrame: {e}")
-            raise
 
 class TrickleStreamHandler:
     """Handles a complete trickle stream with ComfyStream integration."""
