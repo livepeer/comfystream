@@ -39,14 +39,12 @@ async def start_stream(request):
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e}")
             return web.json_response({
-                'error': 'Validation error',
-                'details': e.errors()
+                'error': 'Validation error'
             }, status=400)
         except Exception as e:
             logger.error(f"Unexpected error during validation: {e}")
             return web.json_response({
-                'error': 'Unexpected validation error',
-                'details': str(e)
+                'error': 'Unexpected validation error'
             }, status=400)
             
         request_id = stream_request.gateway_request_id
@@ -67,7 +65,7 @@ async def start_stream(request):
             logger.info(f"Set prompts for stream {request_id}")
         except Exception as e:
             logger.error(f"Invalid prompt for stream {request_id}: {e}")
-            return web.json_response({'error': f'Invalid prompt: {str(e)}'}, status=400)
+            return web.json_response({'error': 'Invalid prompt'}, status=400)
         
         # Log if control_url is not provided
         if not stream_request.control_url:
@@ -109,7 +107,7 @@ async def start_stream(request):
         logger.error(f"Error starting stream: {e}")
         response_data = StreamResponse(
             status='error',
-            message=f'Internal server error: {str(e)}'
+            message='Internal server error'
         )
         return web.json_response(response_data.model_dump(), status=500)
 
@@ -140,7 +138,7 @@ async def stop_stream(request):
         logger.error(f"Error stopping stream: {e}")
         return web.json_response({
             'status': 'error',
-            'message': f'Internal server error: {str(e)}'
+            'message': 'Internal server error'
         }, status=500)
 
 async def get_stream_status(request):
@@ -166,7 +164,7 @@ async def get_stream_status(request):
         logger.error(f"Error getting stream status: {e}")
         return web.json_response({
             'status': 'error',
-            'message': f'Internal server error: {str(e)}'
+            'message': 'Internal server error'
         }, status=500)
 
 async def list_streams(request):
@@ -185,7 +183,7 @@ async def list_streams(request):
         logger.error(f"Error listing streams: {e}")
         return web.json_response({
             'status': 'error',
-            'message': f'Internal server error: {str(e)}'
+            'message': 'Internal server error'
         }, status=500)
 
 async def stop_current_stream(request):
@@ -225,7 +223,7 @@ async def stop_current_stream(request):
         logger.error(f"Error stopping current stream: {e}")
         return web.json_response({
             'status': 'error',
-            'message': f'Internal server error: {str(e)}'
+            'message': 'Internal server error'
         }, status=500)
 
 async def get_current_stream_status(request):
@@ -260,7 +258,7 @@ async def get_current_stream_status(request):
         logger.error(f"Error getting current stream status: {e}")
         return web.json_response({
             'status': 'error',
-            'message': f'Internal server error: {str(e)}'
+            'message': 'Internal server error'
         }, status=500)
 
 async def update_stream_params(request):
@@ -280,14 +278,12 @@ async def update_stream_params(request):
         except ValidationError as e:
             logger.error(f"Pydantic validation failed in update_stream_params: {e}")
             return web.json_response({
-                'error': 'Validation error',
-                'details': e.errors()
+                'error': 'Validation error'
             }, status=400)
         except Exception as e:
             logger.error(f"Unexpected error during validation in update_stream_params: {e}")
             return web.json_response({
-                'error': 'Unexpected validation error',
-                'details': str(e)
+                'error': 'Unexpected validation error'
             }, status=400)
         handler = stream_manager.handlers.get(request_id)
         if not handler:
@@ -307,7 +303,7 @@ async def update_stream_params(request):
         logger.error(f"Error updating stream parameters: {e}")
         response_data = StreamResponse(
             status='error',
-            message=f'Internal server error: {str(e)}'
+            message='Internal server error'
         )
         return web.json_response(response_data.model_dump(), status=500)
 
@@ -330,7 +326,7 @@ async def health_check(request):
             status='unhealthy',
             service='trickle-stream-processor',
             version='1.0.0',
-            error=str(e)
+            error='Internal server error'
         )
         return web.json_response(response_data.model_dump(), status=500)
 
@@ -363,7 +359,7 @@ async def root_info(request):
         return web.json_response({
             'service': 'Trickle Stream Processor',
             'status': 'error',
-            'error': str(e)
+            'error': 'Internal server error'
         }, status=500)
 
 def setup_trickle_routes(app, cors):
