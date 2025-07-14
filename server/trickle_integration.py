@@ -16,7 +16,7 @@ import json
 from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
-from trickle_app import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
+from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
 from comfystream.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
