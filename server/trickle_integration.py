@@ -582,14 +582,14 @@ class TrickleStreamHandler:
                 # Update health manager with error
                 health_manager = self.app_context.get('health_manager')
                 if health_manager:
-                    health_manager.set_error(f"Error updating prompts for trickle stream {self.request_id}: {e}")
+                    health_manager.set_error("Error updating prompts for trickle stream")
                 
         except Exception as e:
             logger.error(f"[Control] Error handling control message for stream {self.request_id}: {e}")
             # Update health manager with error
             health_manager = self.app_context.get('health_manager')
             if health_manager:
-                health_manager.set_error(f"Error handling control message for stream {self.request_id}: {e}")
+                health_manager.set_error("Error handling control message for stream")
     
     async def _send_stats_periodically(self):
         """Send stats to monitoring every 20 seconds."""
@@ -914,7 +914,7 @@ class TrickleStreamManager:
                 # Update health manager with error
                 health_manager = self.app_context.get('health_manager')
                 if health_manager:
-                    health_manager.set_error(f"Error creating trickle stream {request_id}: {e}")
+                    health_manager.set_error("Error creating trickle stream")
                 return False
     
     async def stop_stream(self, request_id: str) -> bool:
