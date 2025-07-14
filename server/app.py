@@ -385,10 +385,10 @@ async def offer(request):
         await pipeline.set_prompts(offer_request.prompts)
     except ValueError as e:
         logger.error(f"[Offer] Invalid prompt format: {e}")
-        return web.Response(status=400, text=f"Invalid prompt format: {e}")
+        return web.Response(status=400, text="Invalid prompt format.")
     except Exception as e:
         logger.error(f"[Offer] Error setting prompts: {e}")
-        return web.Response(status=500, text=f"Error setting prompts: {e}")
+        return web.Response(status=500, text="An internal server error occurred.")
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -455,7 +455,7 @@ async def offer(request):
                         except Exception as e:
                             logger.error(f"Error updating prompts: {str(e)}")
                             health_manager = request.app["health_manager"]
-                            health_manager.set_error(f"Error updating prompts: {str(e)}")
+                            health_manager.set_error("Error updating prompts")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif control_msg.type == "update_resolution":
@@ -495,11 +495,11 @@ async def offer(request):
                         except Exception as e:
                             logger.error(f"[Control] Error updating resolution: {e}")
                             health_manager = request.app["health_manager"]
-                            health_manager.set_error(f"Error updating resolution: {e}")
+                            health_manager.set_error("Error updating resolution")
                             response = {
                                 "type": "resolution_updated",
                                 "success": False,
-                                "error": f"Error updating resolution: {e}"
+                                "error": "Error updating resolution."
                             }
                             channel.send(json.dumps(response))
                     else:
@@ -590,11 +590,11 @@ async def set_prompt(request):
         await pipeline.set_prompts(prompt_data)
     except ValueError as e:
         logger.error(f"[SetPrompt] Invalid prompt format: {e}")
-        return web.Response(status=400, text=f"Invalid prompt format: {e}")
+        return web.Response(status=400, text="Invalid prompt format.")
     except Exception as e:
         logger.error(f"[SetPrompt] Error setting prompts: {e}")
-        health_manager.set_error(f"Error setting prompts: {e}")
-        return web.Response(status=500, text=f"Error setting prompts: {e}")
+        health_manager.set_error("Error setting prompts")
+        return web.Response(status=500, text="An internal server error occurred.")
 
     return web.Response(content_type="application/json", text="OK")
     
@@ -637,7 +637,7 @@ async def on_startup(app: web.Application) -> None:
         logger.info("Warmup prompts set for pipeline")
     except Exception as e:
         logger.error(f"Error setting prompts, warmup failed on startup: {e}")
-        health_manager.set_error(f"Error setting prompts on startup: {e}")
+        health_manager.set_error("Error setting prompts on startup")
         
     
     # Track warming status to avoid redundant warming
@@ -655,7 +655,7 @@ async def on_startup(app: web.Application) -> None:
             logger.info("Video pipeline warmed up successfully on startup")
         except Exception as e:
             logger.error(f"Error warming up pipeline on startup: {e}")
-            health_manager.set_error(f"Error warming up pipeline on startup: {e}")
+            health_manager.set_error("Error warming up pipeline on startup")
             # Don't raise the exception to allow the application to start
             # The pipeline will be warmed when needed
     else:
