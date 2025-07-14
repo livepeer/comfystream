@@ -10,17 +10,29 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
+import importlib.resources
 
 logger = logging.getLogger(__name__)
 
-def get_workflows_dir() -> Path:
-    """Get the path to the workflows directory."""
-    # Note: Workflow files are installed by pyproject.toml as data for comfystream.server package
-    # Get the root directory of the project (where workflows/ is located)
+def find_workflow_file(filename: str) -> Optional[Path]:
+    """Find a workflow file, trying package data first, then file system."""
+    if not filename.endswith('.json'):
+        filename += '.json'
+    
+    # Try package data first (for installed packages)
+    try:
+        workflow_file = importlib.resources.files('comfystream') / 'workflows' / 'comfystream' / filename
+        if workflow_file.is_file():
+            return Path(str(workflow_file))
+    except (FileNotFoundError, ModuleNotFoundError):
+        pass
+    
+    # Fallback to file system (for development)
     current_file = Path(__file__)
-    # Go up from src/comfystream/server/workflows.py to the project root
     project_root = current_file.parent.parent.parent.parent
-    return project_root / "workflows" / "comfystream"
+    workflow_path = project_root / "workflows" / "comfystream" / filename
+    
+    return workflow_path if workflow_path.exists() else None
 
 def load_workflow(filename: str) -> Dict[str, Any]:
     """Load a workflow from a JSON file.
@@ -31,28 +43,25 @@ def load_workflow(filename: str) -> Dict[str, Any]:
     Returns:
         Dictionary containing the workflow, or None if file not found
     """
-    if not filename.endswith('.json'):
-        filename += '.json'
+    workflow_path = find_workflow_file(filename)
     
-    workflows_dir = get_workflows_dir()
-    workflow_path = workflows_dir / filename
-    workflow = None
+    if workflow_path is None:
+        logger.warning(f"Workflow file not found: {filename}")
+        logger.warning("Using default workflow as fallback")
+        return get_default_workflow()
+    
     try:
         with open(workflow_path, 'r') as f:
             workflow = json.load(f)
-        logger.info(f"Loaded workflow from {workflow_path}")
-    except FileNotFoundError:
-        logger.warning(f"Workflow file not found: {workflow_path}")
+        logger.info(f"Loaded workflow from: {workflow_path}")
+        return workflow
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in workflow file {workflow_path}: {e}")
     except Exception as e:
         logger.error(f"Error loading workflow {workflow_path}: {e}")
-    finally:
-        if workflow:
-            return workflow
-        else:
-            logger.warning("Using default workflow as fallback")
-            return get_default_workflow()
+    
+    logger.warning("Using default workflow as fallback")
+    return get_default_workflow()
 
 def get_default_workflow() -> Dict[str, Any]:
     """Get the default workflow for the pipeline."""

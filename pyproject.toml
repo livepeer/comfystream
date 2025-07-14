@@ -38,7 +38,7 @@ packages = {find = {where = ["src", "nodes"]}}
 include-package-data = true
 
 [tool.setuptools.package-data]
-"comfystream" = ["workflows/*.json"]
+"comfystream" = ["workflows/comfystream/*.json"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
