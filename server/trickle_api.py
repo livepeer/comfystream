@@ -33,9 +33,10 @@ async def start_stream(request):
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
         data = await request.json()
-        
+        logger.info(f"Received start stream request with data: {json.dumps(data, indent=2)}")
         try:
             stream_request = StreamStartRequest(**data)
+            logger.info(f"Validated stream start request: {stream_request.model_dump_json(indent=2)}")
         except ValidationError as e:
             logger.error(f"Pydantic validation failed: {e}")
             return web.json_response({
@@ -61,7 +62,7 @@ async def start_stream(request):
             logger.info(f"Updated pipeline resolution to {width}x{height} for stream {request_id}")
         # Set prompts - prompts is already a single workflow object, wrap in array for set_prompts
         try:
-            await pipeline.set_prompts([prompts])
+            await pipeline.set_prompts(prompts)
             logger.info(f"Set prompts for stream {request_id}")
         except Exception as e:
             logger.error(f"Invalid prompt for stream {request_id}: {e}")
