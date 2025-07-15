@@ -389,49 +389,60 @@ class ComfyStreamTrickleProcessor:
             return torch.zeros(512, 512, 3)
 
     async def _cleanup_comfyui_memory(self):
-        """Isolated cleanup of ComfyUI memory resources for this stream only."""
+        """Clean up ComfyUI memory and resources (isolated to avoid interference)."""
         try:
-            logger.info(f"Starting isolated ComfyUI memory cleanup for request {self.request_id}")
+            logger.info(f"Cleaning up ComfyUI memory for request {self.request_id}")
             
-            import torch
+            # Use timeout to prevent hanging during catastrophic failures
+            cleanup_timeout = 10.0  # 10 second timeout for memory cleanup
             
-            # Only clear tensor caches related to this stream, not global models
-            # Global model unloading could affect other streams, so we avoid it
             try:
-                from comfystream import tensor_cache
-                
-                # Clear all tensor caches to free memory from this stream
-                def clear_caches():
-                    # Clear input caches
-                    cleared_input = 0
-                    while not tensor_cache.image_inputs.empty():
-                        try:
-                            tensor_cache.image_inputs.get_nowait()
-                            cleared_input += 1
-                        except:
-                            break
-                    
-                    cleared_audio = 0
-                    while not tensor_cache.audio_inputs.empty():
-                        try:
-                            tensor_cache.audio_inputs.get_nowait()
-                            cleared_audio += 1
-                        except:
-                            break
-                    
-                    return cleared_input, cleared_audio
-                
-                cleared_input, cleared_audio = await asyncio.to_thread(clear_caches)
-                logger.info(f"Cleared {cleared_input} image and {cleared_audio} audio tensors for request {self.request_id}")
-                
+                await asyncio.wait_for(self._perform_memory_cleanup(), timeout=cleanup_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"Memory cleanup timed out after {cleanup_timeout}s for request {self.request_id}")
+                # Continue anyway - don't let memory cleanup failures prevent stream cleanup
             except Exception as e:
-                logger.warning(f"Error clearing tensor caches: {e}")
-            
-            # Skip CUDA cache clearing to avoid interfering with other components
-            logger.info(f"Skipping CUDA cache clear to avoid interference for request {self.request_id}")
+                logger.warning(f"Memory cleanup failed for request {self.request_id}: {e}")
+                # Continue anyway - memory cleanup is not critical for stream recovery
                 
         except Exception as e:
-            logger.error(f"Error during isolated ComfyUI memory cleanup for {self.request_id}: {e}")
+            logger.error(f"Error during ComfyUI memory cleanup for {self.request_id}: {e}")
+            # Don't raise - memory cleanup failure shouldn't prevent stream cleanup
+    
+    async def _perform_memory_cleanup(self):
+        """Perform the actual memory cleanup operations."""
+        try:
+            from comfystream import tensor_cache
+            
+            # Clear all tensor caches to free memory from this stream
+            def clear_caches():
+                # Clear input caches
+                cleared_input = 0
+                while not tensor_cache.image_inputs.empty():
+                    try:
+                        tensor_cache.image_inputs.get_nowait()
+                        cleared_input += 1
+                    except:
+                        break
+                
+                cleared_audio = 0
+                while not tensor_cache.audio_inputs.empty():
+                    try:
+                        tensor_cache.audio_inputs.get_nowait()
+                        cleared_audio += 1
+                    except:
+                        break
+                
+                return cleared_input, cleared_audio
+            
+            cleared_input, cleared_audio = await asyncio.to_thread(clear_caches)
+            logger.info(f"Cleared {cleared_input} image and {cleared_audio} audio tensors for request {self.request_id}")
+            
+        except Exception as e:
+            logger.warning(f"Error clearing tensor caches: {e}")
+        
+        # Skip CUDA cache clearing to avoid interfering with other components
+        logger.info(f"Skipping CUDA cache clear to avoid interference for request {self.request_id}")
 
 class TrickleStreamHandler:
     """Handles a complete trickle stream with ComfyStream integration."""
@@ -528,13 +539,36 @@ class TrickleStreamHandler:
         try:
             logger.info(f"Starting cleanup for stream {self.request_id} due to error: {error_type}")
             
-            # Update health manager with error
+            # Update health manager with error initially
             health_manager = self.app_context.get('health_manager')
             if health_manager:
                 health_manager.set_error(f"Stream {self.request_id} failed due to {error_type}")
             
             # Call the normal stop method which has comprehensive cleanup
-            await self.stop()
+            cleanup_success = await self.stop()
+            
+            # CRITICAL: Notify the stream manager to remove this handler from its registry
+            # This prevents zombie streams that prevent new streams from starting
+            stream_manager = self.app_context.get('stream_manager')
+            if stream_manager:
+                try:
+                    # Force removal of this stream from the manager's handlers dict
+                    async with stream_manager.lock:
+                        if self.request_id in stream_manager.handlers:
+                            del stream_manager.handlers[self.request_id]
+                            logger.info(f"Removed failed stream {self.request_id} from stream manager")
+                            
+                            # Update health manager with new stream count and clear error if no streams remain
+                            # Clear error regardless of cleanup_success if no streams remain - streams should be cleaned up even if stop() fails
+                            if health_manager:
+                                stream_count = len(stream_manager.handlers)
+                                health_manager.update_trickle_streams(stream_count)
+                                # Clear the error state if no streams are running
+                                if stream_count == 0:
+                                    health_manager.clear_error()
+                                    logger.info(f"Cleared health manager error state after cleanup of stream {self.request_id} (cleanup_success={cleanup_success})")
+                except Exception as e:
+                    logger.error(f"Error removing stream {self.request_id} from manager: {e}")
             
             # Emit error event
             try:
@@ -543,6 +577,7 @@ class TrickleStreamHandler:
                     "request_id": self.request_id,
                     "error_type": error_type,
                     "error_message": str(exception) if exception else "Unknown error",
+                    "cleanup_successful": cleanup_success,
                     "timestamp": asyncio.get_event_loop().time()
                 }
                 await self._emit_monitoring_event(error_event, "stream_error")
@@ -551,6 +586,28 @@ class TrickleStreamHandler:
                 
         except Exception as e:
             logger.error(f"Error during cleanup for stream {self.request_id}: {e}")
+            
+            # Even if cleanup failed, ensure the stream is removed from manager to prevent server lockup
+            stream_manager = self.app_context.get('stream_manager')
+            if stream_manager:
+                try:
+                    async with stream_manager.lock:
+                        if self.request_id in stream_manager.handlers:
+                            del stream_manager.handlers[self.request_id]
+                            logger.warning(f"Force-removed failed stream {self.request_id} from manager after cleanup error")
+                            
+                            # Try to recover health state even after failed cleanup
+                            health_manager = self.app_context.get('health_manager')
+                            if health_manager:
+                                stream_count = len(stream_manager.handlers)
+                                health_manager.update_trickle_streams(stream_count)
+                                if stream_count == 0:
+                                    # Clear error state to allow server to accept new requests
+                                    health_manager.clear_error()
+                                    logger.warning(f"Force-cleared health manager error state to recover server functionality")
+                except Exception as manager_error:
+                    logger.error(f"Failed to force-remove stream from manager: {manager_error}")
+            
             # Force mark as not running even if cleanup failed
             self.running_event.clear() # Ensure running_event is False
             self.shutdown_event.set() # Mark shutdown_event
@@ -898,6 +955,15 @@ class TrickleStreamHandler:
                 except Exception as e:
                     logger.warning(f"Error closing control subscriber: {e}")
             
+            # STEP 7: Perform isolated memory cleanup with timeout protection
+            try:
+                await asyncio.wait_for(self.processor._cleanup_comfyui_memory(), timeout=12.0)
+                logger.info(f"Memory cleanup completed for {self.request_id}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Memory cleanup timed out for {self.request_id}, continuing with shutdown")
+            except Exception as e:
+                logger.warning(f"Memory cleanup failed for {self.request_id}: {e}")
+            
             # Send final stats before shutdown
             try:
                 final_stats = {
@@ -972,6 +1038,15 @@ class TrickleStreamManager:
                 return False
             
             try:
+                # Before creating a new stream, ensure health manager is not in an error state
+                # from a previous stream that failed to clean up properly
+                health_manager = self.app_context.get('health_manager')
+                if health_manager and health_manager.state == "ERROR":
+                    # If no streams are actually running, clear the error state to allow new streams
+                    if len(self.handlers) == 0:
+                        logger.warning("Clearing stale health manager error state to allow new stream creation")
+                        health_manager.clear_error()
+                
                 handler = TrickleStreamHandler(
                     subscribe_url=subscribe_url,
                     publish_url=publish_url,
@@ -1027,6 +1102,12 @@ class TrickleStreamManager:
         if health_manager:
             stream_count = len(self.handlers)
             health_manager.update_trickle_streams(stream_count)
+            
+            # If no streams are running and health manager is in error state, 
+            # clear the error to allow new requests
+            if stream_count == 0 and health_manager.state == "ERROR":
+                logger.info("No active streams remaining, clearing health manager error state")
+                health_manager.clear_error()
     
     async def get_stream_status(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a specific stream."""
