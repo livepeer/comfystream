@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 from aiohttp import web
 from pydantic import ValidationError
+import time
 
 from trickle_integration import TrickleStreamManager
 from api_spec import (
@@ -20,6 +21,7 @@ from api_spec import (
     HealthCheckResponse, 
     ServiceInfoResponse
 )
+from secondary_channel_examples import send_processing_event_to_secondary
 
 logger = logging.getLogger(__name__)
 logger.info("Using trickle integration")
@@ -72,6 +74,15 @@ async def start_stream(request):
         if not stream_request.control_url:
             logger.info(f"Control URL not provided for stream {request_id} - parameter updates will not be read from orchestrator")
         
+        # Log secondary channel configuration
+        if stream_request.secondary_publish_url:
+            logger.info(f"Secondary publish channel configured for stream {request_id}:")
+            logger.info(f"  URL: {stream_request.secondary_publish_url}")
+            logger.info(f"  Type: {stream_request.secondary_publish_type}")
+            logger.info(f"  Use case: {'JSON metadata/analysis' if stream_request.secondary_publish_type == 'text' else 'Additional video/audio segments'}")
+        else:
+            logger.info(f"No secondary publish channel configured for stream {request_id}")
+        
         success = await stream_manager.create_stream(
             request_id=request_id,
             subscribe_url=stream_request.subscribe_url,
@@ -80,7 +91,9 @@ async def start_stream(request):
             events_url=stream_request.events_url or "",
             pipeline=pipeline,
             width=width,
-            height=height
+            height=height,
+            secondary_publish_url=stream_request.secondary_publish_url,
+            secondary_publish_type=stream_request.secondary_publish_type
         )
         if success:
             response_data = StreamResponse(
@@ -363,6 +376,79 @@ async def root_info(request):
             'error': 'Internal server error'
         }, status=500)
 
+async def send_secondary_test_data(request):
+    """Send test data to secondary publish channel of a stream.
+    
+    Example endpoint demonstrating how to send data to secondary channels.
+    """
+    try:
+        request_id = request.match_info.get('request_id')
+        if not request_id:
+            return web.json_response({'error': 'Missing request_id'}, status=400)
+            
+        if not stream_manager:
+            return web.json_response({'error': 'Stream manager not initialized'}, status=500)
+        
+        # Get the stream handler
+        async with stream_manager.lock:
+            handler = stream_manager.handlers.get(request_id)
+            if not handler:
+                return web.json_response({'error': f'Stream {request_id} not found'}, status=404)
+        
+        # Check if secondary channel is configured
+        secondary_url = getattr(handler, 'secondary_publish_url', None)
+        secondary_type = getattr(handler, 'secondary_publish_type', 'text')
+        
+        if not secondary_url:
+            return web.json_response({
+                'error': f'Stream {request_id} does not have a secondary publish channel configured'
+            }, status=400)
+        
+        # Parse request data
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        
+        # Send test data to secondary channel
+        test_message = {
+            "type": "api_test_message",
+            "request_id": request_id,
+            "timestamp": int(time.time() * 1000),
+            "secondary_channel_info": {
+                "url": secondary_url,
+                "type": secondary_type
+            },
+            "test_data": data.get("test_data", {"message": "Hello from secondary channel API!"})
+        }
+        
+        # Send using the handler's secondary channel method
+        await send_processing_event_to_secondary(
+            handler.client, 
+            request_id, 
+            "api_test", 
+            test_message, 
+            handler.processor
+        )
+        
+        logger.info(f"Sent test data to secondary channel for stream {request_id}")
+        
+        return web.json_response({
+            'status': 'success',
+            'message': f'Test data sent to secondary channel for stream {request_id}',
+            'secondary_channel': {
+                'url': secondary_url,
+                'type': secondary_type
+            },
+            'data_sent': test_message
+        })
+        
+    except Exception as e:
+        logger.error(f"Error sending secondary test data: {e}")
+        return web.json_response({
+            'error': 'Internal server error'
+        }, status=500)
+
 def setup_trickle_routes(app, cors):
     """Setup trickle API routes.
     
@@ -398,6 +484,9 @@ def setup_trickle_routes(app, cors):
     
     # Alias for live-video-to-video endpoint (same as stream/start)
     cors.add(app.router.add_post("/live-video-to-video", start_stream))
+
+    # New endpoint for sending test data to secondary channels
+    cors.add(app.router.add_post("/stream/{request_id}/secondary-test-data", send_secondary_test_data))
     
     logger.info("Trickle API routes registered")
 

@@ -19,6 +19,8 @@ from collections import deque
 from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
 from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
+import time
+from secondary_channel_examples import demonstrate_secondary_channel
 
 logger = logging.getLogger(__name__)
 
@@ -457,12 +459,16 @@ class TrickleStreamHandler:
         pipeline: Pipeline,
         width: int = 512,
         height: int = 512,
+        secondary_publish_url: Optional[str] = None,
+        secondary_publish_type: str = "text",
         app_context: Optional[Dict] = None
     ):
         self.subscribe_url = subscribe_url
         self.publish_url = publish_url
         self.control_url = control_url
         self.events_url = events_url
+        self.secondary_publish_url = secondary_publish_url
+        self.secondary_publish_type = secondary_publish_type
         self.request_id = request_id
         self.pipeline = pipeline
         self.width = width
@@ -478,6 +484,8 @@ class TrickleStreamHandler:
             publish_url=publish_url,
             control_url=control_url,
             events_url=events_url,
+            secondary_publish_url=secondary_publish_url,
+            secondary_publish_type=secondary_publish_type,
             width=width,
             height=height,
             frame_processor=self.processor.process_frame_sync,  # Use sync interface as expected by trickle-app
@@ -792,6 +800,7 @@ class TrickleStreamHandler:
         finally:
             logger.info(f"Stats monitoring ended for {self.request_id}")
     
+
     async def start(self) -> bool:
         """Start the trickle stream handler."""
         if self.running:
@@ -814,47 +823,33 @@ class TrickleStreamHandler:
             else:
                 # Pipeline wasn't warmed on startup, we should warm it now
                 logger.info("Pipeline not warmed on startup, warming now...")
-                warmup_success = False
-                
+                #warmup_success = False
                 # Use basic warmup method
-                try:
-                    logger.info("Using pipeline warmup...")
-                    await self.pipeline.warm_video()
-                    logger.info("Pipeline warmup complete")
-                    warmup_success = True
-                except Exception as e:
-                    logger.error(f"Pipeline warmup failed: {e}")
+                # TODO: Fix /implement pipeline warmup
+                # try:
+                #     if hasattr(self.processor, 'warmup_pipeline'):
+                #         warmup_success = await self.processor.warmup_pipeline()
+                #         logger.info(f"Warmup result: {warmup_success}")
+                #     else:
+                #         logger.info("Pipeline warmup method not available, continuing without warmup")
+                #         warmup_success = True
+                # except Exception as e:
+                #     logger.warning(f"Failed to warm up pipeline: {e}")
+                #     warmup_success = False
                 
-                if warmup_success:
-                    # Wait for first processed frame to confirm readiness
-                    if hasattr(self.pipeline, 'wait_for_first_processed_frame'):
-                        try:
-                            pipeline_ready = await self.pipeline.wait_for_first_processed_frame(timeout=30.0)
-                            if pipeline_ready:
-                                logger.info("Pipeline confirmed ready after warmup")
-                            else:
-                                logger.warning("Could not confirm pipeline readiness after warmup")
-                        except Exception as e:
-                            logger.error(f"Error waiting for first processed frame: {e}")
-                
-                # Mark pipeline as ready after warmup and model loading
-                await self.processor.set_pipeline_ready()
+                # if not warmup_success:
+                #     logger.warning("Pipeline warmup failed, but continuing with stream startup")
+                    
+            # Mark as running
+            self.running_event.set()
             
-            # Start the client (this will start the encoder)
-            logger.info("Starting trickle client...")
+            # Set up background tasks
+            # Start the client task - use the standard start method
             self._task = asyncio.create_task(self.client.start(self.request_id))
-            self.running_event.set() # Set running_event
+            self._stats_task = asyncio.create_task(self._send_stats_periodically())
             
-            # Start the stats monitoring task
-            try:
-                self._stats_task = asyncio.create_task(self._send_stats_periodically())
-                logger.info(f"Started stats monitoring for {self.request_id}")
-            except Exception as e:
-                logger.warning(f"Failed to start stats monitoring for {self.request_id}: {e}")
-                # Don't fail the entire stream start for stats monitoring failure
-            
-            # Start the control loop task
-            if self.control_url and self.control_url.strip():
+            # Setup control loop only if control subscriber is configured
+            if self.control_subscriber:
                 try:
                     self._control_task = asyncio.create_task(self._control_loop())
                     logger.info(f"Started control loop for {self.request_id}")
@@ -862,6 +857,20 @@ class TrickleStreamHandler:
                     logger.warning(f"Failed to start control loop for {self.request_id}: {e}")
             
             logger.info(f"Trickle stream handler started successfully for {self.request_id}")
+            
+            # Demonstrate secondary channel usage if configured
+            if self.secondary_publish_url:
+                logger.info(f"Secondary channel configured for {self.request_id}: {self.secondary_publish_url} (type: {self.secondary_publish_type})")
+                stream_config = {
+                    "subscribe_url": self.subscribe_url,
+                    "publish_url": self.publish_url,
+                    "secondary_url": self.secondary_publish_url,
+                    "secondary_type": self.secondary_publish_type
+                }
+                asyncio.create_task(demonstrate_secondary_channel(self.client, self.request_id, stream_config, self.processor))
+            else:
+                logger.info(f"No secondary channel configured for {self.request_id}")
+            
             return True
             
         except Exception as e:
@@ -1103,7 +1112,9 @@ class TrickleStreamManager:
         events_url: str,
         pipeline: Pipeline,
         width: int = 512,
-        height: int = 512
+        height: int = 512,
+        secondary_publish_url: Optional[str] = None,
+        secondary_publish_type: str = "text"
     ) -> bool:
         """Create and start a new trickle stream."""
         async with self.lock:
@@ -1130,6 +1141,8 @@ class TrickleStreamManager:
                     pipeline=pipeline,
                     width=width,
                     height=height,
+                    secondary_publish_url=secondary_publish_url,
+                    secondary_publish_type=secondary_publish_type,
                     app_context=self.app_context
                 )
                 
