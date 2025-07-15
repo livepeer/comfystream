@@ -539,6 +539,21 @@ class TrickleStreamHandler:
         try:
             logger.info(f"Starting cleanup for stream {self.request_id} due to error: {error_type}")
             
+            # IMMEDIATELY signal shutdown events to stop background tasks before they make more connection attempts
+            try:
+                if hasattr(self.client.protocol, 'shutdown_event'):
+                    self.client.protocol.shutdown_event.set()
+                if hasattr(self.client.protocol, 'error_event'):
+                    self.client.protocol.error_event.set()
+                if hasattr(self.client, 'shutdown_event'):
+                    self.client.shutdown_event.set()
+                    
+                if hasattr(self.client, 'error_event'):
+                    self.client.error_event.set()
+                logger.info(f"Emergency shutdown events set for {self.request_id} due to {error_type}")
+            except Exception as e:
+                logger.warning(f"Error setting emergency shutdown events: {e}")
+            
             # Update health manager with error initially
             health_manager = self.app_context.get('health_manager')
             if health_manager:
@@ -892,10 +907,69 @@ class TrickleStreamHandler:
             except Exception as e:
                 logger.warning(f"Error stopping processor: {e}")
             
-            # STEP 2: Stop the trickle client to stop frame ingestion
+            # STEP 2: Aggressively shutdown trickle protocol first to stop all background tasks
             try:
-                await asyncio.wait_for(self.client.stop(), timeout=5.0)
+                # Signal shutdown to the protocol and its components to stop background tasks immediately
+                if hasattr(self.client.protocol, 'shutdown_event'):
+                    self.client.protocol.shutdown_event.set()
+                    logger.info(f"Trickle protocol shutdown event set for {self.request_id}")
+                
+                # Signal shutdown to control subscriber to stop its background tasks
+                if hasattr(self.client.protocol, 'control_subscriber') and self.client.protocol.control_subscriber:
+                    await self.client.protocol.control_subscriber.shutdown()
+                    logger.info(f"Trickle control subscriber shutdown signaled for {self.request_id}")
+                
+                # Signal shutdown to events publisher to stop its background tasks
+                if hasattr(self.client.protocol, 'events_publisher') and self.client.protocol.events_publisher:
+                    await self.client.protocol.events_publisher.shutdown()
+                    logger.info(f"Trickle events publisher shutdown signaled for {self.request_id}")
+                
+                # Set client shutdown events to stop background tasks
+                if hasattr(self.client, 'shutdown_event'):
+                    self.client.shutdown_event.set()
+                if hasattr(self.client, 'error_event'):
+                    self.client.error_event.set()
+                
+                # Now stop the trickle protocol to cancel main tasks
+                await asyncio.wait_for(self.client.protocol.stop(), timeout=3.0)
+                logger.info(f"Trickle protocol stopped for {self.request_id}")
+                
+                # Then stop the trickle client
+                await asyncio.wait_for(self.client.stop(), timeout=2.0)
                 logger.info(f"Trickle client stopped for {self.request_id}")
+                
+                # Give background tasks a moment to see the shutdown signal and exit
+                await asyncio.sleep(0.2)
+                
+                # Force cancel any remaining tasks that might be stuck
+                current_task = asyncio.current_task()
+                all_tasks = [task for task in asyncio.all_tasks() if task != current_task and not task.done()]
+                
+                # Filter for tasks that might be related to this trickle stream
+                trickle_tasks = []
+                for task in all_tasks:
+                    task_name = getattr(task, '_context', {}).get('name', '')
+                    task_coro_name = getattr(task.get_coro(), '__name__', '') if hasattr(task, 'get_coro') else ''
+                    
+                    # Look for tasks that might be trickle-related
+                    if any(keyword in str(task) for keyword in ['trickle', '192.168.10.61', 'preconnect', 'subscriber']):
+                        trickle_tasks.append(task)
+                        logger.warning(f"Found potentially stuck trickle task for {self.request_id}: {task}")
+                
+                # Cancel stuck trickle tasks
+                if trickle_tasks:
+                    logger.warning(f"Force cancelling {len(trickle_tasks)} potentially stuck trickle tasks for {self.request_id}")
+                    for task in trickle_tasks:
+                        task.cancel()
+                    
+                    # Wait briefly for cancellation
+                    try:
+                        await asyncio.wait_for(asyncio.gather(*trickle_tasks, return_exceptions=True), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Some trickle tasks did not cancel within timeout for {self.request_id}")
+                    except Exception as e:
+                        logger.debug(f"Expected errors during task cancellation: {e}")
+                
             except asyncio.TimeoutError:
                 logger.warning(f"Trickle client stop timed out for {self.request_id}")
             except Exception as e:
