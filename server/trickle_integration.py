@@ -122,46 +122,64 @@ class ComfyStreamTrickleProcessor:
         if not self.running:
             return
         
-        # Acquire processing lock to block new frame processing
-        async with self.processing_lock:
+        # Use a timeout context to prevent hanging
+        cleanup_timeout = 10.0
+        
+        try:
+            async with asyncio.timeout(cleanup_timeout):
+                # Acquire processing lock to block new frame processing
+                async with self.processing_lock:
+                    self.running = False
+                    logger.info(f"Acquired processing lock for shutdown of request {self.request_id}")
+                    
+                    # Cancel running ComfyUI prompts and clear queues
+                    try:
+                        await asyncio.wait_for(self.pipeline.client.cancel_running_prompts(), timeout=3.0)
+                        logger.info(f"Cancelled running prompts for request {self.request_id}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Timeout cancelling prompts for request {self.request_id}")
+                    except Exception as e:
+                        logger.warning(f"Error cancelling prompts: {e}")
+                    
+                    # Clear input/output queues to stop processing
+                    try:
+                        await asyncio.wait_for(self.pipeline.client.cleanup_queues(), timeout=2.0)
+                        logger.info(f"Cleared processing queues for request {self.request_id}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Timeout clearing queues for request {self.request_id}")
+                    except Exception as e:
+                        logger.warning(f"Error clearing queues: {e}")
+                    
+                    # Stop the output collector task
+                    if self.output_collector_task:
+                        self.output_collector_task.cancel()
+                        try:
+                            # Add timeout to prevent hanging during shutdown
+                            await asyncio.wait_for(self.output_collector_task, timeout=2.0)
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            # Task was cancelled or timed out, which is expected
+                            pass
+                        except Exception as e:
+                            logger.warning(f"Error stopping output collector: {e}")
+                        finally:
+                            # Ensure the task reference is cleared to help with cleanup
+                            self.output_collector_task = None
+                    
+                    # Comprehensive ComfyUI model memory cleanup
+                    await self._cleanup_comfyui_memory()
+                    
+                    logger.info(f"Stopped processing for request {self.request_id}")
+                    
+        except asyncio.TimeoutError:
+            logger.warning(f"Stop processing timed out for {self.request_id}, forcing cleanup")
             self.running = False
-            logger.info(f"Acquired processing lock for shutdown of request {self.request_id}")
-            
-            # Cancel running ComfyUI prompts and clear queues
-            try:
-                await asyncio.wait_for(self.pipeline.client.cancel_running_prompts(), timeout=3.0)
-                logger.info(f"Cancelled running prompts for request {self.request_id}")
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout cancelling prompts for request {self.request_id}")
-            except Exception as e:
-                logger.warning(f"Error cancelling prompts: {e}")
-            
-            # Clear input/output queues to stop processing
-            try:
-                await asyncio.wait_for(self.pipeline.client.cleanup_queues(), timeout=2.0)
-                logger.info(f"Cleared processing queues for request {self.request_id}")
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout clearing queues for request {self.request_id}")
-            except Exception as e:
-                logger.warning(f"Error clearing queues: {e}")
-            
-            # Stop the output collector task
             if self.output_collector_task:
                 self.output_collector_task.cancel()
-                try:
-                    # Add timeout to prevent hanging during shutdown
-                    await asyncio.wait_for(self.output_collector_task, timeout=2.0)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
-                    # Task was cancelled or timed out, which is expected
-                    pass
-                except Exception as e:
-                    logger.warning(f"Error stopping output collector: {e}")
-                finally:
-                    # Ensure the task reference is cleared to help with cleanup
-                    self.output_collector_task = None
+                self.output_collector_task = None
+        except Exception as e:
+            logger.error(f"Error during stop processing for {self.request_id}: {e}")
+            self.running = False
             
-            logger.info(f"Stopped processing for request {self.request_id}")
-        
     async def _collect_outputs(self):
         """Background task to collect processed outputs from the pipeline."""
         logger.info(f"Output collector started for request {self.request_id}")
@@ -370,6 +388,51 @@ class ComfyStreamTrickleProcessor:
             # Return zeros tensor as fallback
             return torch.zeros(512, 512, 3)
 
+    async def _cleanup_comfyui_memory(self):
+        """Isolated cleanup of ComfyUI memory resources for this stream only."""
+        try:
+            logger.info(f"Starting isolated ComfyUI memory cleanup for request {self.request_id}")
+            
+            import torch
+            
+            # Only clear tensor caches related to this stream, not global models
+            # Global model unloading could affect other streams, so we avoid it
+            try:
+                from comfystream import tensor_cache
+                
+                # Clear all tensor caches to free memory from this stream
+                def clear_caches():
+                    # Clear input caches
+                    cleared_input = 0
+                    while not tensor_cache.image_inputs.empty():
+                        try:
+                            tensor_cache.image_inputs.get_nowait()
+                            cleared_input += 1
+                        except:
+                            break
+                    
+                    cleared_audio = 0
+                    while not tensor_cache.audio_inputs.empty():
+                        try:
+                            tensor_cache.audio_inputs.get_nowait()
+                            cleared_audio += 1
+                        except:
+                            break
+                    
+                    return cleared_input, cleared_audio
+                
+                cleared_input, cleared_audio = await asyncio.to_thread(clear_caches)
+                logger.info(f"Cleared {cleared_input} image and {cleared_audio} audio tensors for request {self.request_id}")
+                
+            except Exception as e:
+                logger.warning(f"Error clearing tensor caches: {e}")
+            
+            # Skip CUDA cache clearing to avoid interfering with other components
+            logger.info(f"Skipping CUDA cache clear to avoid interference for request {self.request_id}")
+                
+        except Exception as e:
+            logger.error(f"Error during isolated ComfyUI memory cleanup for {self.request_id}: {e}")
+
 class TrickleStreamHandler:
     """Handles a complete trickle stream with ComfyStream integration."""
     
@@ -406,13 +469,14 @@ class TrickleStreamHandler:
             events_url=events_url,
             width=width,
             height=height,
-            frame_processor=self.processor.process_frame_sync  # Use sync interface as expected by trickle-app
+            frame_processor=self.processor.process_frame_sync,  # Use sync interface as expected by trickle-app
+            error_callback=self._on_client_error
         )
         
         # Control channel subscription
         self.control_subscriber = None
         if control_url and control_url.strip():
-            self.control_subscriber = TrickleSubscriber(control_url)
+            self.control_subscriber = TrickleSubscriber(control_url, error_callback=self._on_control_error)
         else:
             logger.info(f"No control URL provided for stream {self.request_id}, control messages will not be received")
         
@@ -421,11 +485,22 @@ class TrickleStreamHandler:
         if not self.events_available:
             logger.info(f"No events URL provided for stream {self.request_id}, monitoring events will not be published")
         
-        self.running = False
+        # Use Events instead of boolean flags for better coordination
+        self.running_event = asyncio.Event()
+        self.shutdown_event = asyncio.Event()
+        self.error_event = asyncio.Event()
+        
+        # Background tasks
         self._task: Optional[asyncio.Task] = None
         self._stats_task: Optional[asyncio.Task] = None
         self._control_task: Optional[asyncio.Task] = None
-    
+        self._critical_error_occurred = False
+        
+    @property
+    def running(self) -> bool:
+        """Check if the handler is running."""
+        return self.running_event.is_set() and not self.shutdown_event.is_set() and not self.error_event.is_set()
+
     async def _emit_monitoring_event(self, data: Dict[str, Any], event_type: str):
         """Safely emit monitoring events, handling the case when events_url is not provided."""
         if not self.events_available:
@@ -435,6 +510,62 @@ class TrickleStreamHandler:
             await self.client.protocol.emit_monitoring_event(data, event_type)
         except Exception as e:
             logger.warning(f"Failed to emit monitoring event {event_type} for {self.request_id}: {e}")
+    
+    async def _on_control_error(self, error_type: str, exception: Optional[Exception] = None):
+        """Handle critical errors from control channel."""
+        logger.error(f"Critical control channel error for stream {self.request_id}: {error_type} - {exception}")
+        self._critical_error_occurred = True
+        
+        # Trigger stream cleanup - similar to stop() but called from error context
+        if self.running:
+            logger.info(f"Triggering stream cleanup due to control channel error: {error_type}")
+            self.error_event.set()  # Signal error
+            # Use asyncio.create_task to avoid blocking the error callback
+            asyncio.create_task(self._cleanup_due_to_error(error_type, exception))
+    
+    async def _cleanup_due_to_error(self, error_type: str, exception: Optional[Exception] = None):
+        """Cleanup stream due to critical error - similar to stop() but for error scenarios."""
+        try:
+            logger.info(f"Starting cleanup for stream {self.request_id} due to error: {error_type}")
+            
+            # Update health manager with error
+            health_manager = self.app_context.get('health_manager')
+            if health_manager:
+                health_manager.set_error(f"Stream {self.request_id} failed due to {error_type}")
+            
+            # Call the normal stop method which has comprehensive cleanup
+            await self.stop()
+            
+            # Emit error event
+            try:
+                error_event = {
+                    "type": "stream_error",
+                    "request_id": self.request_id,
+                    "error_type": error_type,
+                    "error_message": str(exception) if exception else "Unknown error",
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+                await self._emit_monitoring_event(error_event, "stream_error")
+            except Exception as e:
+                logger.debug(f"Could not send error event: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup for stream {self.request_id}: {e}")
+            # Force mark as not running even if cleanup failed
+            self.running_event.clear() # Ensure running_event is False
+            self.shutdown_event.set() # Mark shutdown_event
+            self.error_event.set() # Mark error_event
+    
+    async def _on_client_error(self, error_type: str, exception: Optional[Exception] = None):
+        """Handle critical errors from TrickleClient."""
+        logger.error(f"Critical client error for stream {self.request_id}: {error_type} - {exception}")
+        self._critical_error_occurred = True
+        
+        # Trigger stream cleanup
+        if self.running:
+            logger.info(f"Triggering stream cleanup due to client error: {error_type}")
+            self.error_event.set()  # Signal error
+            asyncio.create_task(self._cleanup_due_to_error(error_type, exception))
         
     async def _control_loop(self):
         """Background task to handle control channel messages."""
@@ -446,7 +577,7 @@ class TrickleStreamHandler:
         keepalive_message = {"keep": "alive"}
         
         try:
-            while self.running:
+            while not self.shutdown_event.is_set() and not self.error_event.is_set():
                 try:
                     segment = await self.control_subscriber.next()
                     if not segment or segment.eos():
@@ -640,7 +771,7 @@ class TrickleStreamHandler:
             # Start the client (this will start the encoder)
             logger.info("Starting trickle client...")
             self._task = asyncio.create_task(self.client.start(self.request_id))
-            self.running = True
+            self.running_event.set() # Set running_event
             
             # Start the stats monitoring task
             try:
@@ -663,7 +794,9 @@ class TrickleStreamHandler:
             
         except Exception as e:
             logger.error(f"Failed to start stream handler {self.request_id}: {e}")
-            self.running = False
+            self.running_event.clear() # Ensure running_event is False
+            self.shutdown_event.set() # Mark shutdown_event
+            self.error_event.set() # Mark error_event
             # Cleanup processor if client failed to start
             await self.processor.stop_processing()
             return False
@@ -756,9 +889,10 @@ class TrickleStreamHandler:
                 except Exception as e:
                     logger.warning(f"Error cancelling control loop: {e}")
             
-            # STEP 6: Close the control subscriber
+            # STEP 6: Signal shutdown and close the control subscriber
             if self.control_subscriber:
                 try:
+                    await self.control_subscriber.shutdown()  # Signal shutdown first
                     await self.control_subscriber.close()
                     logger.info(f"Control subscriber closed for {self.request_id}")
                 except Exception as e:
@@ -780,12 +914,16 @@ class TrickleStreamHandler:
             # Give a moment for any remaining cleanup to complete
             await asyncio.sleep(0.1)
             
-            self.running = False
+            self.running_event.clear() # Ensure running_event is False
+            self.shutdown_event.set() # Mark shutdown_event
+            self.error_event.set() # Mark error_event
             return True
             
         except Exception as e:
             logger.error(f"Error stopping stream handler {self.request_id}: {e}")
-            self.running = False  # Mark as stopped even on error
+            self.running_event.clear() # Ensure running_event is False
+            self.shutdown_event.set() # Mark shutdown_event
+            self.error_event.set() # Mark error_event
             return False
         finally:
             # Restore original exception handler
