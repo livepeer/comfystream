@@ -18,26 +18,54 @@ class ComfyUIParams(BaseModel):
     class Config:
         extra = "forbid"
 
-    prompts: Union[str, dict] = DEFAULT_WORKFLOW_JSON
+    prompts: Union[str, List[Union[str, Dict[str, Any]]]] = [DEFAULT_WORKFLOW_JSON]
     width: int = DEFAULT_WIDTH
     height: int = DEFAULT_HEIGHT
 
     @field_validator('prompts', mode='before')
     @classmethod
-    def validate_prompts(cls, v) -> dict:
+    def validate_prompts(cls, v) -> List[Dict[str, Any]]:
         if v == "":
-            return DEFAULT_WORKFLOW_JSON
+            return [DEFAULT_WORKFLOW_JSON]
+        
+        # Handle list input (could be list of strings or list of dicts)
+        if isinstance(v, list):
+            result = []
+            for item in v:
+                if isinstance(item, str):
+                    try:
+                        parsed = json.loads(item)
+                        if isinstance(parsed, dict):
+                            result.append(parsed)
+                        else:
+                            raise ValueError("Each JSON string in prompts must parse to a dictionary")
+                    except json.JSONDecodeError:
+                        raise ValueError(f"Could not parse JSON string: {item}")
+                elif isinstance(item, dict):
+                    result.append(item)
+                else:
+                    raise ValueError("Each item in prompts list must be either a JSON string or dict")
+            return result
+            
+        # Handle single dict input
         if isinstance(v, dict):
-            return v
+            return [v]
+        
+        # Handle single string input
         if isinstance(v, str):
             try:
                 parsed = json.loads(v)
-                if not isinstance(parsed, dict):
-                    raise ValueError("Parsed prompt JSON must be a dictionary/object")
-                return parsed
+                if isinstance(parsed, dict):
+                    return [parsed]
+                elif isinstance(parsed, list):
+                    # Handle case where string is a JSON array
+                    return cls.validate_prompts(parsed)  # Recurse to handle the list
+                else:
+                    raise ValueError("Provided JSON string must parse to a dictionary or array of dictionaries")
             except json.JSONDecodeError:
                 raise ValueError("Provided prompt string must be valid JSON")
-        raise ValueError("Prompt must be either a JSON object or such JSON object serialized as a string")
+        
+        raise ValueError("Prompts must be either a JSON string, dictionary, or list of JSON strings/dictionaries")
 
     @field_validator('width', 'height', mode='before')
     @classmethod
@@ -68,7 +96,7 @@ class StreamStartRequest(BaseModel):
     )
     
     # Allow direct specification of ComfyUI parameters at top level (for backward compatibility)
-    prompts: Optional[Union[str, dict]] = Field(default=None, description="ComfyUI workflow prompts")
+    prompts: Optional[Union[str, List[Union[str, Dict[str, Any]]]]] = Field(default=None, description="ComfyUI workflow prompts")
     width: Optional[int] = Field(default=None, description="Video width")
     height: Optional[int] = Field(default=None, description="Video height")
     
@@ -88,24 +116,52 @@ class StreamParamsUpdateRequest(BaseModel):
     """Request model for updating stream parameters with flat structure."""
     width: int = Field(default=DEFAULT_WIDTH, description="Width of the generated video")
     height: int = Field(default=DEFAULT_HEIGHT, description="Height of the generated video")  
-    prompts: Union[str, Dict[str, Any]] = Field(..., description="ComfyUI workflow as JSON string or dict")
-    
+    prompts: Optional[Union[str, List[Union[str, Dict[str, Any]]]]] = Field(..., description="ComfyUI workflow as JSON string or dict")
+
     @field_validator('prompts', mode='before')
     @classmethod
-    def validate_prompts(cls, v) -> dict:
+    def validate_prompts(cls, v) -> List[Dict[str, Any]]:
         if v == "":
-            return DEFAULT_WORKFLOW_JSON
+            return [DEFAULT_WORKFLOW_JSON]
+        
+        # Handle list input (could be list of strings or list of dicts)
+        if isinstance(v, list):
+            result = []
+            for item in v:
+                if isinstance(item, str):
+                    try:
+                        parsed = json.loads(item)
+                        if isinstance(parsed, dict):
+                            result.append(parsed)
+                        else:
+                            raise ValueError("Each JSON string in prompts must parse to a dictionary")
+                    except json.JSONDecodeError:
+                        raise ValueError(f"Could not parse JSON string: {item}")
+                elif isinstance(item, dict):
+                    result.append(item)
+                else:
+                    raise ValueError("Each item in prompts list must be either a JSON string or dict")
+            return result
+            
+        # Handle single dict input
         if isinstance(v, dict):
-            return v
+            return [v]
+        
+        # Handle single string input
         if isinstance(v, str):
             try:
                 parsed = json.loads(v)
-                if not isinstance(parsed, dict):
-                    raise ValueError("Parsed prompt JSON must be a dictionary/object")
-                return parsed
+                if isinstance(parsed, dict):
+                    return [parsed]
+                elif isinstance(parsed, list):
+                    # Handle case where string is a JSON array
+                    return cls.validate_prompts(parsed)  # Recurse to handle the list
+                else:
+                    raise ValueError("Provided JSON string must parse to a dictionary or array of dictionaries")
             except json.JSONDecodeError:
                 raise ValueError("Provided prompt string must be valid JSON")
-        raise ValueError("Prompt must be either a JSON object or such JSON object serialized as a string")
+        
+        raise ValueError("Prompts must be either a JSON string, dictionary, or list of JSON strings/dictionaries")
 
 class StreamResponse(BaseModel):
     status: str = Field(..., description="Operation status (success/error)")
