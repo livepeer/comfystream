@@ -85,6 +85,9 @@ class HealthStateManager:
     def clear_error(self):
         """Clear error state and recalculate appropriate state."""
         self.error_message = None
+        # Reset state from ERROR before recalculating - this allows _update_state to work properly
+        if self.state == "ERROR":
+            self.state = "LOADING"  # Temporary state before recalculation
         self._update_state()
         
     def set_pipeline_warming(self, warming: bool):
