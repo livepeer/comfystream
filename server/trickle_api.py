@@ -376,6 +376,9 @@ def setup_trickle_routes(app, cors):
         'pipeline': app.get('pipeline'),  # This will be set later during startup
         'health_manager': app.get('health_manager')  # Pass health manager for stream tracking
     })
+    
+    # CRITICAL: Add the stream manager reference to its own app_context so streams can remove themselves during error cleanup
+    stream_manager.app_context['stream_manager'] = stream_manager
 
     # Core trickle streaming routes
     cors.add(app.router.add_post("/stream/start", start_stream))
