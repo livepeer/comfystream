@@ -4,9 +4,21 @@ console.log("[ComfyStream Settings] Initializing settings module");
 const DEFAULT_SETTINGS = {
     host: "0.0.0.0",
     port: 8889,
+    enableMetrics: false,
     configurations: [],
     selectedConfigIndex: -1  // -1 means no configuration is selected
 };
+
+/**
+ * Updates the metrics toggle button UI.
+ * @param {HTMLButtonElement} button - The toggle button element.
+ * @param {boolean} enabled - Whether metrics are enabled.
+ */
+function updateMetricsToggleButton(button, enabled) {
+    button.textContent = enabled ? "Enabled" : "Disabled";
+    button.classList.toggle("primary", enabled);
+    button.classList.toggle("selected", enabled);
+}
 
 class ComfyStreamSettings {
     constructor() {
@@ -94,7 +106,7 @@ class ComfyStreamSettings {
         return this.settings;
     }
 
-    async addConfiguration(name, host, port) {
+    async addConfiguration(name, host, port, enableMetrics) {
         try {
             const response = await fetch('/comfystream/settings/configuration', {
                 method: 'POST',
@@ -105,7 +117,8 @@ class ComfyStreamSettings {
                     action: 'add',
                     name,
                     host,
-                    port
+                    port,
+                    enableMetrics
                 })
             });
             
@@ -116,7 +129,7 @@ class ComfyStreamSettings {
             const result = await response.json();
             if (result.success) {
                 this.settings = result.settings;
-                return { name, host, port };
+                return { name, host, port, enableMetrics };
             } else {
                 throw new Error("Failed to add configuration");
             }
@@ -124,7 +137,7 @@ class ComfyStreamSettings {
             console.error("[ComfyStream Settings] Error adding configuration:", error);
             
             // Fallback to local operation
-            const config = { name, host, port };
+            const config = { name, host, port, enableMetrics };
             this.settings.configurations.push(config);
             await this.saveSettings();
             return config;
@@ -207,11 +220,12 @@ class ComfyStreamSettings {
             if (index >= -1 && index < this.settings.configurations.length) {
                 this.settings.selectedConfigIndex = index;
                 
-                // If a valid configuration is selected, update host and port
+                // If a valid configuration is selected, update the settings.
                 if (index >= 0) {
                     const config = this.settings.configurations[index];
                     this.settings.host = config.host;
                     this.settings.port = config.port;
+                    this.settings.enableMetrics = config.enableMetrics;
                 }
                 
                 await this.saveSettings();
@@ -221,10 +235,11 @@ class ComfyStreamSettings {
         }
     }
 
-    getCurrentHostPort() {
+    getCurrentServerSettings() {
         return {
             host: this.settings.host,
-            port: this.settings.port
+            port: this.settings.port,
+            enableMetrics: this.settings.enableMetrics
         };
     }
     
@@ -557,6 +572,7 @@ async function showSettingsModal() {
     const hostLabel = document.createElement("label");
     hostLabel.textContent = "Host:";
     hostLabel.className = "cs-label";
+    hostLabel.title = "Host address for the ComfyStream server";
     
     const hostInput = document.createElement("input");
     hostInput.id = "comfystream-host";
@@ -574,6 +590,7 @@ async function showSettingsModal() {
     const portLabel = document.createElement("label");
     portLabel.textContent = "Port:";
     portLabel.className = "cs-label";
+    portLabel.title = "Port number for the ComfyStream server";
     
     const portInput = document.createElement("input");
     portInput.id = "comfystream-port";
@@ -585,6 +602,42 @@ async function showSettingsModal() {
     
     portGroup.appendChild(portLabel);
     portGroup.appendChild(portInput);
+
+    // Metrics setting
+    const metricsGroup = document.createElement("div");
+    metricsGroup.className = "cs-input-group";
+    metricsGroup.style.display = "flex";
+    metricsGroup.style.alignItems = "center";
+    metricsGroup.style.gap = "18px";
+    metricsGroup.style.marginBottom = "15px";
+
+    const metricsLabel = document.createElement("label");
+    metricsLabel.textContent = "Metrics:";
+    metricsLabel.className = "cs-label";
+    metricsLabel.style.marginBottom = "0";
+    metricsLabel.style.marginRight = "0";
+    metricsLabel.style.flex = "none";
+    metricsLabel.title = "Enable Prometheus metrics endpoint";
+
+    const metricsToggleButton = document.createElement("button");
+    metricsToggleButton.className = "cs-button";
+    metricsToggleButton.type = "button";
+    console.log("[ComfyStream Settings] Initial metrics button state:", settingsManager.settings.enableMetrics);
+    metricsToggleButton.textContent = settingsManager.settings.enableMetrics ? "Enabled" : "Disabled";
+    metricsToggleButton.style.minWidth = "90px";
+    metricsToggleButton.style.alignSelf = "center";
+    updateMetricsToggleButton(metricsToggleButton, settingsManager.settings.enableMetrics);
+
+    metricsToggleButton.onclick = () => {
+        console.log("[ComfyStream Settings] Toggling metrics");
+        const enabled = !settingsManager.settings.enableMetrics;
+        console.log("[ComfyStream Settings] New metrics state:", enabled);
+        settingsManager.settings.enableMetrics = enabled;
+        updateMetricsToggleButton(metricsToggleButton, enabled);
+    };
+
+    metricsGroup.appendChild(metricsLabel);
+    metricsGroup.appendChild(metricsToggleButton);
     
     // Configurations section
     const configsSection = document.createElement("div");
@@ -636,11 +689,16 @@ async function showSettingsModal() {
     saveButton.onclick = async () => {
         const host = hostInput.value;
         const port = parseInt(portInput.value);
+        const enableMetrics = settingsManager.settings.enableMetrics;
         
         // If the current values match a saved configuration, select it
         let matchingConfigIndex = -1;
         settingsManager.settings.configurations.forEach((config, index) => {
-            if (config.host === host && config.port === port) {
+            if (
+                config.host === host &&
+                config.port === port &&
+                config.enableMetrics === enableMetrics
+            ) {
                 matchingConfigIndex = index;
             }
         });
@@ -649,9 +707,10 @@ async function showSettingsModal() {
             await settingsManager.selectConfiguration(matchingConfigIndex);
         } else {
             // No matching configuration, just update the settings
-            await settingsManager.updateSettings({ 
-                host, 
+            await settingsManager.updateSettings({
+                host,
                 port,
+                enableMetrics,
                 selectedConfigIndex: -1 // Reset selected config since we're using custom values
             });
         }
@@ -666,6 +725,7 @@ async function showSettingsModal() {
     form.appendChild(currentConfigDiv);
     form.appendChild(hostGroup);
     form.appendChild(portGroup);
+    form.appendChild(metricsGroup);
     form.appendChild(configsSection);
     
     modalContent.appendChild(closeButton);
@@ -700,6 +760,7 @@ async function showSettingsModal() {
             const configInfo = document.createElement("span");
             configInfo.className = "cs-config-info";
             configInfo.textContent = `${config.name} (${config.host}:${config.port})`;
+            configInfo.style.minWidth = "190px"; 
             
             const buttonsGroup = document.createElement("div");
             buttonsGroup.className = "cs-buttons-group";
@@ -709,6 +770,7 @@ async function showSettingsModal() {
             selectButton.className = `cs-button comfystream-config-select ${index === settingsManager.settings.selectedConfigIndex ? 'selected' : ''}`;
             selectButton.dataset.index = index;
             selectButton.disabled = index === settingsManager.settings.selectedConfigIndex;
+            selectButton.style.marginLeft = "10px";
             
             const loadButton = document.createElement("button");
             loadButton.textContent = "Load";
@@ -748,6 +810,8 @@ async function showSettingsModal() {
                     const config = settingsManager.settings.configurations[index];
                     hostInput.value = config.host;
                     portInput.value = config.port;
+                    settingsManager.settings.enableMetrics = config.enableMetrics;
+                    updateMetricsToggleButton(metricsToggleButton, config.enableMetrics);
                     
                     // Refresh the list to update highlighting
                     await updateConfigsList();
@@ -784,10 +848,11 @@ async function showSettingsModal() {
         const name = configNameInput.value.trim();
         const host = hostInput.value;
         const port = parseInt(portInput.value);
+        const enableMetrics = settingsManager.settings.enableMetrics;
         
         if (name) {
             // Add the configuration
-            await settingsManager.addConfiguration(name, host, port);
+            await settingsManager.addConfiguration(name, host, port, enableMetrics);
             
             // Select the newly added configuration
             const newIndex = settingsManager.settings.configurations.length - 1;
@@ -833,7 +898,11 @@ async function showSettingsModal() {
         const selectedIndex = settingsManager.settings.selectedConfigIndex;
         if (selectedIndex >= 0) {
             const config = settingsManager.settings.configurations[selectedIndex];
-            if (hostInput.value !== config.host || parseInt(portInput.value) !== config.port) {
+            if (
+                hostInput.value !== config.host ||
+                parseInt(portInput.value) !== config.port ||
+                settingsManager.settings.enableMetrics !== config.enableMetrics
+            ) {
                 currentConfigName.textContent = "Custom (unsaved)";
                 currentConfigName.style.fontStyle = "italic";
             } else {
