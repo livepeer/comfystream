@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64.0.0", "wheel"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,7 +9,6 @@ version = "0.1.2"
 license = { file = "LICENSE" }
 dependencies = [
     "asyncio",
-    "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
     "aiortc",
     "aiohttp",
     "aiohttp_cors",
@@ -31,8 +30,11 @@ DisplayName = "ComfyStream"
 Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/icon-light-120px.svg" # SVG, PNG, JPG or GIF (MAX. 800x400px)
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-packages = {find = {where = ["src", "nodes"]}}
+packages = ["comfystream"]
+package-dir = {"comfystream" = "src/comfystream"}
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
+
+[project.entry-points."comfyui.custom_nodes"]
+comfystream = "comfystream.nodes"
