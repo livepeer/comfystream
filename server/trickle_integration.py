@@ -100,6 +100,7 @@ class ComfyStreamTrickleProcessor:
         
         # For fallback frames to prevent flickering
         self.last_processed_frame = None
+        self.last_text_output = None
         
         # Background task for collecting processed outputs
         self.output_collector_task = None
@@ -194,9 +195,9 @@ class ComfyStreamTrickleProcessor:
                     continue
                 
                 try:
-                    # Try to get processed output with shorter timeout for faster cancellation response
-                    output_tensor = await asyncio.wait_for(
-                        self.pipeline.client.get_video_output(), 
+                    # Try to get multiple outputs with shorter timeout for faster cancellation response
+                    outputs = await asyncio.wait_for(
+                        self.pipeline.get_multiple_outputs(['video', 'text']), 
                         timeout=0.05  # Reduced from 0.1 to be more responsive
                     )
                     
@@ -204,20 +205,28 @@ class ComfyStreamTrickleProcessor:
                     if not self.running:
                         break
                     
-                    # Convert ComfyUI output back to trickle format
-                    processed_tensor = self._convert_comfy_output_to_trickle(output_tensor)
+                    # Process video output
+                    if outputs.get('video') is not None:
+                        # Convert ComfyUI output back to trickle format
+                        processed_tensor = self._convert_comfy_output_to_trickle(outputs['video'])
+                        
+                        # Create a dummy frame with the processed tensor
+                        # Note: We don't have the original frame timing here, but that's OK
+                        # The sync method will handle timing preservation
+                        dummy_frame = VideoFrame(
+                            tensor=processed_tensor,
+                            timestamp=0,  # Will be updated in sync method
+                            time_base=Fraction(1, 30)
+                        )
+                        
+                        # Store for fallback use
+                        self.last_processed_frame = dummy_frame
                     
-                    # Create a dummy frame with the processed tensor
-                    # Note: We don't have the original frame timing here, but that's OK
-                    # The sync method will handle timing preservation
-                    dummy_frame = VideoFrame(
-                        tensor=processed_tensor,
-                        timestamp=0,  # Will be updated in sync method
-                        time_base=Fraction(1, 30)
-                    )
-                    
-                    # Store for fallback use
-                    self.last_processed_frame = dummy_frame
+                    # Process text output if available
+                    if outputs.get('text') is not None:
+                        # Store text output for potential use in control messages or logging
+                        self.last_text_output = outputs['text']
+                        logger.info(f"Text output received: {outputs['text']}")
                     
                 except asyncio.TimeoutError:
                     # No output available yet, continue
