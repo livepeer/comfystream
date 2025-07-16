@@ -23,14 +23,14 @@ class FPSMeter:
         self._running_event = asyncio.Event()
         self._metrics_manager = metrics_manager
         self.track_id = track_id
-
-        asyncio.create_task(self._calculate_fps_loop())
+        self._fps_loop_task = None
+        self._fps_loop_task = asyncio.create_task(self._calculate_fps_loop())
 
     async def _calculate_fps_loop(self):
         """Loop to calculate FPS periodically."""
         await self._running_event.wait()
         self._fps_loop_start_time = time.monotonic()
-        while True:
+        while self._running_event.is_set():
             async with self._lock:
                 current_time = time.monotonic()
                 if self._last_fps_calculation_time is not None:
@@ -55,6 +55,17 @@ class FPSMeter:
             self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
 
             await asyncio.sleep(1)  # Calculate FPS every second.
+
+    async def stop(self):
+        """Stop the FPS calculation loop."""
+        self._running_event.clear()
+        if self._fps_loop_task:
+            self._fps_loop_task.cancel()
+            try:
+                await self._fps_loop_task
+            except asyncio.CancelledError:
+                pass
+            self._fps_loop_task = None
 
     async def increment_frame_count(self):
         """Increment the frame count to calculate FPS."""
