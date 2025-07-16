@@ -3,10 +3,13 @@ import torch
 import numpy as np
 import asyncio
 import logging
-from typing import Any, Dict, Union, List, Optional
+from typing import Any, Dict, Union, List, Optional, cast
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+
+# Import for JSON parsing
+import json
 
 WARMUP_RUNS = 5
 
@@ -54,6 +57,47 @@ class Pipeline:
         for _ in range(WARMUP_RUNS):
             self.client.put_video_input(dummy_frame)
             await self.client.get_video_output()
+            
+    async def wait_for_first_processed_frame(self, timeout: float = 30.0) -> bool:
+        """Wait for the first successful model-processed frame to ensure pipeline is ready.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if first frame was processed successfully, False on timeout
+        """
+        logger.info("Waiting for first processed frame to confirm pipeline readiness...")
+        
+        start_time = asyncio.get_event_loop().time()
+        
+        # Create a test frame
+        test_frame = av.VideoFrame()
+        test_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+        
+        while True:
+            current_time = asyncio.get_event_loop().time()
+            if current_time - start_time > timeout:
+                logger.error(f"Timeout waiting for first processed frame after {timeout}s")
+                return False
+                
+            try:
+                # Put test frame through pipeline
+                self.client.put_video_input(test_frame)
+                
+                # Try to get output with a short timeout
+                output = await asyncio.wait_for(self.client.get_video_output(), timeout=5.0)
+                
+                logger.info("First processed frame received successfully - pipeline is ready")
+                return True
+                
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for processed frame, retrying...")
+                continue
+            except Exception as e:
+                logger.error(f"Error processing test frame: {e}")
+                await asyncio.sleep(1.0)
+                continue
 
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
@@ -65,27 +109,44 @@ class Pipeline:
             self.client.put_audio_input(dummy_frame)
             await self.client.get_audio_output()
 
-    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    def _parse_prompt_data(self, prompt_data: Union[Dict, List[Dict]]) -> List[Dict]:
+        """Parse prompt data into a list of prompt dictionaries.
+        
+        Args:
+            prompt_data: Either a single prompt dict or list of prompt dicts
+            
+        Returns:
+            List of prompt dictionaries
+            
+        Raises:
+            ValueError: If the prompt data format is invalid
+        """
+        if isinstance(prompt_data, dict):
+            return [prompt_data]
+        elif isinstance(prompt_data, list):
+            if not all(isinstance(prompt, dict) for prompt in prompt_data):
+                raise ValueError("All prompts in list must be dictionaries")
+            return prompt_data
+        else:
+            raise ValueError("Prompts must be either a dict or list of dicts")
+
+    async def set_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Set the processing prompts for the pipeline.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dict or list of prompt dicts
         """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        parsed_prompts = self._parse_prompt_data(prompts)
+        await self.client.set_prompts(parsed_prompts)
 
-    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    async def update_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Update the existing processing prompts.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dict or list of prompt dicts
         """
-        if isinstance(prompts, list):
-            await self.client.update_prompts(prompts)
-        else:
-            await self.client.update_prompts([prompts])
+        parsed_prompts = self._parse_prompt_data(prompts)
+        await self.client.update_prompts(parsed_prompts)
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -170,8 +231,12 @@ class Pipeline:
             frame = await self.video_incoming_frames.get()
 
         processed_frame = self.video_postprocess(out_tensor)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
+        
+        # Copy timing information from original frame if available
+        if frame.pts is not None:
+            processed_frame.pts = frame.pts
+        if frame.time_base is not None:
+            processed_frame.time_base = frame.time_base
         
         return processed_frame
 
@@ -190,8 +255,12 @@ class Pipeline:
         self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
 
         processed_frame = self.audio_postprocess(out_data)
-        processed_frame.pts = frame.pts
-        processed_frame.time_base = frame.time_base
+        
+        # Copy timing information from original frame if available
+        if frame.pts is not None:
+            processed_frame.pts = frame.pts
+        if frame.time_base is not None:
+            processed_frame.time_base = frame.time_base
         processed_frame.sample_rate = frame.sample_rate
         
         return processed_frame
