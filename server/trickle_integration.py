@@ -767,14 +767,6 @@ class TrickleStreamHandler:
                         }
                     }
                     
-                    # Add client stats if available
-                    if hasattr(self.client, 'get_stats'):
-                        try:
-                            client_stats = self.client.get_stats()  # type: ignore
-                            stats["client"] = client_stats
-                        except Exception as e:
-                            logger.debug(f"Could not get client stats: {e}")
-                    
                     # Emit the stats
                     await self._emit_monitoring_event(stats, "stream_stats")
                     
