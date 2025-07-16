@@ -82,6 +82,7 @@ class StreamStartRequest(BaseModel):
     publish_url: str = Field(..., description="URL for publishing output video stream")
     control_url: Optional[str] = Field(default=None, description="URL for control channel communication")
     events_url: Optional[str] = Field(default=None, description="URL for events channel communication")
+    text_url: Optional[str] = Field(default=None, description="URL for publishing text data output from inference")
     gateway_request_id: str = Field(..., description="Unique identifier for the stream request")
     
     # Optional fields that may be present in the request

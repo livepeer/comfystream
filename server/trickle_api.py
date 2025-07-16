@@ -78,6 +78,7 @@ async def start_stream(request):
             publish_url=stream_request.publish_url,
             control_url=stream_request.control_url or "",
             events_url=stream_request.events_url or "",
+            text_url=stream_request.text_url or "",
             pipeline=pipeline,
             width=width,
             height=height

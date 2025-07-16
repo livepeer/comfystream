@@ -423,7 +423,7 @@ async def offer(request):
         h264.MAX_BITRATE = MAX_BITRATE
         h264.MIN_BITRATE = MIN_BITRATE
 
-    # Handle control channel from client
+    # Handle data channels from client
     @pc.on("datachannel")
     def on_datachannel(channel):
         if channel.label == "control":
@@ -513,6 +513,59 @@ async def offer(request):
                     logger.error("[Server] Invalid JSON received")
                 except Exception as e:
                     logger.error(f"[Server] Error processing message: {str(e)}")
+        
+        elif channel.label == "text":
+            # Text data channel for streaming text output
+            logger.info("Text data channel established")
+            
+            # Create background task to stream text data
+            async def stream_text_data():
+                try:
+                    while pc.connectionState in ["connecting", "connected"]:
+                        try:
+                            # Get text output from pipeline with timeout
+                            text_output = await asyncio.wait_for(
+                                pipeline.get_text_output(), 
+                                timeout=0.1
+                            )
+                            
+                            # Send text data through channel if still open
+                            if channel.readyState == "open":
+                                text_message = {
+                                    "type": "text_output",
+                                    "data": text_output,
+                                    "timestamp": asyncio.get_event_loop().time()
+                                }
+                                channel.send(json.dumps(text_message))
+                                logger.debug(f"Sent text output: {text_output[:100]}...")
+                            else:
+                                break
+                                
+                        except asyncio.TimeoutError:
+                            # No text output available, continue
+                            await asyncio.sleep(0.01)
+                            continue
+                        except Exception as e:
+                            logger.error(f"Error streaming text data: {e}")
+                            await asyncio.sleep(0.1)
+                            continue
+                            
+                except asyncio.CancelledError:
+                    logger.info("Text streaming task cancelled")
+                except Exception as e:
+                    logger.error(f"Text streaming task error: {e}")
+                finally:
+                    logger.info("Text streaming task ended")
+            
+            # Start background task for text streaming
+            text_task = asyncio.create_task(stream_text_data())
+            
+            # Clean up task when channel closes
+            @channel.on("close")
+            def on_text_channel_close():
+                logger.info("Text data channel closed")
+                if not text_task.done():
+                    text_task.cancel()
 
     @pc.on("track")
     def on_track(track):

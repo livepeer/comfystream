@@ -16,6 +16,9 @@ export function usePeer(props: PeerProps): Peer {
   const [controlChannel, setControlChannel] = useState<RTCDataChannel | null>(
     null,
   );
+  const [textChannel, setTextChannel] = useState<RTCDataChannel | null>(
+    null,
+  );
 
   const connectionStateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -140,6 +143,38 @@ export function usePeer(props: PeerProps): Peer {
         console.log("Received message on control channel:", event.data);
       };
 
+      // Create text channel for receiving text output
+      const textChan = pc.createDataChannel("text");
+
+      textChan.onopen = () => {
+        console.log(
+          "[usePeer] Text channel opened, readyState:",
+          textChan.readyState,
+        );
+        setTextChannel(textChan);
+      };
+
+      textChan.onclose = () => {
+        console.log("[usePeer] Text channel closed");
+        setTextChannel(null);
+      };
+
+      textChan.onerror = (error) => {
+        console.error("Text channel error:", error);
+      };
+
+      textChan.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "text_output") {
+            console.log("Received text output:", message.data);
+            // You can dispatch this to a context or callback for UI consumption
+          }
+        } catch (error) {
+          console.error("Error parsing text message:", error);
+        }
+      };
+
       pc.onicecandidate = async (event) => {
         if (!event.candidate) {
           const offerResponse = await sendOffer(url, pc.localDescription!);
@@ -169,6 +204,7 @@ export function usePeer(props: PeerProps): Peer {
         peerConnection.close();
       }
       setControlChannel(null);
+      setTextChannel(null);
       setRemoteStream(null);
       setPeerConnection(null);
     }
@@ -200,5 +236,6 @@ export function usePeer(props: PeerProps): Peer {
     peerConnection,
     remoteStream,
     controlChannel,
+    textChannel,
   };
 }
