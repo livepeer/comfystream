@@ -3,12 +3,14 @@ from .pipeline import Pipeline
 from .server.utils import temporary_log_level
 from .server.utils import FPSMeter
 from .server.metrics import MetricsManager, StreamStatsManager
-
+from .utils import DEFAULT_PROMPT, DEFAULT_SD_PROMPT
 __all__ = [
     'ComfyStreamClient',
     'Pipeline',
     'temporary_log_level',
     'FPSMeter',
     'MetricsManager',
-    'StreamStatsManager'
+    'StreamStatsManager',
+    'DEFAULT_PROMPT',
+    'DEFAULT_SD_PROMPT'
 ]
