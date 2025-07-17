@@ -330,6 +330,8 @@ export const Room = () => {
     selectedVideoDeviceId: "",
     selectedAudioDeviceId: "",
     prompts: null,
+    streamingMode: 'webrtc',
+    segmentTime: 1,
   });
 
   const connectingRef = useRef(false);

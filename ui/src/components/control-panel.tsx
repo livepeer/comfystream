@@ -409,6 +409,7 @@ export const ControlPanel = ({
 
   return (
     <div className="flex flex-col gap-3 p-3">
+      {/* ...existing controls... */}
       <select
         value={promptIdxToUpdate}
         onChange={(e) => setPromptIdxToUpdate(parseInt(e.target.value))}
@@ -421,6 +422,7 @@ export const ControlPanel = ({
             </option>
           ))}
       </select>
+
       <select
         value={panelState.nodeId}
         onChange={(e) => {

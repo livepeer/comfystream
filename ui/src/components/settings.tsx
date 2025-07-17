@@ -51,6 +51,8 @@ export interface StreamConfig {
     width: number;
     height: number;
   };
+  streamingMode: 'webrtc' | 'segments';
+  segmentTime: number;
 }
 
 interface AVDevice {
@@ -68,6 +70,8 @@ export const DEFAULT_CONFIG: StreamConfig = {
     width: 512,
     height: 512
   },
+  streamingMode: 'webrtc',
+  segmentTime: 1,
 };
 
 interface StreamSettingsProps {
@@ -155,7 +159,9 @@ const formSchema = z.object({
     height: z.coerce.number().refine(val => val % 64 === 0 && val >= 64 && val <= 2048, {
       message: "Height must be a multiple of 64 (between 64 and 2048)"
     })
-  })
+  }),
+  streamingMode: z.enum(['webrtc', 'segments']),
+  segmentTime: z.coerce.number().min(0.1).max(10),
 });
 
 interface ConfigFormProps {
@@ -285,6 +291,8 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
       selectedVideoDeviceId: selectedVideoDevice || "none",
       selectedAudioDeviceId: selectedAudioDevice || "none",
       resolution: values.resolution || DEFAULT_CONFIG.resolution,
+      streamingMode: values.streamingMode,
+      segmentTime: values.segmentTime,
     });
   };
 
@@ -410,6 +418,67 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
               </FormItem>
             )}
           />
+        </div>
+
+        {/* Streaming Configuration Section */}
+        <div className="border-t pt-3 mt-4">
+          <div className="flex items-center gap-4">
+            <FormField
+              control={form.control}
+              name="streamingMode"
+              render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center gap-2">
+                    <FormLabel className="text-sm font-medium">
+                      Segments
+                    </FormLabel>
+                    <FormControl>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={field.value === 'segments'}
+                        onClick={() => field.onChange(field.value === 'webrtc' ? 'segments' : 'webrtc')}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                          field.value === 'segments' ? 'bg-blue-600' : 'bg-gray-200'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            field.value === 'segments' ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </FormControl>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="segmentTime"
+              render={({ field }) => (
+                <FormItem>
+                  <FormControl>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min="0.1"
+                        max="10"
+                        step="0.1"
+                        className="w-16 h-8 text-sm"
+                        disabled={form.watch('streamingMode') === 'webrtc'}
+                        {...field}
+                      />
+                      <span className="text-sm text-gray-500">seconds</span>
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         <div className="mt-4 mb-4">
