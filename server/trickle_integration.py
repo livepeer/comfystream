@@ -236,7 +236,6 @@ class ComfyStreamTrickleProcessor:
                         # Store text output for potential use in control messages or logging
                         self.last_text_output = outputs['text']
                         self.data_queue.put_nowait(outputs['text'])
-                        #logger.info(f"Text output received: {outputs['text']}")
                     
                 except asyncio.TimeoutError:
                     # No output available yet, continue
@@ -582,7 +581,7 @@ class TrickleStreamHandler:
         
         try:
             while self.running:
-                text_items = ["text"]  # List to collect all text items from queue
+                text_items = []  # List to collect all text items from queue
                 
                 # Pull all available text items from the queue
                 try:
@@ -627,7 +626,7 @@ class TrickleStreamHandler:
                     
         except asyncio.CancelledError:
             logger.info(f"Text streaming task cancelled for {self.request_id}")
-            raise  # Re-raise to ensure proper cancellation handling
+            raise
         except Exception as e:
             logger.error(f"Text streaming task error for {self.request_id}: {e}")
         finally:
