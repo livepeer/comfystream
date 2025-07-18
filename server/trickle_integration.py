@@ -21,7 +21,15 @@ from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
-
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 class FrameBuffer:
     """Rolling frame buffer that keeps a fixed number of frames and discards older ones."""
@@ -89,6 +97,7 @@ class ComfyStreamTrickleProcessor:
         self.pipeline = pipeline
         self.request_id = request_id
         self.frame_count = 0
+        self.data_queue = asyncio.Queue()
         self.running = False
         
         # Pipeline readiness
@@ -198,7 +207,7 @@ class ComfyStreamTrickleProcessor:
                     # Try to get multiple outputs with shorter timeout for faster cancellation response
                     outputs = await asyncio.wait_for(
                         self.pipeline.get_multiple_outputs(['video', 'text']), 
-                        timeout=0.05  # Reduced from 0.1 to be more responsive
+                        timeout=0.1
                     )
                     
                     # Check if we're still running before processing
@@ -226,7 +235,7 @@ class ComfyStreamTrickleProcessor:
                     if outputs.get('text') is not None:
                         # Store text output for potential use in control messages or logging
                         self.last_text_output = outputs['text']
-                        logger.info(f"Text output received: {outputs['text']}")
+                        self.data_queue.put_nowait(outputs['text'])
                     
                 except asyncio.TimeoutError:
                     # No output available yet, continue
@@ -372,6 +381,13 @@ class ComfyStreamTrickleProcessor:
             if self.last_processed_frame is not None:
                 return VideoOutput(self.last_processed_frame, self.request_id)
             return VideoOutput(frame, self.request_id)
+    
+    async def get_data(self):
+        """Get the data queue for text outputs."""
+        if self.data_queue.empty():
+            return None
+        
+        return await self.data_queue.get()
     
     def _convert_comfy_output_to_trickle(self, comfy_tensor):
         """Convert ComfyUI output tensor to trickle format."""
@@ -565,31 +581,52 @@ class TrickleStreamHandler:
         
         try:
             while self.running:
+                text_items = []  # List to collect all text items from queue
+                
+                # Pull all available text items from the queue
                 try:
-                    # Get text output from pipeline with timeout
-                    text_output = await asyncio.wait_for(
-                        self.pipeline.get_text_output(), 
-                        timeout=0.1
-                    )
-                    
-                    # Publish text data through trickle protocol
-                    await self.publish_text(text_output)
-                    logger.debug(f"Published text output for {self.request_id}: {text_output[:100]}...")
-                    
+                    while True:  # Keep pulling until queue is empty
+                        text_output = await asyncio.wait_for(
+                            self.processor.get_data(), 
+                            timeout=0.01  # Very short timeout to drain queue quickly
+                        )
+                        if text_output is None:
+                            break
+
+                        if not text_output is None and text_output.strip():
+                            text_items.append(text_output)
+                            
                 except asyncio.TimeoutError:
-                    # No text output available, continue
-                    await asyncio.sleep(0.01)
-                    continue
+                    # No more text output available, proceed with what we have
+                    pass
                 except asyncio.CancelledError:
                     logger.info(f"Text streaming cancelled for {self.request_id}")
                     break
                 except Exception as e:
-                    logger.error(f"Error streaming text data for {self.request_id}: {e}")
-                    await asyncio.sleep(0.1)
-                    continue
+                    logger.error(f"Error getting text data for {self.request_id}: {e}")
+                
+                # Send collected text items as JSON list if we have any
+                if text_items:
+                    try:
+                        text_json = json.dumps({
+                            "data": text_items,
+                            "count": len(text_items),
+                            "request_id": self.request_id,
+                            "timestamp": asyncio.get_event_loop().time()
+                        })
+                        await self.publish_text(text_json)
+                        logger.debug(f"Published {len(text_items)} text items for {self.request_id}")
+                    except Exception as e:
+                        logger.error(f"Error publishing text data for {self.request_id}: {e}")
+                        await asyncio.sleep(0.25)
+                        continue
+                
+                # Send data every 250ms regardless of whether we got output or not
+                await asyncio.sleep(0.25)
                     
         except asyncio.CancelledError:
             logger.info(f"Text streaming task cancelled for {self.request_id}")
+            raise
         except Exception as e:
             logger.error(f"Text streaming task error for {self.request_id}: {e}")
         finally:

@@ -1,6 +1,7 @@
 import asyncio
 from typing import List, Dict, Any
 import logging
+import random 
 
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
@@ -10,7 +11,15 @@ from comfy.cli_args_types import Configuration
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
 
 logger = logging.getLogger(__name__)
-
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
@@ -107,12 +116,21 @@ class ComfyStreamClient:
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
+        if tensor_cache.image_outputs.empty():
+            return None
+        
         return await tensor_cache.image_outputs.get()
     
     async def get_audio_output(self):
+        if tensor_cache.audio_outputs.empty():
+            return None
+        
         return await tensor_cache.audio_outputs.get()
     
     async def get_text_output(self):
+        if tensor_cache.text_outputs.empty():
+            return None
+        
         return await tensor_cache.text_outputs.get()
 
     async def get_multiple_outputs(self, output_types: List[str]) -> Dict[str, Any]:
