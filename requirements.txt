@@ -1,6 +1,8 @@
 asyncio
 comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8
-aiortc
+# Updated for compatibility - aiortc 1.13.0 requires av>=14.0.0,<15.0.0
+aiortc>=1.13.0
+av>=14.0.0,<15.0.0
 aiohttp
 aiohttp_cors
 toml

@@ -10,8 +10,10 @@ license = { file = "LICENSE" }
 dependencies = [
     "asyncio",
     "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
-    "pytrickle @ git+https://github.com/livepeer/pytrickle.git@63369f90d2ea241ffc0ccf7d4fd1b18713e2a8c6",
-    "aiortc",
+    "pytrickle @ git+https://github.com/livepeer/pytrickle.git@8cbd358f392c7234552e17125b3d26b9a99786e1",
+    # Updated for compatibility - aiortc 1.13.0 requires av>=14.0.0,<15.0.0
+    "aiortc>=1.13.0",
+    "av>=14.0.0,<15.0.0",
     "aiohttp",
     "aiohttp_cors",
     "toml",

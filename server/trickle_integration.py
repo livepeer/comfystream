@@ -10,13 +10,15 @@ import logging
 import torch
 import numpy as np
 import av
+from av.audio.frame import AudioFrame as AVAudioFrame  # Import AudioFrame from correct location
 import traceback
 import warnings
 import json
 from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
-from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
+from pytrickle import TrickleClient, VideoFrame, VideoOutput, AudioFrame, AudioOutput, TrickleSubscriber, TricklePublisher
+from pytrickle.frames import SideData
 from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
 
@@ -109,6 +111,7 @@ class ComfyStreamTrickleProcessor:
         
         # For fallback frames to prevent flickering
         self.last_processed_frame = None
+        self.last_processed_audio = None
         self.last_text_output = None
         
         # Background task for collecting processed outputs
@@ -206,7 +209,7 @@ class ComfyStreamTrickleProcessor:
                 try:
                     # Try to get multiple outputs with shorter timeout for faster cancellation response
                     outputs = await asyncio.wait_for(
-                        self.pipeline.get_multiple_outputs(['video', 'text']), 
+                        self.pipeline.get_multiple_outputs(['video', 'audio', 'text']), 
                         timeout=0.1
                     )
                     
@@ -230,6 +233,27 @@ class ComfyStreamTrickleProcessor:
                         
                         # Store for fallback use
                         self.last_processed_frame = dummy_frame
+                    
+                    # Process audio output if available
+                    if outputs.get('audio') is not None:
+                        # Store audio output for fallback use
+                        # Note: audio outputs from ComfyUI are numpy arrays
+                        audio_tensor = outputs['audio']
+                        
+                        # Convert to AudioFrame format for fallback
+                        # Create a simple AudioFrame with the processed audio data
+                        dummy_audio = AudioFrame.__new__(AudioFrame)
+                        dummy_audio.samples = audio_tensor
+                        dummy_audio.timestamp = 0
+                        dummy_audio.time_base = Fraction(1, 48000)  # Common audio sample rate
+                        dummy_audio.rate = 48000
+                        dummy_audio.format = "s16"
+                        dummy_audio.layout = "stereo"
+                        dummy_audio.nb_samples = len(audio_tensor)
+                        dummy_audio.log_timestamps = {}
+                        dummy_audio.side_data = SideData()                                                
+                        # Store for fallback use
+                        self.last_processed_audio = dummy_audio
                     
                     # Process text output if available
                     if outputs.get('text') is not None:
@@ -285,8 +309,17 @@ class ComfyStreamTrickleProcessor:
             logger.error(f"Timeout waiting for pipeline ready after {timeout}s")
             return False
     
-    def process_frame_sync(self, frame: VideoFrame) -> VideoOutput:
+    def process_frame_sync(self, frame: Union[VideoFrame, AudioFrame]) -> Union[VideoOutput, AudioOutput]:
         """Synchronous interface for frame processing using proper pipeline methods."""
+        
+        # Route to appropriate handler based on frame type
+        if isinstance(frame, VideoFrame):
+            return self._process_video_frame_sync(frame)
+        elif isinstance(frame, AudioFrame):
+            return self._process_audio_frame_sync(frame)
+    
+    def _process_video_frame_sync(self, frame: VideoFrame) -> VideoOutput:
+        """Process video frames synchronously."""
         try:
             # Check if we're shutting down first (before acquiring lock)
             if not self.running:
@@ -369,18 +402,96 @@ class ComfyStreamTrickleProcessor:
                     return VideoOutput(frame, self.request_id)
                 
             except Exception as e:
-                logger.error(f"Error processing frame {self.frame_count}: {e}")
+                logger.error(f"Error processing video frame {self.frame_count}: {e}")
                 # On error, use last processed frame if available
                 if self.last_processed_frame is not None:
                     return VideoOutput(self.last_processed_frame, self.request_id)
                 return VideoOutput(frame, self.request_id)
                 
         except Exception as e:
-            logger.error(f"Error in sync frame processing: {e}")
+            logger.error(f"Error in sync video frame processing: {e}")
             # On error, use last processed frame if available
             if self.last_processed_frame is not None:
                 return VideoOutput(self.last_processed_frame, self.request_id)
             return VideoOutput(frame, self.request_id)
+    
+    def _process_audio_frame_sync(self, frame: AudioFrame) -> AudioOutput:
+        """Process audio frames synchronously."""
+        try:
+            # Check if we're shutting down first
+            if not self.running:
+                logger.warning(f"Processor not running for request {self.request_id}")
+                # Use last processed audio if available to avoid silence
+                if self.last_processed_audio is not None:
+                    return AudioOutput([self.last_processed_audio], self.request_id)
+                return AudioOutput([frame], self.request_id)
+            
+            # Check if pipeline is ready
+            if not self.pipeline_ready:
+                # Use last processed audio if available, otherwise original
+                if self.last_processed_audio is not None:
+                    return AudioOutput([self.last_processed_audio], self.request_id)
+                return AudioOutput([frame], self.request_id)
+            
+            try:
+                # Convert AudioFrame to av.AudioFrame for pipeline processing
+                # In PyAV v14+, we need to create AudioFrame from numpy array
+                # Convert the trickle AudioFrame samples to numpy format
+                audio_samples = frame.samples
+                
+                # Ensure audio_samples is 2D array (channels x samples) as required by PyAV v14+
+                if audio_samples.ndim == 1:
+                    # Convert 1D to 2D: assume mono if 1D
+                    audio_samples = audio_samples.reshape(1, -1)
+                elif audio_samples.ndim == 2 and audio_samples.shape[0] > audio_samples.shape[1]:
+                    # If shape is (samples, channels), transpose to (channels, samples)
+                    audio_samples = audio_samples.T
+                
+                # Create av.AudioFrame using from_ndarray method (PyAV v14+ compatible)
+                av_audio_frame = AVAudioFrame.from_ndarray(
+                    audio_samples, 
+                    format=frame.format,  # PyAV will handle format conversion
+                    layout=frame.layout   # PyAV will handle layout conversion
+                )
+                
+                # Set timing information
+                av_audio_frame.pts = frame.timestamp
+                av_audio_frame.time_base = frame.time_base
+                av_audio_frame.sample_rate = frame.rate
+                
+                # Store original timing information
+                original_timestamp = frame.timestamp
+                original_time_base = frame.time_base
+                
+                # Process audio using pipeline preprocessing
+                preprocessed_audio = self.pipeline.audio_preprocess(av_audio_frame)
+                # Set side_data attributes
+                # pylint: disable=attribute-defined-outside-init
+                av_audio_frame.side_data.input = preprocessed_audio  # type: ignore
+                av_audio_frame.side_data.skipped = True  # type: ignore
+                
+                # Put audio frame into pipeline client
+                self.pipeline.client.put_audio_input(av_audio_frame)
+                
+                # Store as last processed audio for fallback
+                self.last_processed_audio = frame
+                
+                # Return the original frame for now (processing happens asynchronously)
+                return AudioOutput([frame], self.request_id)
+                
+            except Exception as e:
+                logger.error(f"Error processing audio frame: {e}")
+                # On error, use last processed audio if available
+                if self.last_processed_audio is not None:
+                    return AudioOutput([self.last_processed_audio], self.request_id)
+                return AudioOutput([frame], self.request_id)
+                
+        except Exception as e:
+            logger.error(f"Error in sync audio frame processing: {e}")
+            # On error, use last processed audio if available
+            if self.last_processed_audio is not None:
+                return AudioOutput([self.last_processed_audio], self.request_id)
+            return AudioOutput([frame], self.request_id)
     
     async def get_data(self):
         """Get the data queue for text outputs."""
