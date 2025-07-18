@@ -1,8 +1,8 @@
 import numpy as np
-from comfy.nodes.package_typing import CustomNode
+# from comfy.nodes.package_typing import CustomNode
 from comfystream.tensor_cache import audio_inputs
 
-class LoadAudioTensor(CustomNode):
+class LoadAudioTensor():
     @classmethod
     def INPUT_TYPES(cls):
         return {

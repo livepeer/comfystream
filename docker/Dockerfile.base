@@ -69,7 +69,7 @@ RUN conda run -n comfystream pip install --no-cache-dir \
 RUN git clone --branch v0.3.40 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
 
 # Copy only files needed for setup
-COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
+COPY ./scripts /workspace/comfystream/scripts
 COPY ./configs /workspace/comfystream/configs
 
 # Copy ComfyStream files into ComfyUI
@@ -92,7 +92,7 @@ ARG CACHEBUST=static
 ENV CACHEBUST=${CACHEBUST}
 
 # Run setup_nodes
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python scripts/comfystream/setup_nodes.py --workspace /workspace/ComfyUI
 
 # Install additional dependencies
 RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings==10.9.0.34 tensorrt-cu12-libs==10.9.0.34 --root-user-action=ignore

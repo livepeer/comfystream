@@ -16,12 +16,6 @@ if torch.cuda.is_available():
 if "/workspace/ComfyUI" not in sys.path:
     sys.path.insert(0, "/workspace/ComfyUI")
 
-# Add comfystream src directory to Python path
-import os
-src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-
 
 from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
@@ -39,8 +33,8 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
 from twilio.rest import Client
-from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
-from comfystream.server.metrics import MetricsManager, StreamStatsManager
+from comfystream.server.comfystream_utils.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+from comfystream.server.comfystream_utils.metrics import MetricsManager, StreamStatsManager
 import time
 
 logger = logging.getLogger(__name__)

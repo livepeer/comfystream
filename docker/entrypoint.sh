@@ -39,7 +39,7 @@ fi
 if [ "$1" = "--download-models" ]; then
   cd /workspace/comfystream
   conda activate comfystream
-  python src/comfystream/scripts/setup_models.py --workspace /workspace/ComfyUI
+  python scripts/comfystream/setup_models.py --workspace /workspace/ComfyUI
   shift
 fi
 
@@ -54,16 +54,16 @@ if [ "$1" = "--build-engines" ]; then
   conda activate comfystream
 
   # Build Static Engine for Dreamshaper - Square (512x512)
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine --width 512 --height 512
+  python scripts/comfystream/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine --width 512 --height 512
 
   # Build Static Engine for Dreamshaper - Portrait (384x704)
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-704-w-384_00001_.engine --width 384 --height 704
+  python scripts/comfystream/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-704-w-384_00001_.engine --width 384 --height 704
 
   # Build Static Engine for Dreamshaper - Landscape (704x384)
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-384-w-704_00001_.engine --width 704 --height 384
+  python scripts/comfystream/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-384-w-704_00001_.engine --width 704 --height 384
 
   # Build Dynamic Engine for Dreamshaper
-  python src/comfystream/scripts/build_trt.py \
+  python scripts/comfystream/build_trt.py \
                 --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors \
                 --out-engine /workspace/ComfyUI/output/tensorrt/dynamic-dreamshaper8_SD15_\$dyn-b-1-4-2-h-512-704-w-320-384-448_00001_.engine \
                 --width 384 \

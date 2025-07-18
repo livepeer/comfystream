@@ -1,8 +1,8 @@
-from comfy.nodes.package_typing import CustomNode
+# from comfy.nodes.package_typing import CustomNode
 from comfystream.tensor_cache import image_inputs
 
 
-class LoadTensor(CustomNode):
+class LoadTensor():
     @classmethod
     def INPUT_TYPES(cls):
         return {}

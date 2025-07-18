@@ -8,7 +8,7 @@
             "name": "Run ComfyUI",
             "type": "debugpy",
             "request": "launch",
-            "cwd": "/workspace/ComfyUI",
+            "cwd": "/workspace/ComfyUI2",
             "program": "main.py",
             "purpose": ["debug-in-terminal"],
             "env": {

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from comfystream.server.metrics import MetricsManager
+from comfystream.server.comfystream_utils.metrics import MetricsManager
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ import argparse
 # Reccomended running from comfystream conda environment
 # in devcontainer from the workspace/ directory, or comfystream/ if you've checked out the repo
 # $> conda activate comfystream
-# $> python src/comfystream/scripts/build_trt.py --model /ComfyUI/models/checkpoints/SD1.5/dreamshaper-8.safetensors --out-engine /ComfyUI/output/tensorrt/static-dreamshaper8_SD15_$stat-b-1-h-512-w-512_00001_.engine
+# $> python scripts/comfystream/build_trt.py --model /ComfyUI/models/checkpoints/SD1.5/dreamshaper-8.safetensors --out-engine /ComfyUI/output/tensorrt/static-dreamshaper8_SD15_$stat-b-1-h-512-w-512_00001_.engine
 
 # Paths path explicitly to use the downloaded comfyUI installation on root
 ROOT_DIR="/workspace"

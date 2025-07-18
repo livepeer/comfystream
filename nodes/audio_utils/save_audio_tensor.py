@@ -1,7 +1,7 @@
-from comfy.nodes.package_typing import CustomNode
+# from comfy.nodes.package_typing import CustomNode
 from comfystream.tensor_cache import audio_outputs
 
-class SaveAudioTensor(CustomNode):
+class SaveAudioTensor():
     @classmethod
     def INPUT_TYPES(cls):
         return {

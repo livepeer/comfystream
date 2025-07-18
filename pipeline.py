@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, Union, List, Optional
 
 from comfystream.client import ComfyStreamClient
-from comfystream.server.utils import temporary_log_level
+from comfystream.server.comfystream_utils.utils import temporary_log_level
 
 WARMUP_RUNS = 5
 
