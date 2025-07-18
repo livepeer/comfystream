@@ -14,7 +14,15 @@ import json
 WARMUP_RUNS = 5
 
 logger = logging.getLogger(__name__)
-
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 class Pipeline:
     """A pipeline for processing video and audio frames using ComfyUI.
@@ -224,6 +232,9 @@ class Pipeline:
         Returns:
             The processed video frame
         """
+        if self.video_incoming_frames.empty():
+            return None
+        
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_tensor = await self.client.get_video_output()
         frame = await self.video_incoming_frames.get()
@@ -246,6 +257,9 @@ class Pipeline:
         Returns:
             The processed audio frame
         """
+        if self.video_incoming_frames.empty():
+            return None
+        
         frame = await self.audio_incoming_frames.get()
         if frame.samples > len(self.processed_audio_buffer):
             async with temporary_log_level("comfy", self._comfyui_inference_log_level):
@@ -269,12 +283,14 @@ class Pipeline:
         """Get the next processed text output.
         
         Returns:
-            The processed text string
+            The processed text string, or empty string if no output available within timeout
         """
+        
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             text_output = await self.client.get_text_output()
+
         return text_output
-    
+
     async def get_multiple_outputs(self, output_types: List[str]) -> Dict[str, Any]:
         """Get multiple outputs of different types in a coordinated way.
         
@@ -300,13 +316,16 @@ class Pipeline:
             # Wait for all outputs with a reasonable timeout
             try:
                 outputs = await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=10.0
+                    asyncio.gather(*tasks, return_exceptions=False),
+                    timeout=.10
                 )
                 
                 for i, output_type in enumerate(output_types):
                     if isinstance(outputs[i], Exception):
-                        logger.error(f"Error getting {output_type} output: {outputs[i]}")
+                        if isinstance(outputs[i], asyncio.CancelledError):
+                            logger.debug(f"{output_type} output request was cancelled")
+                        else:
+                            logger.error(f"Error getting {output_type} output: {outputs[i]}")
                         results[output_type] = None
                     else:
                         results[output_type] = outputs[i]
@@ -315,7 +334,15 @@ class Pipeline:
                 logger.error("Timeout waiting for multiple outputs")
                 for output_type in output_types:
                     results[output_type] = None
-        
+            except asyncio.CancelledError:
+                logger.debug("Multiple outputs request was cancelled")
+                for output_type in output_types:
+                    results[output_type] = None
+            except Exception as e:
+                logger.error(f"Unexpected error in get_multiple_outputs: {e}")
+                for output_type in output_types:
+                    results[output_type] = None
+    
         return results
     
     async def get_nodes_info(self) -> Dict[str, Any]:
@@ -329,4 +356,4 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        await self.client.cleanup()

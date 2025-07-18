@@ -22,6 +22,16 @@ from api_spec import (
 )
 
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    
 logger.info("Using trickle integration")
 
 # Global stream manager instance - will be initialized in setup_trickle_routes
@@ -78,7 +88,7 @@ async def start_stream(request):
             publish_url=stream_request.publish_url,
             control_url=stream_request.control_url or "",
             events_url=stream_request.events_url or "",
-            text_url=stream_request.text_url or "",
+            text_url=stream_request.text_url or stream_request.events_url.replace("events", "data"),
             pipeline=pipeline,
             width=width,
             height=height
