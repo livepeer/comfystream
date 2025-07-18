@@ -1,26 +1,15 @@
 """ComfyStream nodes package"""
 
+# With the new ComfyUI entry point system, NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS
+# are automatically discovered from individual .py files, so we don't need to aggregate them here.
+
+# The old import pattern is kept for compatibility with any remaining dependencies
 from .audio_utils import *
 from .tensor_utils import *
 from .video_stream_utils import *
-from .api import *
+# from .api import *  # Temporarily disabled due to ComfyUI dependency issues
 from .web import *
-
-# Collect all NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS from submodules
-NODE_CLASS_MAPPINGS = {}
-NODE_DISPLAY_NAME_MAPPINGS = {}
-
-# Import and update mappings from submodules
-for module in [audio_utils, tensor_utils, video_stream_utils, api, web]:
-    if hasattr(module, 'NODE_CLASS_MAPPINGS'):
-        NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
-    if hasattr(module, 'NODE_DISPLAY_NAME_MAPPINGS'):
-        NODE_DISPLAY_NAME_MAPPINGS.update(module.NODE_DISPLAY_NAME_MAPPINGS)
 
 # Web directory for UI components
 import os
 WEB_DIRECTORY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "web")
-
-NODE_DISPLAY_NAME_MAPPINGS["ComfyStreamLauncher"] = "Launch ComfyStream 🚀"
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']

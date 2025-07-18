@@ -1,26 +1,35 @@
 import torch
+from comfy.nodes.package_typing import CustomNode
+from comfystream.tensor_cache import image_outputs
 
-from comfystream import tensor_cache
 
-
-class SaveTensor:
-    CATEGORY = "tensor_utils"
-    RETURN_TYPES = ()
-    FUNCTION = "execute"
-    OUTPUT_NODE = True
-
+class SaveTensor(CustomNode):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "images": ("IMAGE",),
             }
         }
 
+    RETURN_TYPES = ()
+    FUNCTION = "execute"
+    CATEGORY = "tensor_utils"
+    OUTPUT_NODE = True
+
     @classmethod
-    def IS_CHANGED(s):
+    def IS_CHANGED(cls):
         return float("nan")
 
     def execute(self, images: torch.Tensor):
-        tensor_cache.image_outputs.put_nowait(images)
+        image_outputs.put_nowait(images)
         return images
+
+
+NODE_CLASS_MAPPINGS = {
+    "SaveTensor": SaveTensor
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "SaveTensor": "Save Tensor"
+}

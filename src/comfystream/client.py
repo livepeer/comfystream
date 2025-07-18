@@ -7,19 +7,26 @@ from comfystream.utils import convert_prompt
 
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
-from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+from comfy.client.embedded_comfy_client import EmbeddedComfyClient as Comfy
 
 logger = logging.getLogger(__name__)
 
 
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
-        config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
+        self.config = Configuration(**kwargs)
+        self.max_workers = max_workers
+        self.comfy_client = None
         self.running_prompts = {} # To be used for cancelling tasks
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
+    
+    async def initialize(self):
+        """Initialize the Comfy client asynchronously"""
+        if self.comfy_client is None:
+            self.comfy_client = Comfy(self.config, max_workers=self.max_workers)
+            await self.comfy_client.__aenter__()
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         await self.cancel_running_prompts()
@@ -39,7 +46,11 @@ class ComfyStreamClient:
             for idx, prompt in enumerate(prompts):
                 converted_prompt = convert_prompt(prompt)
                 try:
-                    await self.comfy_client.queue_prompt(converted_prompt)
+                    if self.comfy_client is None:
+                        raise RuntimeError("ComfyStreamClient not initialized. Call initialize() first.")
+                    # convert_prompt returns a validated dictionary, cast to dict to help type checker
+                    prompt_dict = dict(converted_prompt)
+                    await self.comfy_client.queue_prompt(prompt_dict)
                     self.current_prompts[idx] = converted_prompt
                 except Exception as e:
                     raise Exception(f"Prompt update failed: {str(e)}") from e
@@ -48,6 +59,7 @@ class ComfyStreamClient:
         while True:
             async with self._prompt_update_lock:
                 try:
+                    # convert_prompt returns a validated dictionary, not a Prompt object
                     await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
                 except asyncio.CancelledError:
                     raise
@@ -59,12 +71,13 @@ class ComfyStreamClient:
     async def cleanup(self):
         await self.cancel_running_prompts()
         async with self._cleanup_lock:
-            if self.comfy_client.is_running:
+            if self.comfy_client is not None:
                 try:
-                    await self.comfy_client.__aexit__()
+                    await self.comfy_client.__aexit__(None, None, None)
                 except Exception as e:
                     logger.error(f"Error during ComfyClient cleanup: {e}")
-
+                self.comfy_client = None
+            
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
 

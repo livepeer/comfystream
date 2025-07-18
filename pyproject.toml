@@ -7,17 +7,7 @@ name = "comfystream"
 description = "Build Live AI Video with ComfyUI"
 version = "0.1.2"
 license = { file = "LICENSE" }
-dependencies = [
-    "asyncio",
-    "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
-    "aiortc",
-    "aiohttp",
-    "aiohttp_cors",
-    "toml",
-    "twilio",
-    "prometheus_client",
-    "librosa"
-]
+dynamic = ["dependencies"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov"]
@@ -25,14 +15,26 @@ dev = ["pytest", "pytest-cov"]
 [project.urls]
 repository = "https://github.com/yondonfu/comfystream"
 
+# Critical: Entry point for ComfyUI custom nodes
+[project.entry-points."comfyui.custom_nodes"]
+comfystream = "comfystream"
+
 [tool.comfy]
 PublisherId = "livepeer-comfystream"
 DisplayName = "ComfyStream"
-Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/icon-light-120px.svg" # SVG, PNG, JPG or GIF (MAX. 800x400px)
+Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/icon-light-120px.svg"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-packages = {find = {where = ["src", "nodes"]}}
+packages = ["comfystream", "comfystream.nodes", "comfystream.nodes.audio_utils", "comfystream.nodes.tensor_utils", "comfystream.nodes.video_stream_utils", "comfystream.nodes.api", "comfystream.nodes.web"]
+
+[tool.setuptools.package-dir]
+comfystream = "."
+"comfystream.nodes" = "nodes"
+"comfystream.nodes.audio_utils" = "nodes/audio_utils"
+"comfystream.nodes.tensor_utils" = "nodes/tensor_utils"
+"comfystream.nodes.video_stream_utils" = "nodes/video_stream_utils"
+"comfystream.nodes.api" = "nodes/api"
+"comfystream.nodes.web" = "nodes/web"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}

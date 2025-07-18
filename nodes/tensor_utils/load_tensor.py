@@ -1,20 +1,30 @@
-from comfystream import tensor_cache
+from comfy.nodes.package_typing import CustomNode
+from comfystream.tensor_cache import image_inputs
 
 
-class LoadTensor:
-    CATEGORY = "tensor_utils"
-    RETURN_TYPES = ("IMAGE",)
-    FUNCTION = "execute"
-
+class LoadTensor(CustomNode):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {}
 
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "execute"
+    CATEGORY = "tensor_utils"
+
     @classmethod
-    def IS_CHANGED():
+    def IS_CHANGED(cls):
         return float("nan")
 
     def execute(self):
-        frame = tensor_cache.image_inputs.get(block=True)
+        frame = image_inputs.get(block=True)
         frame.side_data.skipped = False
         return (frame.side_data.input,)
+
+
+NODE_CLASS_MAPPINGS = {
+    "LoadTensor": LoadTensor
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "LoadTensor": "Load Tensor"
+}

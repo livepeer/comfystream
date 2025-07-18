@@ -1,25 +1,34 @@
-from comfystream import tensor_cache
+from comfy.nodes.package_typing import CustomNode
+from comfystream.tensor_cache import audio_outputs
 
-class SaveAudioTensor:
-    CATEGORY = "audio_utils"
-    RETURN_TYPES = ()
-    FUNCTION = "execute"
-    OUTPUT_NODE = True
-
-
+class SaveAudioTensor(CustomNode):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(cls):
         return {
             "required": {
                 "audio": ("WAVEFORM",)
             }
         }
 
+    RETURN_TYPES = ()
+    FUNCTION = "execute"
+    CATEGORY = "audio_utils"
+    OUTPUT_NODE = True
+
     @classmethod
-    def IS_CHANGED(s):
+    def IS_CHANGED(cls):
         return float("nan")
 
     def execute(self, audio):
-        tensor_cache.audio_outputs.put_nowait(audio)
+        audio_outputs.put_nowait(audio)
         return (audio,)
+
+
+NODE_CLASS_MAPPINGS = {
+    "SaveAudioTensor": SaveAudioTensor
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "SaveAudioTensor": "Save Audio Tensor"
+}
 

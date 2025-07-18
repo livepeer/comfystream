@@ -1,11 +1,19 @@
 import numpy as np
+from comfy.nodes.package_typing import CustomNode
+from comfystream.tensor_cache import audio_inputs
 
-from comfystream import tensor_cache
-
-class LoadAudioTensor:
-    CATEGORY = "audio_utils"
+class LoadAudioTensor(CustomNode):
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "buffer_size": ("FLOAT", {"default": 500.0}),
+            }
+        }
+    
     RETURN_TYPES = ("WAVEFORM", "INT")
     FUNCTION = "execute"
+    CATEGORY = "audio_utils"
     
     def __init__(self):
         self.audio_buffer = np.empty(0, dtype=np.int16)
@@ -13,20 +21,12 @@ class LoadAudioTensor:
         self.sample_rate = None
     
     @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "buffer_size": ("FLOAT", {"default": 500.0}),
-            }
-        }
-    
-    @classmethod
-    def IS_CHANGED():
+    def IS_CHANGED(cls):
         return float("nan")
     
     def execute(self, buffer_size):
         if self.sample_rate is None or self.buffer_samples is None:
-            frame = tensor_cache.audio_inputs.get(block=True)
+            frame = audio_inputs.get(block=True)
             self.sample_rate = frame.sample_rate
             self.buffer_samples = int(self.sample_rate * buffer_size / 1000)
             self.leftover = frame.side_data.input
@@ -36,7 +36,7 @@ class LoadAudioTensor:
             total_samples = self.leftover.shape[0]
             
             while total_samples < self.buffer_samples:
-                frame = tensor_cache.audio_inputs.get(block=True)
+                frame = audio_inputs.get(block=True)
                 if frame.sample_rate != self.sample_rate:
                     raise ValueError("Sample rate mismatch")
                 chunks.append(frame.side_data.input)
@@ -50,3 +50,12 @@ class LoadAudioTensor:
             self.leftover = self.leftover[self.buffer_samples:]
                 
         return buffered_audio, self.sample_rate
+
+
+NODE_CLASS_MAPPINGS = {
+    "LoadAudioTensor": LoadAudioTensor
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "LoadAudioTensor": "Load Audio Tensor"
+}

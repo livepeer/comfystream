@@ -43,6 +43,10 @@ class Pipeline:
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
 
+    async def initialize(self):
+        """Initialize the pipeline asynchronously."""
+        await self.client.initialize()
+
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
         # Create dummy frame with the CURRENT resolution settings

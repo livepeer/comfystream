@@ -12,6 +12,16 @@ import torch
 if torch.cuda.is_available():
     torch.cuda.init()
 
+# Add ComfyUI to Python path to make nodes module available
+if "/workspace/ComfyUI" not in sys.path:
+    sys.path.insert(0, "/workspace/ComfyUI")
+
+# Add comfystream src directory to Python path
+import os
+src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 
 from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
@@ -395,6 +405,8 @@ async def on_startup(app: web.Application):
         preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
     )
+    # Initialize the pipeline asynchronously
+    await app["pipeline"].initialize()
     app["pcs"] = set()
     app["video_tracks"] = {}
 
