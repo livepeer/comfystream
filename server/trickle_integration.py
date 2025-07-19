@@ -19,6 +19,7 @@ from collections import deque
 from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
 from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
+from comfystream.server.utils import FPSMeter
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +86,12 @@ class FrameBuffer:
 class ComfyStreamTrickleProcessor:
     """Processes video frames through ComfyStream pipeline for trickle streaming."""
     
-    def __init__(self, pipeline: Pipeline, request_id: str):
+    def __init__(self, pipeline: Pipeline, request_id: str, app_context: Optional[Dict] = None):
         self.pipeline = pipeline
         self.request_id = request_id
         self.frame_count = 0
         self.running = False
+        self.app_context = app_context or {}
         
         # Pipeline readiness
         self.pipeline_ready = False
@@ -106,6 +108,16 @@ class ComfyStreamTrickleProcessor:
         
         # Lock to prevent frame processing during shutdown
         self.processing_lock = asyncio.Lock()
+        
+        # Initialize FPS meter for tracking processing performance
+        metrics_manager = self.app_context.get('metrics_manager') if self.app_context else None
+        if metrics_manager:
+            self.fps_meter = FPSMeter(metrics_manager, f"trickle_{request_id}")
+            logger.info(f"Initialized FPS meter for trickle stream {request_id}")
+        else:
+            # No metrics manager available - disable FPS tracking to avoid Prometheus conflicts
+            self.fps_meter = None
+            logger.info(f"No metrics manager provided, FPS tracking disabled for {request_id}")
         
     async def start_processing(self):
         """Start the background processing task."""
@@ -167,6 +179,14 @@ class ComfyStreamTrickleProcessor:
                     
                     # Comprehensive ComfyUI model memory cleanup
                     await self._cleanup_comfyui_memory()
+                    
+                    # Clean up FPS meter resources
+                    if self.fps_meter:
+                        try:
+                            # The FPS meter doesn't have explicit cleanup, but we can clear our reference
+                            logger.info(f"FPS meter cleanup completed for request {self.request_id}")
+                        except Exception as e:
+                            logger.warning(f"Error during FPS meter cleanup: {e}")
                     
                     logger.info(f"Stopped processing for request {self.request_id}")
                     
@@ -319,6 +339,17 @@ class ComfyStreamTrickleProcessor:
                 # Put frame directly into pipeline client (like the original approach)
                 self.pipeline.client.put_video_input(av_frame)
                 
+                # Track frame processing for FPS calculation
+                if self.fps_meter:
+                    # Since we're in a sync context, we need to schedule the async call
+                    try:
+                        loop = asyncio.get_running_loop()
+                        # Schedule the FPS increment to run in the next event loop iteration
+                        loop.create_task(self.fps_meter.increment_frame_count())
+                    except RuntimeError:
+                        # No running event loop, skip FPS tracking
+                        pass
+                
                 # Since we're in a sync context but there might be an async loop running,
                 # we'll just submit the frame and use fallback strategy
                 # Check if there's a running event loop
@@ -469,8 +500,8 @@ class TrickleStreamHandler:
         self.height = height
         self.app_context = app_context or {}
         
-        # Create processor
-        self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
+        # Create processor with app context for FPS tracking
+        self.processor = ComfyStreamTrickleProcessor(pipeline, request_id, app_context)
         
         # Create trickle client with frame processor
         self.client = TrickleClient(
@@ -749,6 +780,29 @@ class TrickleStreamHandler:
         try:
             while self.running:
                 try:
+                    # Collect FPS statistics
+                    fps_stats = {}
+                    if hasattr(self.processor, 'fps_meter') and self.processor.fps_meter:
+                        try:
+                            current_fps = await self.processor.fps_meter.fps
+                            average_fps = await self.processor.fps_meter.average_fps
+                            fps_measurements = await self.processor.fps_meter.fps_measurements
+                            last_fps_calculation_time = await self.processor.fps_meter.last_fps_calculation_time
+                            
+                            fps_stats = {
+                                "current_fps": current_fps,
+                                "average_fps": average_fps,
+                                "fps_measurements": fps_measurements,
+                                "last_fps_calculation_time": last_fps_calculation_time
+                            }
+                            
+                            # Log FPS information
+                            logger.info(f"[FPS] Stream {self.request_id}: Current={current_fps:.2f} FPS, Average={average_fps:.2f} FPS, Measurements={len(fps_measurements)}")
+                            
+                        except Exception as e:
+                            logger.warning(f"Error collecting FPS stats for {self.request_id}: {e}")
+                            fps_stats = {"error": "Failed to collect FPS data"}
+                    
                     # Collect stats from processor and client
                     stats = {
                         "type": "stream_stats",
@@ -758,7 +812,8 @@ class TrickleStreamHandler:
                             "frame_count": self.processor.frame_count,
                             "pipeline_ready": self.processor.pipeline_ready,
                             "buffer_stats": self.processor.frame_buffer.get_stats(),
-                            "last_processed_frame_available": self.processor.last_processed_frame is not None
+                            "last_processed_frame_available": self.processor.last_processed_frame is not None,
+                            "fps": fps_stats
                         },
                         "stream": {
                             "running": self.running,
@@ -1032,11 +1087,33 @@ class TrickleStreamHandler:
             
             # Send final stats before shutdown
             try:
+                # Collect final FPS statistics
+                final_fps_stats = {}
+                if hasattr(self.processor, 'fps_meter') and self.processor.fps_meter:
+                    try:
+                        final_fps = await self.processor.fps_meter.fps
+                        final_average_fps = await self.processor.fps_meter.average_fps
+                        total_fps_measurements = len(await self.processor.fps_meter.fps_measurements)
+                        
+                        final_fps_stats = {
+                            "final_fps": final_fps,
+                            "final_average_fps": final_average_fps,
+                            "total_fps_measurements": total_fps_measurements
+                        }
+                        
+                        # Log final FPS summary
+                        logger.info(f"[FPS] Stream {self.request_id} FINAL: FPS={final_fps:.2f}, Avg={final_average_fps:.2f}, Total Measurements={total_fps_measurements}")
+                        
+                    except Exception as e:
+                        logger.debug(f"Could not collect final FPS stats: {e}")
+                        final_fps_stats = {"error": "Failed to collect final FPS data"}
+                
                 final_stats = {
                     "type": "stream_stopped",
                     "request_id": self.request_id,
                     "timestamp": asyncio.get_event_loop().time(),
-                    "final_frame_count": self.processor.frame_count
+                    "final_frame_count": self.processor.frame_count,
+                    "fps_summary": final_fps_stats
                 }
                 await self._emit_monitoring_event(final_stats, "stream_trace")
                 logger.info(f"Sent final stats for {self.request_id}")

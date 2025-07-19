@@ -375,7 +375,8 @@ def setup_trickle_routes(app, cors):
         'warm_pipeline': app.get('warm_pipeline', False),
         'workspace': app.get('workspace'),
         'pipeline': app.get('pipeline'),  # This will be set later during startup
-        'health_manager': app.get('health_manager')  # Pass health manager for stream tracking
+        'health_manager': app.get('health_manager'),  # Pass health manager for stream tracking
+        'metrics_manager': app.get('metrics_manager')  # Pass metrics manager for FPS tracking
     })
     
     # CRITICAL: Add the stream manager reference to its own app_context so streams can remove themselves during error cleanup
