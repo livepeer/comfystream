@@ -95,22 +95,12 @@ class StreamStartRequest(BaseModel):
         description="ComfyUI workflow parameters (prompt, width, height). If not provided, defaults will be used."
     )
     
-    # Allow direct specification of ComfyUI parameters at top level (for backward compatibility)
-    prompts: Optional[Union[str, List[Union[str, Dict[str, Any]]]]] = Field(default=None, description="ComfyUI workflow prompts")
-    width: Optional[int] = Field(default=None, description="Video width")
-    height: Optional[int] = Field(default=None, description="Video height")
-    
     def get_comfy_params(self) -> ComfyUIParams:
         """Get the ComfyUI parameters, either from params field or from top-level fields, or use defaults."""
         if self.params is not None:
             return self.params
         
-        # Use top-level fields if available
-        prompts = self.prompts if self.prompts is not None else DEFAULT_WORKFLOW_JSON
-        width = self.width if self.width is not None else DEFAULT_WIDTH
-        height = self.height if self.height is not None else DEFAULT_HEIGHT
-        
-        return ComfyUIParams(prompts=prompts, width=width, height=height)
+        return ComfyUIParams()
 
 class StreamParamsUpdateRequest(BaseModel):
     """Request model for updating stream parameters with flat structure."""
