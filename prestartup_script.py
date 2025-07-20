@@ -49,7 +49,7 @@ def find_comfyui_workspace():
         
         # Method 2: Alternative approach for symlinked custom nodes
         workspace_parent = current_dir.parent
-        potential_comfyui = workspace_parent / "ComfyUI2"
+        potential_comfyui = workspace_parent / "ComfyUI"
         if (potential_comfyui.exists() and 
             (potential_comfyui / "custom_nodes").exists() and
             ((potential_comfyui / "main.py").exists() or (potential_comfyui / "comfy").exists())):
@@ -80,7 +80,6 @@ def find_comfyui_workspace():
         # Method 3: Check for common ComfyUI workspace locations
         common_locations = [
             Path("/workspace/ComfyUI"),
-            Path("/workspace/ComfyUI2"),
             Path("/opt/ComfyUI"),
             Path.cwd().parent / "ComfyUI",
             Path.cwd().parent.parent / "ComfyUI",
