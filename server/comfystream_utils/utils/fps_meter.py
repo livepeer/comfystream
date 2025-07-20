@@ -23,38 +23,62 @@ class FPSMeter:
         self._running_event = asyncio.Event()
         self._metrics_manager = metrics_manager
         self.track_id = track_id
+        self._stopped = False
+        self._fps_task = None
 
-        asyncio.create_task(self._calculate_fps_loop())
+        self._fps_task = asyncio.create_task(self._calculate_fps_loop())
 
     async def _calculate_fps_loop(self):
         """Loop to calculate FPS periodically."""
-        await self._running_event.wait()
-        self._fps_loop_start_time = time.monotonic()
-        while True:
-            async with self._lock:
-                current_time = time.monotonic()
-                if self._last_fps_calculation_time is not None:
-                    time_diff = current_time - self._last_fps_calculation_time
-                    self._fps = (
-                        self._fps_interval_frame_count / time_diff
-                        if time_diff > 0
-                        else 0.0
-                    )
-                    self._fps_measurements.append(
-                        {
-                            "timestamp": current_time - self._fps_loop_start_time,
-                            "fps": self._fps,
-                        }
-                    )  # Store the FPS measurement with timestamp
+        try:
+            await self._running_event.wait()
+            self._fps_loop_start_time = time.monotonic()
+            while not self._stopped:
+                async with self._lock:
+                    current_time = time.monotonic()
+                    if self._last_fps_calculation_time is not None:
+                        time_diff = current_time - self._last_fps_calculation_time
+                        self._fps = (
+                            self._fps_interval_frame_count / time_diff
+                            if time_diff > 0
+                            else 0.0
+                        )
+                        self._fps_measurements.append(
+                            {
+                                "timestamp": current_time - self._fps_loop_start_time,
+                                "fps": self._fps,
+                            }
+                        )  # Store the FPS measurement with timestamp
 
-                # Reset tracking variables for the next interval.
-                self._last_fps_calculation_time = current_time
-                self._fps_interval_frame_count = 0
+                    # Reset tracking variables for the next interval.
+                    self._last_fps_calculation_time = current_time
+                    self._fps_interval_frame_count = 0
 
-            # Update Prometheus metrics if enabled.
-            self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
+                # Update Prometheus metrics if enabled.
+                self._metrics_manager.update_fps_metrics(self._fps, self.track_id)
 
-            await asyncio.sleep(1)  # Calculate FPS every second.
+                try:
+                    await asyncio.wait_for(asyncio.sleep(1), timeout=1.1)  # Calculate FPS every second.
+                except asyncio.TimeoutError:
+                    # Continue the loop if sleep is interrupted
+                    pass
+        except asyncio.CancelledError:
+            logger.debug(f"FPS calculation loop cancelled for track {self.track_id}")
+        except Exception as e:
+            logger.error(f"Error in FPS calculation loop for track {self.track_id}: {e}")
+        finally:
+            logger.debug(f"FPS meter cleanup completed for track {self.track_id}")
+
+    async def cleanup(self):
+        """Clean up the FPS meter and stop background tasks."""
+        self._stopped = True
+        if self._fps_task and not self._fps_task.done():
+            self._fps_task.cancel()
+            try:
+                await self._fps_task
+            except asyncio.CancelledError:
+                pass
+        logger.debug(f"FPS meter cleaned up for track {self.track_id}")
 
     async def increment_frame_count(self):
         """Increment the frame count to calculate FPS."""
