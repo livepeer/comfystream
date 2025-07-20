@@ -3,7 +3,7 @@ from typing import List
 import logging
 
 from comfystream import tensor_cache
-from comfystream.utils import convert_prompt
+from comfystream.prompt_utils import convert_prompt
 
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration

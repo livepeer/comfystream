@@ -7,7 +7,7 @@
 from .audio_utils import *
 from .tensor_utils import *
 from .video_stream_utils import *
-# from .api import *  # Temporarily disabled due to ComfyUI dependency issues
+from .api import *
 from .web import *
 
 # Web directory for UI components

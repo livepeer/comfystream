@@ -211,4 +211,23 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        # Clear internal pipeline queues
+        while not self.video_incoming_frames.empty():
+            try:
+                self.video_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
+        while not self.audio_incoming_frames.empty():
+            try:
+                self.audio_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
+        # Reset processed audio buffer
+        self.processed_audio_buffer = np.array([], dtype=np.int16)
+        
+        # Clean up the ComfyStreamClient
+        await self.client.cleanup()
+        
+        logger.info("Pipeline cleanup completed - all internal state reset") 

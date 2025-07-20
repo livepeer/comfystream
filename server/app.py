@@ -12,11 +12,6 @@ import torch
 if torch.cuda.is_available():
     torch.cuda.init()
 
-# Add ComfyUI to Python path to make nodes module available
-if "/workspace/ComfyUI" not in sys.path:
-    sys.path.insert(0, "/workspace/ComfyUI")
-
-
 from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiohttp import web
@@ -106,7 +101,12 @@ class VideoStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            # Clean up FPS meter to prevent background task leaks
+            if self.fps_meter:
+                await self.fps_meter.cleanup()
+            # Don't cleanup pipeline here - it's shared across all connections
+            # Pipeline will be cleaned up on server shutdown
+            logger.debug("VideoStreamTrack cleanup completed")
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
@@ -172,7 +172,9 @@ class AudioStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            # Don't cleanup pipeline here - it's shared across all connections
+            # Pipeline will be cleaned up on server shutdown
+            logger.debug("AudioStreamTrack cleanup completed")
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
@@ -390,26 +392,45 @@ async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
-    app["pipeline"] = Pipeline(
-        width=512,
-        height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
-        preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
-    )
-    # Initialize the pipeline asynchronously
-    await app["pipeline"].initialize()
+    try:
+        app["pipeline"] = Pipeline(
+            width=512,
+            height=512,
+            cwd=app["workspace"], 
+            disable_cuda_malloc=True, 
+            gpu_only=True, 
+            preview_method='none',
+            comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        )
+        # Initialize the pipeline asynchronously
+        await app["pipeline"].initialize()
+        logger.info("ComfyStream server pipeline initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize ComfyStream pipeline: {e}")
+        raise
+    
     app["pcs"] = set()
     app["video_tracks"] = {}
 
 
 async def on_shutdown(app: web.Application):
+    logger.info("Shutting down ComfyStream server...")
+    
+    # Close all WebRTC peer connections
     pcs = app["pcs"]
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    
+    # Clean up the pipeline
+    if "pipeline" in app:
+        try:
+            await app["pipeline"].cleanup(force=True)
+            logger.info("Pipeline cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during pipeline cleanup: {e}")
+    
+    logger.info("ComfyStream server shutdown completed")
 
 
 if __name__ == "__main__":
@@ -463,6 +484,11 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
+    
+    # Add ComfyUI workspace to Python path to make nodes module available
+    if app["workspace"] not in sys.path:
+        sys.path.insert(0, app["workspace"])
+        logger.info(f"Added ComfyUI workspace to Python path: {app['workspace']}")
     
     # Setup CORS
     cors = setup_cors(app, defaults={

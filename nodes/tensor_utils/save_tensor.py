@@ -1,9 +1,9 @@
 import torch
-# from comfy.nodes.package_typing import CustomNode
+from comfy.comfy_types.node_typing import ComfyNodeABC as CustomNode
 from comfystream.tensor_cache import image_outputs
 
 
-class SaveTensor():
+class SaveTensor(CustomNode):
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -23,7 +23,7 @@ class SaveTensor():
 
     def execute(self, images: torch.Tensor):
         image_outputs.put_nowait(images)
-        return images
+        return ()
 
 
 NODE_CLASS_MAPPINGS = {

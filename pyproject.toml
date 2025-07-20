@@ -26,6 +26,7 @@ Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/ic
 
 [tool.setuptools]
 packages = ["comfystream", "comfystream.nodes", "comfystream.nodes.audio_utils", "comfystream.nodes.tensor_utils", "comfystream.nodes.video_stream_utils", "comfystream.nodes.api", "comfystream.nodes.web"]
+py-modules = ["comfystream.prestartup_script"]
 
 [tool.setuptools.package-dir]
 comfystream = "."
@@ -35,6 +36,7 @@ comfystream = "."
 "comfystream.nodes.video_stream_utils" = "nodes/video_stream_utils"
 "comfystream.nodes.api" = "nodes/api"
 "comfystream.nodes.web" = "nodes/web"
+"comfystream.prestartup_script" = "."
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}

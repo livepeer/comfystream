@@ -1,7 +1,8 @@
 import numpy as np
 import librosa
+from comfy.comfy_types.node_typing import ComfyNodeABC as CustomNode
 
-class PitchShifter:
+class PitchShifter(CustomNode):
     CATEGORY = "audio_utils"
     RETURN_TYPES = ("WAVEFORM", "INT")
     FUNCTION = "execute"
@@ -30,3 +31,12 @@ class PitchShifter:
         shifted_audio = librosa.effects.pitch_shift(y=audio_float, sr=sample_rate, n_steps=pitch_shift)
         shifted_int16 = np.clip(shifted_audio * 32768.0, -32768, 32767).astype(np.int16)
         return shifted_int16, sample_rate
+
+
+NODE_CLASS_MAPPINGS = {
+    "PitchShifter": PitchShifter
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "PitchShifter": "Pitch Shifter"
+}

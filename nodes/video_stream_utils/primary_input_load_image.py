@@ -1,7 +1,7 @@
-# from comfy.nodes.package_typing import CustomNode
+from comfy.comfy_types.node_typing import ComfyNodeABC as CustomNode
 
 
-class PrimaryInputLoadImage():
+class PrimaryInputLoadImage(CustomNode):
     @classmethod
     def INPUT_TYPES(cls):
         return {
