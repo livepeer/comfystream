@@ -198,7 +198,7 @@ class CleanupManager:
                 from comfystream import tensor_cache
                 def clear_caches():
                     cleared = 0
-                    for cache in [tensor_cache.image_inputs, tensor_cache.audio_inputs]:
+                    for cache in [tensor_cache.image_inputs, tensor_cache.audio_inputs, tensor_cache.text_outputs]:
                         while not cache.empty():
                             try:
                                 cache.get_nowait()

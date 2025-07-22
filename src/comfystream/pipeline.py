@@ -265,6 +265,16 @@ class Pipeline:
         
         return processed_frame
     
+    async def get_text_output(self) -> str:
+        """Get the next processed text output.
+        
+        Returns:
+            The processed text string
+        """
+        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+            text_output = await self.client.get_text_output()
+        return text_output
+    
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
         
