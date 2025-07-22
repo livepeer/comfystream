@@ -17,6 +17,7 @@ from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
 from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
+from pytrickle import TrickleProtocol
 from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
 
@@ -472,15 +473,21 @@ class TrickleStreamHandler:
         # Create processor
         self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
         
-        # Create trickle client with frame processor
-        self.client = TrickleClient(
+        # Create trickle protocol and client
+        self.protocol = TrickleProtocol(
             subscribe_url=subscribe_url,
             publish_url=publish_url,
             control_url=control_url,
             events_url=events_url,
             width=width,
             height=height,
+            error_callback=self._on_protocol_error
+        )
+        
+        self.client = TrickleClient(
+            protocol=self.protocol,
             frame_processor=self.processor.process_frame_sync,  # Use sync interface as expected by trickle-app
+            control_handler=self._handle_control_message,
             error_callback=self._on_client_error
         )
         
@@ -506,6 +513,7 @@ class TrickleStreamHandler:
         self._stats_task: Optional[asyncio.Task] = None
         self._control_task: Optional[asyncio.Task] = None
         self._critical_error_occurred = False
+        self._cleanup_lock = asyncio.Lock()  # Prevents concurrent cleanup operations
         
     @property
     def running(self) -> bool:
@@ -532,27 +540,12 @@ class TrickleStreamHandler:
             logger.info(f"Triggering stream cleanup due to control channel error: {error_type}")
             self.error_event.set()  # Signal error
             # Use asyncio.create_task to avoid blocking the error callback
-            asyncio.create_task(self._cleanup_due_to_error(error_type, exception))
+            asyncio.create_task(self.stop())
     
     async def _cleanup_due_to_error(self, error_type: str, exception: Optional[Exception] = None):
-        """Cleanup stream due to critical error - similar to stop() but for error scenarios."""
+        """Cleanup stream due to critical error - delegates to stop() after error-specific handling."""
         try:
             logger.info(f"Starting cleanup for stream {self.request_id} due to error: {error_type}")
-            
-            # IMMEDIATELY signal shutdown events to stop background tasks before they make more connection attempts
-            try:
-                if hasattr(self.client.protocol, 'shutdown_event'):
-                    self.client.protocol.shutdown_event.set()
-                if hasattr(self.client.protocol, 'error_event'):
-                    self.client.protocol.error_event.set()
-                if hasattr(self.client, 'shutdown_event'):
-                    self.client.shutdown_event.set()
-                    
-                if hasattr(self.client, 'error_event'):
-                    self.client.error_event.set()
-                logger.info(f"Emergency shutdown events set for {self.request_id} due to {error_type}")
-            except Exception as e:
-                logger.warning(f"Error setting emergency shutdown events: {e}")
             
             # Update health manager with error initially
             health_manager = self.app_context.get('health_manager')
@@ -561,29 +554,6 @@ class TrickleStreamHandler:
             
             # Call the normal stop method which has comprehensive cleanup
             cleanup_success = await self.stop()
-            
-            # CRITICAL: Notify the stream manager to remove this handler from its registry
-            # This prevents zombie streams that prevent new streams from starting
-            stream_manager = self.app_context.get('stream_manager')
-            if stream_manager:
-                try:
-                    # Force removal of this stream from the manager's handlers dict
-                    async with stream_manager.lock:
-                        if self.request_id in stream_manager.handlers:
-                            del stream_manager.handlers[self.request_id]
-                            logger.info(f"Removed failed stream {self.request_id} from stream manager")
-                            
-                            # Update health manager with new stream count and clear error if no streams remain
-                            # Clear error regardless of cleanup_success if no streams remain - streams should be cleaned up even if stop() fails
-                            if health_manager:
-                                stream_count = len(stream_manager.handlers)
-                                health_manager.update_trickle_streams(stream_count)
-                                # Clear the error state if no streams are running
-                                if stream_count == 0:
-                                    health_manager.clear_error()
-                                    logger.info(f"Cleared health manager error state after cleanup of stream {self.request_id} (cleanup_success={cleanup_success})")
-                except Exception as e:
-                    logger.error(f"Error removing stream {self.request_id} from manager: {e}")
             
             # Emit error event
             try:
@@ -602,34 +572,89 @@ class TrickleStreamHandler:
         except Exception as e:
             logger.error(f"Error during cleanup for stream {self.request_id}: {e}")
             
-            # Even if cleanup failed, ensure the stream is removed from manager to prevent server lockup
-            stream_manager = self.app_context.get('stream_manager')
-            if stream_manager:
-                try:
-                    async with stream_manager.lock:
-                        if self.request_id in stream_manager.handlers:
-                            del stream_manager.handlers[self.request_id]
-                            logger.warning(f"Force-removed failed stream {self.request_id} from manager after cleanup error")
-                            
-                            # Try to recover health state even after failed cleanup
-                            health_manager = self.app_context.get('health_manager')
-                            if health_manager:
-                                stream_count = len(stream_manager.handlers)
-                                health_manager.update_trickle_streams(stream_count)
-                                if stream_count == 0:
-                                    # Clear error state to allow server to accept new requests
-                                    health_manager.clear_error()
-                                    logger.warning(f"Force-cleared health manager error state to recover server functionality")
-                except Exception as manager_error:
-                    logger.error(f"Failed to force-remove stream from manager: {manager_error}")
+            # Even if cleanup failed, ensure the stream is removed from manager  
+            await self._remove_from_manager_and_update_health(emergency=True)
             
             # Force mark as not running even if cleanup failed
-            self.running_event.clear() # Ensure running_event is False
-            self.shutdown_event.set() # Mark shutdown_event
-            self.error_event.set() # Mark error_event
-    
+            self._set_final_state()
+
+
+
+    async def _cancel_task_with_timeout(self, task: Optional[asyncio.Task], task_name: str, timeout: float = 3.0):
+        """Cancel a specific task with timeout and proper error handling."""
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=timeout)
+                logger.info(f"{task_name} cancelled for {self.request_id}")
+            except asyncio.CancelledError:
+                # Task was cancelled, which is expected
+                pass
+            except asyncio.TimeoutError:
+                # Task didn't cancel in time, but that's OK
+                pass
+            except Exception as e:
+                logger.warning(f"Error cancelling {task_name}: {e}")
+
+    def _set_final_state(self):
+        """Set the final state events to mark the stream as stopped."""
+        self.running_event.clear() # Ensure running_event is False
+        self.shutdown_event.set() # Mark shutdown_event
+        self.error_event.set() # Mark error_event
+
+    async def _remove_from_manager_and_update_health(self, emergency: bool = False):
+        """Removes the stream from the manager and updates health status."""
+        context_str = "Emergency cleanup" if emergency else "Final cleanup"
+        log_func = logger.warning if emergency else logger.info
+        
+        try:
+            stream_manager = self.app_context.get('stream_manager')
+            if stream_manager:
+                logger.info(f"{context_str}: Attempting to remove stream {self.request_id} from stream manager")
+                async with stream_manager.lock:
+                    if self.request_id in stream_manager.handlers:
+                        del stream_manager.handlers[self.request_id]
+                        log_func(f"{context_str}: Successfully removed stream {self.request_id} from stream manager")
+                        
+                        # Update health manager with new stream count
+                        health_manager = self.app_context.get('health_manager')
+                        if health_manager:
+                            stream_count = len(stream_manager.handlers)
+                            health_manager.update_trickle_streams(stream_count)
+                            logger.info(f"{context_str}: Updated health manager, remaining streams: {stream_count}")
+                            if stream_count == 0:
+                                health_manager.clear_error()
+                                log_func(f"{context_str}: Last stream removed, cleared health manager error state.")
+                    else:
+                        logger.warning(f"{context_str}: Stream {self.request_id} not found in stream manager (already removed?)")
+            else:
+                logger.error(f"{context_str}: No stream manager found in app context")
+        except Exception as e:
+            logger.error(f"Error during {context_str.lower()} for stream {self.request_id}: {e}")
+
+    async def _on_protocol_error(self, error_type: str, exception: Optional[Exception] = None):
+        """Handle critical errors from TrickleProtocol."""
+        # Check if we're already shutting down - if so, don't treat this as an error
+        if self.shutdown_event.is_set() or self._cleanup_in_progress:
+            logger.debug(f"Protocol error during shutdown (expected): {error_type} - {exception}")
+            return
+            
+        logger.error(f"Critical protocol error for stream {self.request_id}: {error_type} - {exception}")
+        self._critical_error_occurred = True
+        
+        # Trigger stream cleanup
+        if self.running:
+            logger.info(f"Triggering stream cleanup due to protocol error: {error_type}")
+            self.error_event.set()  # Signal error
+            asyncio.create_task(self._cleanup_due_to_error(error_type, exception))
+
     async def _on_client_error(self, error_type: str, exception: Optional[Exception] = None):
         """Handle critical errors from TrickleClient."""
+        # Check if we're already shutting down - if so, don't treat this as an error
+        if self.shutdown_event.is_set() or self._cleanup_in_progress:
+            logger.debug(f"Client error during shutdown (expected): {error_type} - {exception}")
+            return
+            
         logger.error(f"Critical client error for stream {self.request_id}: {error_type} - {exception}")
         self._critical_error_occurred = True
         
@@ -650,43 +675,38 @@ class TrickleStreamHandler:
         
         try:
             while not self.shutdown_event.is_set() and not self.error_event.is_set():
+                segment = await self.control_subscriber.next()
+                if not segment or segment.eos():
+                    logger.info(f"Control channel closed for stream {self.request_id}")
+                    break
+                
+                # Read control message
+                params_data = await segment.read()
+                if not params_data:
+                    continue
+                
+                # Parse JSON control message
                 try:
-                    segment = await self.control_subscriber.next()
-                    if not segment or segment.eos():
-                        logger.info(f"Control channel closed for stream {self.request_id}")
-                        break
-                    
-                    # Read control message
-                    params_data = await segment.read()
-                    if not params_data:
-                        continue
-                    
-                    # Parse JSON control message
-                    try:
-                        params = json.loads(params_data.decode('utf-8'))
-                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                        logger.error(f"Invalid control message JSON for stream {self.request_id}: {e}")
-                        continue
-                    
-                    # Ignore keepalive messages
-                    if params == keepalive_message:
-                        continue
-                    
-                    logger.info(f"Received control message for stream {self.request_id}: {params}")
-                    
-                    # Process control message
-                    await self._handle_control_message(params)
-                    
-                except Exception as e:
-                    logger.error(f"Error in control loop for stream {self.request_id}: {e}")
-                    # Continue on error to keep control loop running
-                    await asyncio.sleep(0.1)
+                    params = json.loads(params_data.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    logger.error(f"Invalid control message JSON for stream {self.request_id}: {e}")
+                    continue
+                
+                # Ignore keepalive messages
+                if params == keepalive_message:
+                    continue
+                
+                logger.info(f"Received control message for stream {self.request_id}: {params}")
+                
+                # Process control message
+                await self._handle_control_message(params)
                     
         except asyncio.CancelledError:
             logger.info(f"Control loop cancelled for stream {self.request_id}")
             raise
         except Exception as e:
             logger.error(f"Control loop error for stream {self.request_id}: {e}")
+            raise
         finally:
             logger.info(f"Control loop ended for stream {self.request_id}")
     
@@ -835,6 +855,7 @@ class TrickleStreamHandler:
             # Start the client (this will start the encoder)
             logger.info("Starting trickle client...")
             self._task = asyncio.create_task(self.client.start(self.request_id))
+            self._task.add_done_callback(self._on_client_done)
             self.running_event.set() # Set running_event
             
             # Start the stats monitoring task
@@ -858,13 +879,52 @@ class TrickleStreamHandler:
             
         except Exception as e:
             logger.error(f"Failed to start stream handler {self.request_id}: {e}")
-            self.running_event.clear() # Ensure running_event is False
-            self.shutdown_event.set() # Mark shutdown_event
-            self.error_event.set() # Mark error_event
+            self._set_final_state() # Ensure final state is set
             # Cleanup processor if client failed to start
             await self.processor.stop_processing()
             return False
     
+    def _on_client_done(self, task: asyncio.Task):
+        """Callback function for when the main client task completes."""
+        try:
+            # Signal shutdown immediately to prevent error callbacks
+            self.shutdown_event.set()
+            
+            # Check if the task finished with an exception
+            if task.exception():
+                logger.error(f"Client task for {self.request_id} finished with an exception: {task.exception()}")
+                # Trigger cleanup due to error
+                cleanup_task = asyncio.create_task(self._cleanup_due_to_error("client_task_exception", task.exception()))
+                cleanup_task.add_done_callback(self._on_cleanup_task_done)
+            else:
+                logger.info(f"Client task for {self.request_id} finished gracefully. Triggering immediate stop.")
+                # Trigger normal cleanup immediately - subscription has ended
+                stop_task = asyncio.create_task(self.stop())
+                stop_task.add_done_callback(self._on_stop_task_done)
+        except Exception as e:
+            logger.error(f"Error in _on_client_done callback for {self.request_id}: {e}")
+            # Fallback to ensure cleanup is attempted
+            fallback_task = asyncio.create_task(self.stop())
+            fallback_task.add_done_callback(self._on_stop_task_done)
+
+    def _on_stop_task_done(self, task: asyncio.Task):
+        """Callback for when the stop task completes."""
+        try:
+            result = task.result()
+            if result:
+                logger.info(f"Stop task completed successfully for {self.request_id}")
+            else:
+                logger.warning(f"Stop task returned False for {self.request_id}")
+        except Exception as e:
+            logger.error(f"Stop task failed for {self.request_id}: {e}")
+
+    def _on_cleanup_task_done(self, task: asyncio.Task):
+        """Callback for when the cleanup task completes."""
+        try:
+            task.result()
+            logger.info(f"Cleanup task completed for {self.request_id}")
+        except Exception as e:
+            logger.error(f"Cleanup task failed for {self.request_id}: {e}")
 
     
     def _silence_cancelled_errors(self, loop, context):
@@ -877,189 +937,103 @@ class TrickleStreamHandler:
         # For other exceptions, use default handling
         loop.default_exception_handler(context)
 
-    async def stop(self) -> bool:
+    async def stop(self, *, called_by_manager: bool = False) -> bool:
         """Stop the trickle stream handler."""
-        if not self.running:
-            return True
-        
-        # Set up exception handler to silence CancelledError warnings
-        loop = asyncio.get_running_loop()
-        original_handler = loop.get_exception_handler()
-        loop.set_exception_handler(self._silence_cancelled_errors)
-        
-        try:
-            logger.info(f"Stopping trickle stream handler for {self.request_id}")
+        # Use cleanup lock to prevent concurrent cleanup operations
+        async with self._cleanup_lock:
+            # Signal shutdown immediately to prevent error callbacks during cleanup
+            self.shutdown_event.set()
+            logger.info(f"Stop method starting for stream {self.request_id}")
             
-            # STEP 1: Stop the processor first to block new frame processing and cancel ComfyUI prompts
-            try:
-                await asyncio.wait_for(self.processor.stop_processing(), timeout=8.0)
-                logger.info(f"Processor stopped for {self.request_id}")
-            except asyncio.TimeoutError:
-                logger.warning(f"Processor stop timed out for {self.request_id}")
-            except Exception as e:
-                logger.warning(f"Error stopping processor: {e}")
+            # Set up exception handler to silence CancelledError warnings
+            loop = asyncio.get_running_loop()
+            original_handler = loop.get_exception_handler()
+            loop.set_exception_handler(self._silence_cancelled_errors)
             
-            # STEP 2: Aggressively shutdown trickle protocol first to stop all background tasks
             try:
-                # Signal shutdown to the protocol and its components to stop background tasks immediately
-                if hasattr(self.client.protocol, 'shutdown_event'):
-                    self.client.protocol.shutdown_event.set()
-                    logger.info(f"Trickle protocol shutdown event set for {self.request_id}")
+                logger.info(f"Stopping trickle stream handler for {self.request_id}")
                 
-                # Signal shutdown to control subscriber to stop its background tasks
-                if hasattr(self.client.protocol, 'control_subscriber') and self.client.protocol.control_subscriber:
-                    await self.client.protocol.control_subscriber.shutdown()
-                    logger.info(f"Trickle control subscriber shutdown signaled for {self.request_id}")
+                # STEP 1: Stop the processor first to block new frame processing and cancel ComfyUI prompts
+                try:
+                    await asyncio.wait_for(self.processor.stop_processing(), timeout=8.0)
+                    logger.info(f"Processor stopped for {self.request_id}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Processor stop timed out for {self.request_id}")
+                except Exception as e:
+                    logger.warning(f"Error stopping processor: {e}")
                 
-                # Signal shutdown to events publisher to stop its background tasks
-                if hasattr(self.client.protocol, 'events_publisher') and self.client.protocol.events_publisher:
-                    await self.client.protocol.events_publisher.shutdown()
-                    logger.info(f"Trickle events publisher shutdown signaled for {self.request_id}")
-                
-                # Set client shutdown events to stop background tasks
-                if hasattr(self.client, 'shutdown_event'):
-                    self.client.shutdown_event.set()
-                if hasattr(self.client, 'error_event'):
-                    self.client.error_event.set()
-                
-                # Now stop the trickle protocol to cancel main tasks
-                await asyncio.wait_for(self.client.protocol.stop(), timeout=3.0)
-                logger.info(f"Trickle protocol stopped for {self.request_id}")
-                
-                # Then stop the trickle client
-                await asyncio.wait_for(self.client.stop(), timeout=2.0)
-                logger.info(f"Trickle client stopped for {self.request_id}")
-                
-                # Give background tasks a moment to see the shutdown signal and exit
-                await asyncio.sleep(0.2)
-                
-                # Force cancel any remaining tasks that might be stuck
-                current_task = asyncio.current_task()
-                all_tasks = [task for task in asyncio.all_tasks() if task != current_task and not task.done()]
-                
-                # Filter for tasks that might be related to this trickle stream
-                trickle_tasks = []
-                for task in all_tasks:
-                    task_name = getattr(task, '_context', {}).get('name', '')
-                    task_coro_name = getattr(task.get_coro(), '__name__', '') if hasattr(task, 'get_coro') else ''
+                # STEP 2: Signal immediate shutdown to all trickle components
+                try:
+                    # Signal shutdown events immediately for fast coordination
+                    if hasattr(self.client, 'stop_event'):
+                        self.client.stop_event.set()
+                        
+                    # Stop the trickle client which will stop the protocol
+                    await asyncio.wait_for(self.client.stop(), timeout=3.0)
+                    logger.info(f"Trickle client stopped for {self.request_id}")
                     
-                    # Look for tasks that might be trickle-related
-                    if any(keyword in str(task) for keyword in ['trickle', '192.168.10.61', 'preconnect', 'subscriber']):
-                        trickle_tasks.append(task)
-                        logger.warning(f"Found potentially stuck trickle task for {self.request_id}: {task}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Trickle client stop timed out for {self.request_id}")
+                except Exception as e:
+                    logger.warning(f"Error stopping trickle client: {e}")
                 
-                # Cancel stuck trickle tasks
-                if trickle_tasks:
-                    logger.warning(f"Force cancelling {len(trickle_tasks)} potentially stuck trickle tasks for {self.request_id}")
-                    for task in trickle_tasks:
-                        task.cancel()
-                    
-                    # Wait briefly for cancellation
+                # STEP 3: Cancel remaining tasks
+                await self._cancel_task_with_timeout(self._task, "Main task")
+                await self._cancel_task_with_timeout(self._stats_task, "Stats task")
+                await self._cancel_task_with_timeout(self._control_task, "Control loop")
+                
+                # STEP 4: Close control subscriber if it exists separately
+                if self.control_subscriber:
                     try:
-                        await asyncio.wait_for(asyncio.gather(*trickle_tasks, return_exceptions=True), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Some trickle tasks did not cancel within timeout for {self.request_id}")
+                        await self.control_subscriber.shutdown()
+                        await self.control_subscriber.close()
+                        logger.info(f"Control subscriber closed for {self.request_id}")
                     except Exception as e:
-                        logger.debug(f"Expected errors during task cancellation: {e}")
+                        logger.warning(f"Error closing control subscriber: {e}")
                 
-            except asyncio.TimeoutError:
-                logger.warning(f"Trickle client stop timed out for {self.request_id}")
-            except Exception as e:
-                logger.warning(f"Error stopping trickle client: {e}")
-            
-            # STEP 3: Cancel the main task if it's still running
-            if self._task and not self._task.done():
-                self._task.cancel()
+                # STEP 5: Perform memory cleanup
                 try:
-                    await asyncio.wait_for(self._task, timeout=3.0)
-                    logger.info(f"Main task cancelled for {self.request_id}")
-                except asyncio.CancelledError:
-                    # Task was cancelled, which is exactly what we wanted
-                    pass
+                    await asyncio.wait_for(self.processor._cleanup_comfyui_memory(), timeout=8.0)
+                    logger.info(f"Memory cleanup completed for {self.request_id}")
                 except asyncio.TimeoutError:
-                    # Task didn't cancel in time, but that's OK
-                    pass
+                    logger.warning(f"Memory cleanup timed out for {self.request_id}, continuing with shutdown")
                 except Exception as e:
-                    logger.warning(f"Error cancelling task: {e}")
-            
-            # STEP 4: Cancel the stats monitoring task if it's running
-            if self._stats_task and not self._stats_task.done():
-                self._stats_task.cancel()
+                    logger.warning(f"Memory cleanup failed for {self.request_id}: {e}")
+                
+                # STEP 6: Send final monitoring event
                 try:
-                    await asyncio.wait_for(self._stats_task, timeout=3.0)
-                    logger.info(f"Stats task cancelled for {self.request_id}")
-                except asyncio.CancelledError:
-                    # Task was cancelled, which is expected
-                    pass
-                except asyncio.TimeoutError:
-                    # Task didn't cancel in time, but that's OK
-                    pass
+                    final_stats = {
+                        "type": "stream_stopped",
+                        "request_id": self.request_id,
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "final_frame_count": self.processor.frame_count
+                    }
+                    await self._emit_monitoring_event(final_stats, "stream_trace")
+                    logger.info(f"Sent final stats for {self.request_id}")
                 except Exception as e:
-                    logger.warning(f"Error cancelling stats task: {e}")
-            
-            # STEP 5: Cancel the control loop task if it's running
-            if self._control_task and not self._control_task.done():
-                self._control_task.cancel()
-                try:
-                    await asyncio.wait_for(self._control_task, timeout=3.0)
-                    logger.info(f"Control loop cancelled for {self.request_id}")
-                except asyncio.CancelledError:
-                    # Task was cancelled, which is expected
-                    pass
-                except asyncio.TimeoutError:
-                    # Task didn't cancel in time, but that's OK
-                    pass
-                except Exception as e:
-                    logger.warning(f"Error cancelling control loop: {e}")
-            
-            # STEP 6: Signal shutdown and close the control subscriber
-            if self.control_subscriber:
-                try:
-                    await self.control_subscriber.shutdown()  # Signal shutdown first
-                    await self.control_subscriber.close()
-                    logger.info(f"Control subscriber closed for {self.request_id}")
-                except Exception as e:
-                    logger.warning(f"Error closing control subscriber: {e}")
-            
-            # STEP 7: Perform isolated memory cleanup with timeout protection
-            try:
-                await asyncio.wait_for(self.processor._cleanup_comfyui_memory(), timeout=12.0)
-                logger.info(f"Memory cleanup completed for {self.request_id}")
-            except asyncio.TimeoutError:
-                logger.warning(f"Memory cleanup timed out for {self.request_id}, continuing with shutdown")
+                    logger.debug(f"Could not send final stats: {e}")
+                
+                # STEP 7: Final cleanup - remove from stream manager (only if not called via stream manager)
+                # Skip if we're being called via stream_manager.stop_stream() to avoid deadlock
+                if not called_by_manager:
+                    await self._remove_from_manager_and_update_health()
+                
+                self._set_final_state()
+                logger.info(f"Stop method completed successfully for stream {self.request_id}")
+                return True
+                
             except Exception as e:
-                logger.warning(f"Memory cleanup failed for {self.request_id}: {e}")
-            
-            # Send final stats before shutdown
-            try:
-                final_stats = {
-                    "type": "stream_stopped",
-                    "request_id": self.request_id,
-                    "timestamp": asyncio.get_event_loop().time(),
-                    "final_frame_count": self.processor.frame_count
-                }
-                await self._emit_monitoring_event(final_stats, "stream_trace")
-                logger.info(f"Sent final stats for {self.request_id}")
-            except Exception as e:
-                logger.debug(f"Could not send final stats: {e}")
-            
-            # Give a moment for any remaining cleanup to complete
-            await asyncio.sleep(0.1)
-            
-            self.running_event.clear() # Ensure running_event is False
-            self.shutdown_event.set() # Mark shutdown_event
-            self.error_event.set() # Mark error_event
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error stopping stream handler {self.request_id}: {e}")
-            self.running_event.clear() # Ensure running_event is False
-            self.shutdown_event.set() # Mark shutdown_event
-            self.error_event.set() # Mark error_event
-            return False
-        finally:
-            # Restore original exception handler
-            loop.set_exception_handler(original_handler)
+                logger.error(f"Error stopping stream handler {self.request_id}: {e}")
+                
+                # Emergency cleanup: Only remove from manager if not called via manager to avoid deadlock
+                if not called_by_manager:
+                    await self._remove_from_manager_and_update_health(emergency=True)
+                
+                self._set_final_state()
+                return False
+            finally:
+                # Restore original exception handler
+                loop.set_exception_handler(original_handler)
     
     def get_status(self) -> Dict[str, Any]:
         """Get the current status of the stream handler."""
@@ -1112,6 +1086,10 @@ class TrickleStreamManager:
                     if len(self.handlers) == 0:
                         logger.warning("Clearing stale health manager error state to allow new stream creation")
                         health_manager.clear_error()
+                    else:
+                        # If there are streams but health manager is in error state, force cleanup
+                        logger.warning("Health manager in error state with active streams, forcing cleanup")    
+                        health_manager.clear_error()
                 
                 handler = TrickleStreamHandler(
                     subscribe_url=subscribe_url,
@@ -1152,13 +1130,16 @@ class TrickleStreamManager:
                 return False
             
             handler = self.handlers[request_id]
-            success = await handler.stop()
             
-            if success:
-                del self.handlers[request_id]
-                logger.info(f"Stopped and removed stream {request_id}")
-                # Update health manager with new stream count
-                self._update_health_manager()
+            # Pass context to avoid cleanup deadlock
+            success = await handler.stop(called_by_manager=True)
+            
+            # Always remove from handlers dict regardless of success to prevent zombies
+            del self.handlers[request_id]
+            logger.info(f"Stopped and removed stream {request_id}, success: {success}")
+            
+            # Update health manager with new stream count
+            self._update_health_manager()
             
             return success
     
@@ -1231,7 +1212,7 @@ class TrickleStreamManager:
         try:
             if request_id in self.handlers:
                 handler = self.handlers[request_id]
-                success = await asyncio.wait_for(handler.stop(), timeout=8.0)
+                success = await asyncio.wait_for(handler.stop(called_by_manager=True), timeout=8.0)
                 if success:
                     logger.info(f"Successfully stopped stream {request_id}")
                 else:
