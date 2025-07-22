@@ -515,18 +515,10 @@ class TrickleStreamHandler:
             stop_task = asyncio.create_task(self.stop())
             stop_task.add_done_callback(lambda t: None)
 
-    def _silence_cancelled_errors(self, loop, context):
-        if 'exception' in context and isinstance(context['exception'], asyncio.CancelledError):
-            return
-        loop.default_exception_handler(context)
 
     async def stop(self, *, called_by_manager: bool = False) -> bool:
         async with self._cleanup_lock:
             self.shutdown_event.set()
-            
-            loop = asyncio.get_running_loop()
-            original_handler = loop.get_exception_handler()
-            loop.set_exception_handler(self._silence_cancelled_errors)
             
             try:
                 try:
@@ -573,8 +565,6 @@ class TrickleStreamHandler:
                     await self._remove_from_manager_and_update_health(emergency=True)
                 self._set_final_state()
                 return False
-            finally:
-                loop.set_exception_handler(original_handler)
 
     def _set_final_state(self):
         self.running_event.clear()
