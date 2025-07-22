@@ -53,6 +53,7 @@ class Pipeline:
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
+        self.resampler = None
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -111,7 +112,7 @@ class Pipeline:
         """Warm up the audio processing pipeline with dummy frames."""
         dummy_frame = av.AudioFrame()
         dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
-        dummy_frame.sample_rate = 48000
+        dummy_frame.rate = 48000
 
         for _ in range(WARMUP_RUNS):
             self.client.put_audio_input(dummy_frame)
@@ -175,6 +176,7 @@ class Pipeline:
         """
         frame.side_data.input = self.audio_preprocess(frame)
         frame.side_data.skipped = True
+        frame.side_data.processed_sample_rate = 16000  # Set processed sample rate for consistency
         self.client.put_audio_input(frame)
         await self.audio_incoming_frames.put(frame)
 
@@ -194,12 +196,22 @@ class Pipeline:
         """Preprocess an audio frame before processing.
         
         Args:
-            frame: The audio frame to preprocess
+            frame: The audio frame to preprocess with the audio converted to a mono single channel audio
             
         Returns:
             The preprocessed frame as a tensor or numpy array
         """
-        return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
+        if self.resampler is None:
+            self.resampler = av.audio.resampler.AudioResampler(
+                format="s16",
+                layout="mono",
+                rate=16000,
+            )
+        #return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
+        resampled_frame = self.resampler.resample(frame)
+        #logger.info(f"Resampled audio frame: {resampled_frame[0].samples}, {resampled_frame[0].format}, {resampled_frame[0].layout}, {resampled_frame[0].rate}")
+        
+        return resampled_frame[0].to_ndarray().flatten().astype(np.float32) / 32768.0  # Normalize to [-1, 1] range
     
     def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
         """Postprocess a video frame after processing.
@@ -275,7 +287,7 @@ class Pipeline:
             processed_frame.pts = frame.pts
         if frame.time_base is not None:
             processed_frame.time_base = frame.time_base
-        processed_frame.sample_rate = frame.sample_rate
+        processed_frame.rate = frame.rate
         
         return processed_frame
 

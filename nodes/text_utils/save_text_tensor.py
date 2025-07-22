@@ -1,5 +1,5 @@
 from comfystream import tensor_cache
-
+import logging
 
 class SaveTextTensor:
     CATEGORY = "text_utils"
@@ -21,4 +21,5 @@ class SaveTextTensor:
 
     def execute(self, text: str):
         tensor_cache.text_outputs.put_nowait(text)
+        logging.info(f"Saved text tensor: {text}")
         return (text,) 

@@ -3,14 +3,14 @@ import librosa
 
 class PitchShifter:
     CATEGORY = "audio_utils"
-    RETURN_TYPES = ("WAVEFORM", "INT")
+    RETURN_TYPES = ("AUDIO", "INT")
     FUNCTION = "execute"
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "audio": ("WAVEFORM",),
+                "audio": ("AUDIO",),
                 "sample_rate": ("INT",),
                 "pitch_shift": ("FLOAT", {
                     "default": 4.0, 

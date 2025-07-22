@@ -16,7 +16,7 @@ import json
 from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
-from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
+from pytrickle import TrickleClient, VideoFrame, VideoOutput, AudioFrame, AudioOutput, TrickleSubscriber, TricklePublisher
 from pytrickle.tensors import tensor_to_av_frame  # NEW IMPORT
 from comfystream.pipeline import Pipeline
 
@@ -44,7 +44,10 @@ class FrameBuffer:
         self.frames: Deque[VideoFrame] = deque(maxlen=max_frames)
         self.total_frames_received = 0
         self.total_frames_discarded = 0
-        
+        self.audio_frames: Deque[AudioFrame] = deque(maxlen=max_frames)
+        self.total_audio_frames_received = 0
+        self.total_audio_frames_discarded = 0
+
     def add_frame(self, frame: VideoFrame):
         """Add a frame to the buffer, discarding oldest if buffer is full."""
         if len(self.frames) >= self.max_frames:
@@ -52,42 +55,81 @@ class FrameBuffer:
             
         self.frames.append(frame)
         self.total_frames_received += 1
-        
+
+    def add_audio_frame(self, frame: AudioFrame):
+        """Add an audio frame to the buffer, discarding oldest if buffer is full."""
+        if len(self.audio_frames) >= self.max_frames:
+            self.total_audio_frames_discarded += 1
+            
+        self.audio_frames.append(frame)
+        self.total_audio_frames_received += 1
+
     def get_frame(self) -> Optional[VideoFrame]:
         """Get the oldest frame from the buffer."""
         if len(self.frames) == 0:
             return None
         return self.frames.popleft()
-        
+    
+    def get_audio_frame(self) -> Optional[AudioFrame]:
+        """Get the oldest audio frame from the buffer."""
+        if len(self.audio_frames) == 0:
+            return None
+        return self.audio_frames.popleft()
+    
     def get_all_frames(self) -> list[VideoFrame]:
         """Get all frames from the buffer and clear it."""
         frames = list(self.frames)
         self.frames.clear()
         return frames
-        
+    
+    def get_all_audio_frames(self) -> list[AudioFrame]:
+        """Get all audio frames from the buffer and clear it."""
+        frames = list(self.audio_frames)
+        self.audio_frames.clear()
+        return frames
+    
     def clear(self):
         """Clear all frames from the buffer."""
         self.frames.clear()
-        
+
+    def clear_audio(self):
+        """Clear all audio frames from the buffer."""
+        self.audio_frames.clear()
+
     def size(self) -> int:
         """Get the current number of frames in the buffer."""
         return len(self.frames)
-        
+    
+    def audio_size(self) -> int:
+        """Get the current number of audio frames in the buffer."""
+        return len(self.audio_frames)
+    
     def is_empty(self) -> bool:
         """Check if the buffer is empty."""
         return len(self.frames) == 0
-        
+    
+    def is_audio_empty(self) -> bool:
+        """Check if the audio buffer is empty."""
+        return len(self.audio_frames) == 0
+    
     def is_full(self) -> bool:
         """Check if the buffer is full."""
         return len(self.frames) >= self.max_frames
-        
+    
+    def is_audio_full(self) -> bool:
+        """Check if the audio buffer is full."""
+        return len(self.audio_frames) >= self.max_frames
+    
     def get_stats(self) -> Dict[str, int]:
         """Get buffer statistics."""
         return {
             "current_frames": len(self.frames),
+            "current_audio_frames": len(self.audio_frames),
             "max_frames": self.max_frames,
             "total_received": self.total_frames_received,
-            "total_discarded": self.total_frames_discarded
+            "total_discarded": self.total_frames_discarded,
+            "total_audio_received": self.total_audio_frames_received,
+            "total_audio_discarded": self.total_audio_frames_discarded
         }
 
 class ComfyStreamTrickleProcessor:
@@ -97,6 +139,7 @@ class ComfyStreamTrickleProcessor:
         self.pipeline = pipeline
         self.request_id = request_id
         self.frame_count = 0
+        self.audio_frame_count = 0
         self.data_queue = asyncio.Queue()
         self.running = False
         
@@ -109,7 +152,8 @@ class ComfyStreamTrickleProcessor:
         
         # For fallback frames to prevent flickering
         self.last_processed_frame = None
-        self.last_text_output = None
+        self.last_processed_audio_frame = None
+        self.last_data_output = None
         
         # Background task for collecting processed outputs
         self.output_collector_task = None
@@ -206,7 +250,7 @@ class ComfyStreamTrickleProcessor:
                 try:
                     # Try to get multiple outputs with shorter timeout for faster cancellation response
                     outputs = await asyncio.wait_for(
-                        self.pipeline.get_multiple_outputs(['video', 'text']), 
+                        self.pipeline.get_multiple_outputs(['video', 'audio','text']), 
                         timeout=0.1
                     )
                     
@@ -231,6 +275,26 @@ class ComfyStreamTrickleProcessor:
                         # Store for fallback use
                         self.last_processed_frame = dummy_frame
                     
+                    # Process audio output if available
+                    if outputs.get("audio") is not None:
+                        # Convert ComfyUI audio output back to trickle format
+                        processed_audio_tensor = self._convert_comfy_audio_output_to_trickle(outputs['audio'])
+                        
+                        # Create a dummy audio frame with the processed tensor
+                        # Note: We don't have the original frame timing here, but that's OK
+                        # The sync method will handle timing preservation
+                        dummy_audio_frame = AudioFrame(
+                            tensor=processed_audio_tensor,
+                            timestamp=0,  # Will be updated in sync method
+                            time_base=Fraction(1, 44100),  # Standard audio sample rate
+                            layout="stereo",
+                            format="flt",
+                            rate=44100
+                        )
+                        
+                        # Store for fallback use
+                        self.last_processed_audio_frame = dummy_audio_frame
+
                     # Process text output if available
                     if outputs.get('text') is not None:
                         # Store text output for potential use in control messages or logging
@@ -285,6 +349,111 @@ class ComfyStreamTrickleProcessor:
             logger.error(f"Timeout waiting for pipeline ready after {timeout}s")
             return False
     
+    def process_audio_frame_sync(self, frame: AudioFrame) -> AudioOutput:
+        """Synchronous interface for frame processing using proper pipeline methods."""
+        try:
+            # Check if we're shutting down first (before acquiring lock)
+            if not self.running:
+                logger.warning(f"Processor not running for request {self.request_id}")
+                # Use last processed frame if available to avoid flickering
+                if self.last_processed_audio_frame is not None:
+                    return AudioOutput(self.last_processed_audio_frame, self.request_id)
+                return AudioOutput([frame], self.request_id)
+
+            # Try to acquire processing lock (non-blocking)
+            try:
+                # Check if processing lock is available (if not, we're shutting down)
+                if self.processing_lock.locked():
+                    if self.last_processed_audio_frame is not None:
+                        return AudioOutput(self.last_processed_audio_frame, self.request_id)
+                    return AudioOutput([frame], self.request_id)
+            except Exception:
+                # Lock check failed, just continue
+                pass
+            
+            # Check if pipeline is ready
+            if not self.pipeline_ready:
+                # Buffer the frame until pipeline is ready
+                self.frame_buffer.add_audio_frame(frame)
+                # Use last processed frame if available, otherwise original
+                if self.last_processed_audio_frame is not None:
+                    return AudioOutput(self.last_processed_audio_frame, self.request_id)
+                return AudioOutput([frame], self.request_id)
+
+            # Pipeline is ready - process frame synchronously to preserve timing
+            self.audio_frame_count += 1
+            
+            try:
+                # Convert trickle frame to av.AudioFrame with preserved timing
+                av_frame = AudioFrame.to_av_audio(frame)
+                # Store original timing information from trickle frame
+                original_timestamp = frame.timestamp
+                original_time_base = frame.time_base
+                original_layout = frame.layout
+                original_format = frame.format
+                original_rate = frame.rate
+                # Process frame using pipeline preprocessing to match app.py behavior
+                preprocessed_audio = self.pipeline.audio_preprocess(av_frame)
+                # Set side_data attributes (these are dynamic attributes used by comfystream)
+                # pylint: disable=attribute-defined-outside-init
+                av_frame.side_data.input = preprocessed_audio  # type: ignore
+                av_frame.side_data.skipped = True  # type: ignore
+                av_frame.side_data.processed_sample_rate = 16000  # type: ignore
+                
+                # Put frame directly into pipeline client (like the original approach)
+                self.pipeline.client.put_audio_input(av_frame)
+                
+                # Since we're in a sync context but there might be an async loop running,
+                # we'll just submit the frame and use fallback strategy
+                # Check if there's a running event loop
+                try:
+                    current_loop = asyncio.get_running_loop()
+                    # We're in an async context, so we can't use run_until_complete
+                    # Instead, just put the frame in and return fallback for now
+                    # The processing will happen asynchronously
+                    if self.last_processed_audio_frame is not None:
+                        # Create new frame with last processed tensor but current timing
+                        fallback_frame = AudioFrame(
+                            tensor=self.last_processed_audio_frame.tensor,
+                            timestamp=original_timestamp,
+                            time_base=original_time_base,
+                            layout=original_layout,
+                            format=original_format,
+                            rate=original_rate
+                        )
+                        return AudioOutput(fallback_frame, self.request_id)
+                    return AudioOutput([frame], self.request_id)
+
+                except RuntimeError:
+                    # No running event loop, but in trickle context this shouldn't happen
+                    # Just use fallback strategy
+                    if self.last_processed_audio_frame is not None:
+                        # Create new frame with last processed tensor but current timing
+                        fallback_frame = AudioFrame(
+                            tensor=self.last_processed_audio_frame.tensor,
+                            timestamp=original_timestamp,
+                            time_base=original_time_base,
+                            layout=original_layout,
+                            format=original_format,
+                            rate=original_rate
+                        )
+                        return AudioOutput(fallback_frame, self.request_id)
+                    return AudioOutput([frame], self.request_id)
+                
+            except Exception as e:
+                logger.error(f"Error processing frame {self.frame_count}: {e}")
+                # On error, use last processed frame if available
+                if self.last_processed_audio_frame is not None:
+                    return AudioOutput(self.last_processed_audio_frame, self.request_id)
+                return AudioOutput(frame, self.request_id)
+
+        except Exception as e:
+            logger.error(f"Error in sync frame processing: {e}")
+            # On error, use last processed frame if available
+            if self.last_processed_audio_frame is not None:
+                return AudioOutput(self.last_processed_audio_frame, self.request_id)
+            return AudioOutput(frame, self.request_id)
+
     def process_frame_sync(self, frame: VideoFrame) -> VideoOutput:
         """Synchronous interface for frame processing using proper pipeline methods."""
         try:
@@ -413,6 +582,36 @@ class ComfyStreamTrickleProcessor:
             # Return zeros tensor as fallback
             return torch.zeros(512, 512, 3)
 
+    def _convert_comfy_audio_output_to_trickle(self, comfy_audio_tensor):
+        """Convert ComfyUI audio output tensor to trickle format."""
+        try:
+            # ComfyUI audio typically outputs in [1, channels, samples] or [channels, samples] format
+            if comfy_audio_tensor.dim() == 3 and comfy_audio_tensor.shape[0] == 1:
+                # Remove batch dimension: [1, channels, samples] -> [channels, samples]
+                tensor = comfy_audio_tensor.squeeze(0)
+            elif comfy_audio_tensor.dim() == 1:
+                # Single channel audio: [samples] -> [1, samples]
+                tensor = comfy_audio_tensor.unsqueeze(0)
+            else:
+                tensor = comfy_audio_tensor
+            
+            # Ensure tensor is in [-1, 1] range for audio (standard audio range)
+            if tensor.max() > 1.0 or tensor.min() < -1.0:
+                # Normalize to [-1, 1] range
+                max_val = max(abs(tensor.max()), abs(tensor.min()))
+                if max_val > 0:
+                    tensor = tensor / max_val
+            
+            # Clamp to valid audio range
+            tensor = torch.clamp(tensor, -1.0, 1.0)
+            
+            return tensor
+            
+        except Exception as e:
+            logger.error(f"Error converting ComfyUI audio output: {e}")
+            # Return zeros tensor as fallback (stereo silence)
+            return torch.zeros(2, 1024)  # 2 channels, 1024 samples of silence
+
     async def _cleanup_comfyui_memory(self):
         """Clean up ComfyUI memory and resources (isolated to avoid interference)."""
         try:
@@ -488,6 +687,7 @@ class TrickleStreamHandler:
         control_url: str,
         events_url: str,
         data_url: str,
+        data_url: str,
         request_id: str,
         pipeline: Pipeline,
         width: int = 512,
@@ -498,6 +698,7 @@ class TrickleStreamHandler:
         self.publish_url = publish_url
         self.control_url = control_url
         self.events_url = events_url
+        self.data_url = data_url
         self.data_url = data_url
         self.request_id = request_id
         self.pipeline = pipeline
@@ -515,9 +716,11 @@ class TrickleStreamHandler:
             control_url=control_url,
             events_url=events_url,
             data_url=data_url,
+            data_url=data_url,
             width=width,
             height=height,
             frame_processor=self.processor.process_frame_sync,  # Use sync interface as expected by trickle-app
+            audio_processor=self.processor.process_audio_frame_sync,  # Use sync interface for audio
             error_callback=self._on_client_error
         )
         
@@ -548,6 +751,7 @@ class TrickleStreamHandler:
         self._stats_task: Optional[asyncio.Task] = None
         self._control_task: Optional[asyncio.Task] = None
         self._data_task: Optional[asyncio.Task] = None
+        self._data_task: Optional[asyncio.Task] = None
         self._critical_error_occurred = False
         
     @property
@@ -568,11 +772,22 @@ class TrickleStreamHandler:
     async def publish_data(self, data: str):
         """Safely publish data, handling the case when data_url is not provided."""
         if not self.data_available:
+
+    async def publish_data(self, data: str):
+        """Safely publish data, handling the case when data_url is not provided."""
+        if not self.data_available:
             return
         
         try:
             await self.client.publish_data(data)
+            await self.client.publish_data(data)
         except Exception as e:
+            logger.warning(f"Failed to publish data for {self.request_id}: {e}")
+
+    async def _stream_data(self):
+        """Background task to stream data output from the pipeline."""
+        logger.info(f"Data streaming started for request {self.request_id}")
+
             logger.warning(f"Failed to publish data for {self.request_id}: {e}")
 
     async def _stream_data(self):
@@ -584,22 +799,31 @@ class TrickleStreamHandler:
                 data_items = []  # List to collect all data items from queue
 
                 # Pull all available data items from the queue
+                data_items = []  # List to collect all data items from queue
+
+                # Pull all available data items from the queue
                 try:
                     while True:  # Keep pulling until queue is empty
                         data_output = await asyncio.wait_for(
                             self.processor.get_data(), 
-                            timeout=0.01  # Very short timeout to drain queue quickly
+                            timeout=0.05  # Very short timeout to drain queue quickly
                         )
+                        if data_output is None:
                         if data_output is None:
                             break
 
                         if not data_output is None and data_output.strip():
                             data_items.append(data_output)
 
+                        if not data_output is None and data_output.strip():
+                            data_items.append(data_output)
+
                 except asyncio.TimeoutError:
+                    # No more data output available, proceed with what we have
                     # No more data output available, proceed with what we have
                     pass
                 except asyncio.CancelledError:
+                    logger.info(f"Data streaming cancelled for {self.request_id}")
                     logger.info(f"Data streaming cancelled for {self.request_id}")
                     break
                 except Exception as e:
@@ -611,6 +835,9 @@ class TrickleStreamHandler:
                         data_json = json.dumps({
                             "data": data_items,
                             "count": len(data_items),
+                        data_json = json.dumps({
+                            "data": data_items,
+                            "count": len(data_items),
                             "request_id": self.request_id,
                             "timestamp": asyncio.get_event_loop().time()
                         })
@@ -618,11 +845,12 @@ class TrickleStreamHandler:
                         logger.debug(f"Published {len(data_items)} data items for {self.request_id}")
                     except Exception as e:
                         logger.error(f"Error publishing data for {self.request_id}: {e}")
+                        logger.error(f"Error publishing data for {self.request_id}: {e}")
                         await asyncio.sleep(0.25)
                         continue
                 
-                # Send data every 250ms regardless of whether we got output or not
-                await asyncio.sleep(0.25)
+                # Send data every 100ms, if not data, it will not publish anything
+                await asyncio.sleep(0.1)
                     
         except asyncio.CancelledError:
             logger.info(f"Data streaming task cancelled for {self.request_id}")
@@ -1136,6 +1364,8 @@ class TrickleStreamHandler:
                 try:
                     await asyncio.wait_for(self._data_task, timeout=3.0)
                     logger.info(f"Data streaming cancelled for {self.request_id}")
+                    await asyncio.wait_for(self._data_task, timeout=3.0)
+                    logger.info(f"Data streaming cancelled for {self.request_id}")
                 except asyncio.CancelledError:
                     # Task was cancelled, which is expected
                     pass
@@ -1204,7 +1434,9 @@ class TrickleStreamHandler:
             'control_url': self.control_url,
             'events_url': self.events_url,
             'data_url': self.data_url,
+            'data_url': self.data_url,
             'events_available': self.events_available,
+            'data_available': self.data_available,
             'data_available': self.data_available,
             'width': self.width,
             'height': self.height,
@@ -1228,6 +1460,7 @@ class TrickleStreamManager:
         publish_url: str,
         control_url: str,
         events_url: str,
+        data_url: str,
         data_url: str,
         pipeline: Pipeline,
         width: int = 512,
@@ -1254,6 +1487,7 @@ class TrickleStreamManager:
                     publish_url=publish_url,
                     control_url=control_url,
                     events_url=events_url,
+                    data_url=data_url,
                     data_url=data_url,
                     request_id=request_id,
                     pipeline=pipeline,

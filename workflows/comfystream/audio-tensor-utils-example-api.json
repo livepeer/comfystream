@@ -1,7 +1,8 @@
 {
     "1": {
       "inputs": {
-        "buffer_size": 500.0
+        "buffer_size": 500.0,
+        "mode": "sliding-window"
       },
       "class_type": "LoadAudioTensor",
       "_meta": {
