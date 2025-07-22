@@ -487,7 +487,7 @@ class TrickleStreamHandler:
         publish_url: str,
         control_url: str,
         events_url: str,
-        text_url: str,
+        data_url: str,
         request_id: str,
         pipeline: Pipeline,
         width: int = 512,
@@ -498,7 +498,7 @@ class TrickleStreamHandler:
         self.publish_url = publish_url
         self.control_url = control_url
         self.events_url = events_url
-        self.text_url = text_url
+        self.data_url = data_url
         self.request_id = request_id
         self.pipeline = pipeline
         self.width = width
@@ -514,7 +514,7 @@ class TrickleStreamHandler:
             publish_url=publish_url,
             control_url=control_url,
             events_url=events_url,
-            text_url=text_url,
+            data_url=data_url,
             width=width,
             height=height,
             frame_processor=self.processor.process_frame_sync,  # Use sync interface as expected by trickle-app
@@ -532,12 +532,12 @@ class TrickleStreamHandler:
         self.events_available = bool(events_url and events_url.strip())
         if not self.events_available:
             logger.info(f"No events URL provided for stream {self.request_id}, monitoring events will not be published")
-        
-        # Text channel availability check
-        self.text_available = bool(text_url and text_url.strip())
-        if not self.text_available:
-            logger.info(f"No text URL provided for stream {self.request_id}, text data will not be published")
-        
+
+        # Data channel availability check
+        self.data_available = bool(data_url and data_url.strip())
+        if not self.data_available:
+            logger.info(f"No data URL provided for stream {self.request_id}, data will not be published")
+
         # Use Events instead of boolean flags for better coordination
         self.running_event = asyncio.Event()
         self.shutdown_event = asyncio.Event()
@@ -547,7 +547,7 @@ class TrickleStreamHandler:
         self._task: Optional[asyncio.Task] = None
         self._stats_task: Optional[asyncio.Task] = None
         self._control_task: Optional[asyncio.Task] = None
-        self._text_task: Optional[asyncio.Task] = None
+        self._data_task: Optional[asyncio.Task] = None
         self._critical_error_occurred = False
         
     @property
@@ -564,60 +564,60 @@ class TrickleStreamHandler:
             await self.client.protocol.emit_monitoring_event(data, event_type)
         except Exception as e:
             logger.warning(f"Failed to emit monitoring event {event_type} for {self.request_id}: {e}")
-    
-    async def publish_text(self, text_data: str):
-        """Safely publish text data, handling the case when text_url is not provided."""
-        if not self.text_available:
+
+    async def publish_data(self, data: str):
+        """Safely publish data, handling the case when data_url is not provided."""
+        if not self.data_available:
             return
         
         try:
-            await self.client.publish_text(text_data)
+            await self.client.publish_data(data)
         except Exception as e:
-            logger.warning(f"Failed to publish text data for {self.request_id}: {e}")
-    
-    async def _stream_text_data(self):
-        """Background task to stream text output from the pipeline."""
-        logger.info(f"Text streaming started for request {self.request_id}")
-        
+            logger.warning(f"Failed to publish data for {self.request_id}: {e}")
+
+    async def _stream_data(self):
+        """Background task to stream data output from the pipeline."""
+        logger.info(f"Data streaming started for request {self.request_id}")
+
         try:
             while self.running:
-                text_items = []  # List to collect all text items from queue
-                
-                # Pull all available text items from the queue
+                data_items = []  # List to collect all data items from queue
+
+                # Pull all available data items from the queue
                 try:
                     while True:  # Keep pulling until queue is empty
-                        text_output = await asyncio.wait_for(
+                        data_output = await asyncio.wait_for(
                             self.processor.get_data(), 
                             timeout=0.01  # Very short timeout to drain queue quickly
                         )
-                        if text_output is None:
+                        if data_output is None:
                             break
 
-                        if not text_output is None and text_output.strip():
-                            text_items.append(text_output)
-                            
+                        if not data_output is None and data_output.strip():
+                            data_items.append(data_output)
+
                 except asyncio.TimeoutError:
-                    # No more text output available, proceed with what we have
+                    # No more data output available, proceed with what we have
                     pass
                 except asyncio.CancelledError:
-                    logger.info(f"Text streaming cancelled for {self.request_id}")
+                    logger.info(f"Data streaming cancelled for {self.request_id}")
                     break
                 except Exception as e:
-                    logger.error(f"Error getting text data for {self.request_id}: {e}")
-                
-                # Send collected text items as JSON list if we have any
-                if text_items:
+                    logger.error(f"Error getting data for {self.request_id}: {e}")
+
+                # Send collected data items as JSON list if we have any
+                if data_items:
                     try:
-                        text_json = json.dumps({
-                            "data": text_items,
-                            "count": len(text_items),
+                        data_json = json.dumps({
+                            "data": data_items,
+                            "count": len(data_items),
                             "request_id": self.request_id,
                             "timestamp": asyncio.get_event_loop().time()
                         })
-                        await self.publish_text(text_json)
-                        logger.debug(f"Published {len(text_items)} text items for {self.request_id}")
+                        await self.publish_data(data_json)
+                        logger.debug(f"Published {len(data_items)} data items for {self.request_id}")
                     except Exception as e:
-                        logger.error(f"Error publishing text data for {self.request_id}: {e}")
+                        logger.error(f"Error publishing data for {self.request_id}: {e}")
                         await asyncio.sleep(0.25)
                         continue
                 
@@ -625,12 +625,12 @@ class TrickleStreamHandler:
                 await asyncio.sleep(0.25)
                     
         except asyncio.CancelledError:
-            logger.info(f"Text streaming task cancelled for {self.request_id}")
+            logger.info(f"Data streaming task cancelled for {self.request_id}")
             raise
         except Exception as e:
-            logger.error(f"Text streaming task error for {self.request_id}: {e}")
+            logger.error(f"Data streaming task error for {self.request_id}: {e}")
         finally:
-            logger.info(f"Text streaming ended for {self.request_id}")
+            logger.info(f"Data streaming ended for {self.request_id}")
     
     async def _on_control_error(self, error_type: str, exception: Optional[Exception] = None):
         """Handle critical errors from control channel."""
@@ -962,15 +962,15 @@ class TrickleStreamHandler:
                     logger.info(f"Started control loop for {self.request_id}")
                 except Exception as e:
                     logger.warning(f"Failed to start control loop for {self.request_id}: {e}")
-            
-            # Start the text streaming task if text URL is available
-            if self.text_available:
+
+            # Start the data streaming task if data URL is available
+            if self.data_available:
                 try:
-                    self._text_task = asyncio.create_task(self._stream_text_data())
-                    logger.info(f"Started text streaming for {self.request_id}")
+                    self._data_task = asyncio.create_task(self._stream_data())
+                    logger.info(f"Started data streaming for {self.request_id}")
                 except Exception as e:
-                    logger.warning(f"Failed to start text streaming for {self.request_id}: {e}")
-            
+                    logger.warning(f"Failed to start data streaming for {self.request_id}: {e}")
+
             logger.info(f"Trickle stream handler started successfully for {self.request_id}")
             return True
             
@@ -1130,12 +1130,12 @@ class TrickleStreamHandler:
                 except Exception as e:
                     logger.warning(f"Error cancelling control loop: {e}")
             
-            # STEP 5.5: Cancel the text streaming task if it's running
-            if self._text_task and not self._text_task.done():
-                self._text_task.cancel()
+            # STEP 5.5: Cancel the data streaming task if it's running
+            if self._data_task and not self._data_task.done():
+                self._data_task.cancel()
                 try:
-                    await asyncio.wait_for(self._text_task, timeout=3.0)
-                    logger.info(f"Text streaming cancelled for {self.request_id}")
+                    await asyncio.wait_for(self._data_task, timeout=3.0)
+                    logger.info(f"Data streaming cancelled for {self.request_id}")
                 except asyncio.CancelledError:
                     # Task was cancelled, which is expected
                     pass
@@ -1143,8 +1143,8 @@ class TrickleStreamHandler:
                     # Task didn't cancel in time, but that's OK
                     pass
                 except Exception as e:
-                    logger.warning(f"Error cancelling text streaming: {e}")
-            
+                    logger.warning(f"Error cancelling data streaming: {e}")
+
             # STEP 6: Signal shutdown and close the control subscriber
             if self.control_subscriber:
                 try:
@@ -1203,9 +1203,9 @@ class TrickleStreamHandler:
             'publish_url': self.publish_url,
             'control_url': self.control_url,
             'events_url': self.events_url,
-            'text_url': self.text_url,
+            'data_url': self.data_url,
             'events_available': self.events_available,
-            'text_available': self.text_available,
+            'data_available': self.data_available,
             'width': self.width,
             'height': self.height,
             'frame_count': self.processor.frame_count,
@@ -1228,7 +1228,7 @@ class TrickleStreamManager:
         publish_url: str,
         control_url: str,
         events_url: str,
-        text_url: str,
+        data_url: str,
         pipeline: Pipeline,
         width: int = 512,
         height: int = 512
@@ -1254,7 +1254,7 @@ class TrickleStreamManager:
                     publish_url=publish_url,
                     control_url=control_url,
                     events_url=events_url,
-                    text_url=text_url,
+                    data_url=data_url,
                     request_id=request_id,
                     pipeline=pipeline,
                     width=width,

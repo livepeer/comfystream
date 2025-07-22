@@ -16,7 +16,7 @@ export function usePeer(props: PeerProps): Peer {
   const [controlChannel, setControlChannel] = useState<RTCDataChannel | null>(
     null,
   );
-  const [textChannel, setTextChannel] = useState<RTCDataChannel | null>(
+  const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(
     null,
   );
 
@@ -143,35 +143,35 @@ export function usePeer(props: PeerProps): Peer {
         console.log("Received message on control channel:", event.data);
       };
 
-      // Create text channel for receiving text output
-      const textChan = pc.createDataChannel("text");
+      // Create data channel for receiving data output
+      const dataChan = pc.createDataChannel("data");
 
-      textChan.onopen = () => {
+      dataChan.onopen = () => {
         console.log(
-          "[usePeer] Text channel opened, readyState:",
-          textChan.readyState,
+          "[usePeer] data channel opened, readyState:",
+          dataChan.readyState,
         );
-        setTextChannel(textChan);
+        setDataChannel(dataChan);
       };
 
-      textChan.onclose = () => {
-        console.log("[usePeer] Text channel closed");
-        setTextChannel(null);
+      dataChan.onclose = () => {
+        console.log("[usePeer] Data channel closed");
+        setDataChannel(null);
       };
 
-      textChan.onerror = (error) => {
-        console.error("Text channel error:", error);
+      dataChan.onerror = (error) => {
+        console.error("Data channel error:", error);
       };
 
-      textChan.onmessage = (event) => {
+      dataChan.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          if (message.type === "text_output") {
-            console.log("Received text output:", message.data);
+          if (message.type === "data_output") {
+            console.log("Received data output:", message.data);
             // You can dispatch this to a context or callback for UI consumption
           }
         } catch (error) {
-          console.error("Error parsing text message:", error);
+          console.error("Error parsing data message:", error);
         }
       };
 
@@ -204,7 +204,7 @@ export function usePeer(props: PeerProps): Peer {
         peerConnection.close();
       }
       setControlChannel(null);
-      setTextChannel(null);
+      setDataChannel(null);
       setRemoteStream(null);
       setPeerConnection(null);
     }
@@ -236,6 +236,6 @@ export function usePeer(props: PeerProps): Peer {
     peerConnection,
     remoteStream,
     controlChannel,
-    textChannel,
+    dataChannel,
   };
 }
