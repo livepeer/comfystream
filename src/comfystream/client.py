@@ -107,12 +107,21 @@ class ComfyStreamClient:
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
+        if tensor_cache.image_outputs.empty():
+            return None
+        
         return await tensor_cache.image_outputs.get()
     
     async def get_audio_output(self):
+        if tensor_cache.audio_outputs.empty():
+            return None
+        
         return await tensor_cache.audio_outputs.get()
 
     async def get_text_output(self):
+        if tensor_cache.text_outputs.empty():
+            return None
+        
         return await tensor_cache.text_outputs.get()
     
     async def get_multiple_outputs(self, output_types: List[str]) -> Dict[str, Any]:
