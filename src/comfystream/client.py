@@ -1,5 +1,5 @@
 import asyncio
-from typing import List
+from typing import List, Dict, Any
 import logging
 
 from comfystream import tensor_cache
@@ -114,6 +114,49 @@ class ComfyStreamClient:
 
     async def get_text_output(self):
         return await tensor_cache.text_outputs.get()
+    
+    async def get_multiple_outputs(self, output_types: List[str]) -> Dict[str, Any]:
+        """Get multiple outputs of different types in a coordinated way.
+        
+        Args:
+            output_types: List of output types to collect ('video', 'audio', 'text')
+            
+        Returns:
+            Dictionary mapping output types to their values
+        """
+        results = {}
+
+        # Collect outputs in parallel to avoid blocking
+        tasks = []
+        for output_type in output_types:
+            if output_type == 'video':
+                tasks.append(self.get_video_output())
+            elif output_type == 'audio':
+                tasks.append(self.get_audio_output())
+            elif output_type == 'text':
+                tasks.append(self.get_text_output())
+
+        if tasks:
+            # Wait for all outputs with a reasonable timeout
+            try:
+                outputs = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=10.0
+                )
+
+                for i, output_type in enumerate(output_types):
+                    if isinstance(outputs[i], Exception):
+                        logger.error(f"Error getting {output_type} output: {outputs[i]}")
+                        results[output_type] = None
+                    else:
+                        results[output_type] = outputs[i]
+
+            except asyncio.TimeoutError:
+                logger.error("Timeout waiting for multiple outputs")
+                for output_type in output_types:
+                    results[output_type] = None
+
+        return results
     
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
