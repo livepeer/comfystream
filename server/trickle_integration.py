@@ -413,8 +413,8 @@ class TrickleStreamHandler:
             logger.warning(f"Failed to emit {event_type} event for {self.request_id}: {e}")
     
     async def publish_text_data(self, text_data: str):
-        """Safely publish text data, handling the case when text_url is not provided."""
-        if not self.data_available:
+        """Safely publish text data, handling the case when data_url is not provided."""
+        if not self.data_url:
             return
 
         try:
@@ -463,7 +463,7 @@ class TrickleStreamHandler:
                             "request_id": self.request_id,
                             "timestamp": asyncio.get_event_loop().time()
                         })
-                        await self.publish_text(text_json)
+                        await self.publish_text_data(text_json)
                         logger.debug(f"Published {len(text_data_items)} text items for {self.request_id}")
                     except Exception as e:
                         logger.error(f"Error publishing text data for {self.request_id}: {e}")
@@ -602,6 +602,12 @@ class TrickleStreamHandler:
                     self._control_task = asyncio.create_task(self._control_loop())
                 except Exception:
                     pass
+            
+            if self.data_url and self.data_url.strip():
+                try:
+                    self._data_task = asyncio.create_task(self._stream_text_data())
+                except Exception as e:
+                    logger.error(f"Error starting text data streaming for {self.request_id}: {e}")
             
             return True
         except Exception as e:
