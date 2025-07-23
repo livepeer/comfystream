@@ -315,7 +315,7 @@ class Pipeline:
             try:
                 outputs = await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=False),
-                    timeout=10.0
+                    timeout=0.1
                 )
 
                 for i, output_type in enumerate(output_types):
