@@ -423,7 +423,7 @@ async def offer(request):
         h264.MAX_BITRATE = MAX_BITRATE
         h264.MIN_BITRATE = MIN_BITRATE
 
-    # Handle control channel from client
+    # Handle data channels from client
     @pc.on("datachannel")
     def on_datachannel(channel):
         if channel.label == "control":
@@ -513,6 +513,58 @@ async def offer(request):
                     logger.error("[Server] Invalid JSON received")
                 except Exception as e:
                     logger.error(f"[Server] Error processing message: {str(e)}")
+        elif channel.label == "data":
+            # Data channel for streaming text output
+            logger.info("Data channel established")
+
+            # Create background task to stream data
+            async def stream_data():
+                try:
+                    while pc.connectionState in ["connecting", "connected"]:
+                        try:
+                            # Get text output from pipeline with timeout
+                            data_output = await asyncio.wait_for(
+                                pipeline.get_text_output(), 
+                                timeout=0.1
+                            )
+
+                            # Send text data through channel if still open
+                            if channel.readyState == "open":
+                                data_message = {
+                                    "type": "data_output",
+                                    "data": data_output,
+                                    "timestamp": asyncio.get_event_loop().time()
+                                }
+                                channel.send(json.dumps(data_message))
+                                logger.debug(f"Sent data output: {data_output[:100]}...")
+                            else:
+                                break
+
+                        except asyncio.TimeoutError:
+                            # No data output available, continue
+                            await asyncio.sleep(0.01)
+                            continue
+                        except Exception as e:
+                            logger.error(f"Error streaming data: {e}")
+                            await asyncio.sleep(0.1)
+                            continue
+
+                except asyncio.CancelledError:
+                    logger.info("Data streaming task cancelled")
+                except Exception as e:
+                    logger.error(f"Data streaming task error: {e}")
+                finally:
+                    logger.info("Data streaming task ended")
+
+            # Start background task for data streaming
+            data_task = asyncio.create_task(stream_data())
+
+            # Clean up task when channel closes
+            @channel.on("close")
+            def on_data_channel_close():
+                logger.info("Data channel closed")
+                if not data_task.done():
+                    data_task.cancel()
 
     @pc.on("track")
     def on_track(track):
