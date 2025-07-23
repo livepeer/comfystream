@@ -270,30 +270,18 @@ class ComfyStreamTrickleProcessor:
                     continue
                 
                 try:
-                    # Try to get multiple outputs with shorter timeout for faster cancellation response
                     outputs = await asyncio.wait_for(
                         self.pipeline.get_multiple_outputs(['video', 'text']), 
-                        timeout=0.05  # Reduced from 0.1 to be more responsive
+                        timeout=0.1
                     )
                     if not self.state.is_active:
                         break
-                    
 
                     # Process video output
                     if outputs.get('video') is not None:
                         # Convert ComfyUI output back to trickle format
-                        processed_tensor = self._convert_comfy_output_to_trickle(outputs['video'])
-
-                        # Create a dummy frame with the processed tensor
-                        # Note: We don't have the original frame timing here, but that's OK
-                        # The sync method will handle timing preservation
-                        dummy_frame = VideoFrame(
-                            tensor=processed_tensor,
-                            timestamp=0,  # Will be updated in sync method
-                            time_base=Fraction(1, 30)
-                        )
-
-                        # Store for fallback use
+                        processed_tensor = FrameProcessor.convert_comfy_output_to_trickle(outputs['video'])
+                        dummy_frame = VideoFrame(tensor=processed_tensor, timestamp=0, time_base=Fraction(1, 30))
                         self.last_processed_frame = dummy_frame
 
                     # Process text output if available
@@ -366,9 +354,19 @@ class ComfyStreamTrickleProcessor:
 class TrickleStreamHandler:
     """Handles a complete trickle stream with ComfyStream integration."""
     
-    def __init__(self, subscribe_url: str, publish_url: str, control_url: str, events_url: str, data_url: str,
-                 request_id: str, pipeline: Pipeline, width: int = 512, height: int = 512,
-                 app_context: Optional[Dict] = None):
+    def __init__(
+        self,
+        subscribe_url: str,
+        publish_url: str,
+        control_url: str,
+        events_url: str,
+        data_url: str,
+        request_id: str,
+        pipeline: Pipeline,
+        width: int = 512,
+        height: int = 512,
+        app_context: Optional[Dict] = None
+    ):
         self.subscribe_url = subscribe_url
         self.publish_url = publish_url
         self.control_url = control_url
@@ -707,9 +705,18 @@ class TrickleStreamManager:
         self.lock = asyncio.Lock()
         self.app_context = app_context or {}
     
-    async def create_stream(self, request_id: str, subscribe_url: str, publish_url: str,
-                          control_url: str, events_url: str, pipeline: Pipeline,
-                          width: int = 512, height: int = 512) -> bool:
+    async def create_stream(
+        self,
+        request_id: str,
+        subscribe_url: str,
+        publish_url: str,
+        control_url: str,
+        events_url: str,
+        data_url: str,
+        pipeline: Pipeline,
+        width: int = 512,
+        height: int = 512,        
+    ) -> bool:
         async with self.lock:
             if request_id in self.handlers:
                 return False
@@ -723,12 +730,17 @@ class TrickleStreamManager:
                         health_manager.clear_error()
                 
                 handler = TrickleStreamHandler(
-                    subscribe_url=subscribe_url, publish_url=publish_url,
-                    control_url=control_url, events_url=events_url,
-                    request_id=request_id, pipeline=pipeline,
-                    width=width, height=height, app_context=self.app_context
+                    request_id=request_id,
+                    subscribe_url=subscribe_url,
+                    publish_url=publish_url,
+                    control_url=control_url,
+                    events_url=events_url,
+                    data_url=data_url,
+                    pipeline=pipeline,
+                    width=width,
+                    height=height,
+                    app_context=self.app_context
                 )
-                
                 success = await handler.start()
                 if success:
                     self.handlers[request_id] = handler
