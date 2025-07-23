@@ -270,29 +270,25 @@ class ComfyStreamTrickleProcessor:
                     continue
                 
                 try:
-                    outputs = await asyncio.wait_for(
-                        self.pipeline.get_multiple_outputs(['video', 'text']), 
-                        timeout=0.1
-                    )
+                    # Get video output
+                    output_tensor = await asyncio.wait_for(self.pipeline.client.get_video_output(), timeout=0.05)
                     if not self.state.is_active:
                         break
 
-                    # Process video output
-                    if outputs.get('video') is not None:
-                        # Convert ComfyUI output back to trickle format
-                        processed_tensor = FrameProcessor.convert_comfy_output_to_trickle(outputs['video'])
-                        dummy_frame = VideoFrame(tensor=processed_tensor, timestamp=0, time_base=Fraction(1, 30))
-                        self.last_processed_frame = dummy_frame
+                    if output_tensor is None:
+                        continue
+                    
+                    processed_tensor = FrameProcessor.convert_comfy_output_to_trickle(output_tensor)
+                    dummy_frame = VideoFrame(tensor=processed_tensor, timestamp=0, time_base=Fraction(1, 30))
+                    self.last_processed_frame = dummy_frame
 
-                    # Process text output if available
-                    if outputs.get('text') is not None:
-                        # Store text output for potential use in control messages or logging
-                        self.last_text_output = outputs['text']
-                        self.data_queue.put_nowait(outputs['text'])
-                        logger.debug(f"Text output received: {outputs['text']}")
+                    # Get text output
+                    text_output = await asyncio.wait_for(self.pipeline.client.get_text_output(), timeout=0.05)
+                    if text_output is not None:
+                        self.data_queue.put_nowait(text_output)
+                        logger.debug(f"Text output received: {text_output}")
                     
                 except asyncio.TimeoutError:
-                    await asyncio.sleep(0.005)
                     continue
                 except asyncio.CancelledError:
                     raise
