@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, Union, List, Optional
 
 from comfystream.client import ComfyStreamClient
-from comfystream.server.utils import temporary_log_level
+from comfystream.server.comfystream_utils.utils import temporary_log_level
 
 WARMUP_RUNS = 5
 
@@ -42,6 +42,10 @@ class Pipeline:
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
+
+    async def initialize(self):
+        """Initialize the pipeline asynchronously."""
+        await self.client.initialize()
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -207,4 +211,23 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        # Clear internal pipeline queues
+        while not self.video_incoming_frames.empty():
+            try:
+                self.video_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
+        while not self.audio_incoming_frames.empty():
+            try:
+                self.audio_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        
+        # Reset processed audio buffer
+        self.processed_audio_buffer = np.array([], dtype=np.int16)
+        
+        # Clean up the ComfyStreamClient
+        await self.client.cleanup()
+        
+        logger.info("Pipeline cleanup completed - all internal state reset") 

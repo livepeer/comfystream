@@ -1,8 +1,9 @@
 import copy
 
 from typing import Dict, Any
-from comfy.api.components.schema.prompt import Prompt, PromptDictInput
 
+from comfy.api.components.schema.prompt import PromptDictInput
+from comfy.api.components.schema.prompt import Prompt, PromptDictInput
 
 def create_load_tensor_node():
     return {

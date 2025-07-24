@@ -88,21 +88,61 @@ pip install git+https://github.com/livepeer/comfystream.git
 
 ### Custom Nodes
 
-Comfystream uses a few auxiliary custom nodes to support running workflows.
+Comfystream uses a few auxiliary custom nodes to support running workflows. **ComfyStream now supports both vanilla custom node loading and installable package loading!**
 
-**Note:** If you are using comfystream as a custom node in ComfyUI, you can skip the following steps.
+#### Method 1: Vanilla Custom Node Loading (Recommended for Development)
 
-If you are using comfystream as a standalone application, copy the auxiliary custom nodes into the `custom_nodes` folder of your ComfyUI workspace:
+If you are using comfystream as a standalone application, copy the individual node files into the `custom_nodes` folder of your ComfyUI workspace:
 
 ```bash
-cp -r nodes/* custom_nodes/
+cp nodes/*.py /path/to/ComfyUI/custom_nodes/
 ```
 
 For example, if your ComfyUI workspace is under `/home/user/ComfyUI`:
 
 ```bash
-cp -r nodes/* /home/user/ComfyUI/custom_nodes
+cp nodes/*.py /home/user/ComfyUI/custom_nodes/
 ```
+
+This method allows ComfyUI to discover and load each node individually.
+
+#### Method 2: Installable Package Loading (Recommended for Production)
+
+If you are using comfystream as a custom node in ComfyUI, install it as a package:
+
+```bash
+# From the comfystream directory
+pip install -e .
+
+# Or install from GitHub
+pip install git+https://github.com/livepeer/comfystream.git
+```
+
+This method uses ComfyUI's entry point system for automatic discovery.
+
+#### Node Files Included
+
+The following custom nodes are available:
+- `load_tensor.py` - LoadTensor node for video frame input
+- `save_tensor.py` - SaveTensor node for video frame output  
+- `load_audio_tensor.py` - LoadAudioTensor node for audio input
+- `save_audio_tensor.py` - SaveAudioTensor node for audio output
+- `pitch_shift.py` - PitchShifter node for audio processing
+- `primary_input_load_image.py` - PrimaryInputLoadImage node for workflow design
+
+#### Pre-Startup Script
+
+ComfyStream includes an intelligent pre-startup script (`prestartup_script.py`) that automatically detects the loading method and runs appropriate initialization:
+
+- **Vanilla Loading**: Automatically runs initialization tasks including:
+  - Creating `__init__.py` files in ComfyUI directories
+  - Setting up environment variables
+  - Configuring Python paths
+  - Initializing vanilla-specific components
+
+- **Package Loading**: Skips initialization since package loading uses entry points
+
+The script runs automatically when ComfyStream is loaded, ensuring proper setup regardless of the loading method used.
 
 ### Usage
 
