@@ -49,9 +49,13 @@ RUN mkdir -p /workspace/comfystream && \
     conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
-RUN conda run -n comfystream python -m pip install --upgrade pip && \
-    conda run -n comfystream python -m pip install wheel && \
-    conda run -n comfystream python -m pip install tensorrt-cu12==10.12.0.36
+RUN conda run -n comfystream --no-capture-output pip install --upgrade pip && \
+    conda run -n comfystream --no-capture-output pip install wheel && \
+    conda run -n comfystream --no-capture-output pip install --upgrade --root-user-action=ignore \
+    tensorrt-cu12==10.12.0.36 \
+    onnx==1.18.0 \
+    onnxruntime==1.22.0 \
+    onnxruntime-gpu==1.22.0
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
@@ -81,9 +85,6 @@ ENV CACHEBUST=${CACHEBUST}
 
 # Run setup_nodes
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
-
-# Install additional dependencies
-RUN conda run -n comfystream --no-capture-output pip install --upgrade tensorrt-cu12-bindings==10.12.0.36 tensorrt-cu12-libs==10.12.0.36 --root-user-action=ignore
 
 # Setup opencv with CUDA support
 RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda
