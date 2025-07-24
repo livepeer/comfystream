@@ -50,8 +50,19 @@ RUN mkdir -p /workspace/comfystream && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
 RUN conda run -n comfystream --no-capture-output pip install --upgrade pip && \
-    conda run -n comfystream --no-capture-output pip install wheel && \
-    conda run -n comfystream --no-capture-output pip install --upgrade --root-user-action=ignore \
+    conda run -n comfystream --no-capture-output pip install wheel
+
+# Install torch with CUDA support
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir --force-reinstall \
+    torch==2.7.1+cu128 \
+    torchvision==0.22.1+cu128 \
+    torchaudio==2.7.1+cu128 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+RUN conda run -n comfystream pip install --no-cache-dir \
+    xformers==0.0.30 --no-deps
+
+RUN conda run -n comfystream --no-capture-output pip install --upgrade --root-user-action=ignore \
     tensorrt-cu12==10.12.0.36 \
     onnx==1.18.0 \
     onnxruntime==1.22.0 \
