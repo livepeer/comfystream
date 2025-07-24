@@ -20,8 +20,10 @@ def prompt_invalid_num_inputs():
 @pytest.fixture
 def prompt_invalid_num_outputs():
     return {
-        "1": {"inputs": {}, "class_type": "PreviewImage"},
-        "2": {"inputs": {}, "class_type": "SaveImage"},
+        "1": {"inputs": {}, "class_type": "LoadImage"},
+        "2": {"inputs": {}, "class_type": "PreviewImage"},
+        "3": {"inputs": {}, "class_type": "SaveImage"},
+        "4": {"inputs": {}, "class_type": "SaveTensor"},
     }
 
 

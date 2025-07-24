@@ -19,6 +19,12 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
         "_meta": {"title": "SaveTensor"},
     }
 
+def create_save_text_tensor_node(inputs: Dict[Any, Any]):
+    return {
+        "inputs": inputs,
+        "class_type": "SaveTextTensor",
+        "_meta": {"title": "SaveTextTensor"},
+    }
 
 def convert_prompt(prompt: PromptDictInput) -> Prompt:
     # Validate the schema
@@ -49,7 +55,7 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
             num_primary_inputs += 1
         elif class_type in ["LoadImage", "LoadTensor", "LoadAudioTensor"]:
             num_inputs += 1
-        elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor"]:
+        elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor", "SaveTextTensor"]:
             num_outputs += 1
 
     # Only handle single primary input
@@ -61,7 +67,8 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
         raise Exception("too many inputs in prompt")
 
     # Only handle single output for now
-    if num_outputs > 1:
+    # Handle video/audio output and text
+    if num_outputs > 2:
         raise Exception("too many outputs in prompt")
 
     if num_primary_inputs + num_inputs == 0:

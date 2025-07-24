@@ -7,3 +7,4 @@ toml
 twilio
 prometheus_client
 librosa
+pydantic

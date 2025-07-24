@@ -148,6 +148,41 @@ Show additional options for configuring the server:
 python server/app.py -h
 ```
 
+**Server Options**
+
+- `--warmup-workflow`: Specify a workflow file name to use for pipeline warmup (e.g., `sd15-tensorrt-api.json`). The workflow file must exist in the `workflows/comfystream/` directory relative to the ComfyStream project root. If not specified, uses the default workflow for warmup.
+- `--skip-warmup`: Skip warming the pipeline on startup (reduces startup time but increases latency for first user)
+
+**Available Warmup Workflows**
+
+The following workflow files are available in `workflows/comfystream/` for use with `--warmup-workflow`:
+
+- `inverted-color-api.json` - Simple color inversion workflow
+- `sd15-tensorrt-api.json` - Stable Diffusion 1.5 with TensorRT optimization
+- `depth-anything-v2-trt-example-api.json` - Depth estimation with TensorRT
+- `tensor-utils-example-api.json` - Basic tensor operations
+- And many others (see `workflows/comfystream/` directory)
+
+Example usage:
+
+```bash
+# Use a specific workflow for warmup
+python server/app.py --workspace <COMFY_WORKSPACE> --warmup-workflow sd15-tensorrt-api.json
+
+# Skip warmup entirely
+python server/app.py --workspace <COMFY_WORKSPACE> --skip-warmup
+```
+
+**How Warmup Works**
+
+The warmup process loads and initializes the specified workflow before the server starts accepting connections. This pre-loads models and optimizes the pipeline, reducing latency for the first user. The warmup workflow should match the type of processing you expect to perform:
+
+- Use `inverted-color-api.json` for simple image processing
+- Use `sd15-tensorrt-api.json` for Stable Diffusion workflows with TensorRT optimization
+- Use `depth-anything-v2-trt-example-api.json` for depth estimation workflows
+
+**Important**: The workflow file must exist in the `workflows/comfystream/` directory relative to the ComfyStream project root. If no warmup workflow is specified, the server uses a default lightweight workflow. If the specified workflow file is not found, the server falls back to the default workflow and logs a warning.
+
 **Remote Setup**
 
 A local server should connect with a local UI out-of-the-box. It is also possible to run a local UI and connect with a remote server, but there may be additional dependencies.

@@ -16,6 +16,9 @@ export function usePeer(props: PeerProps): Peer {
   const [controlChannel, setControlChannel] = useState<RTCDataChannel | null>(
     null,
   );
+  const [textDataChannel, setTextDataChannel] = useState<RTCDataChannel | null>(
+    null,
+  );
 
   const connectionStateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -140,6 +143,38 @@ export function usePeer(props: PeerProps): Peer {
         console.log("Received message on control channel:", event.data);
       };
 
+      // Create text channel for receiving text output
+      const dataChan = pc.createDataChannel("data");
+
+      dataChan.onopen = () => {
+        console.log(
+          "[usePeer] Data channel opened, readyState:",
+          dataChan.readyState,
+        );
+        setTextDataChannel(dataChan);
+      };
+
+      dataChan.onclose = () => {
+        console.log("[usePeer] Data channel closed");
+        setTextDataChannel(null);
+      };
+
+      dataChan.onerror = (error) => {
+        console.error("Data channel error:", error);
+      };
+
+      dataChan.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "data_output") {
+            console.log("Received data output:", message.data);
+            // You can dispatch this to a context or callback for UI consumption
+          }
+        } catch (error) {
+          console.error("Error parsing data message:", error);
+        }
+      };
+
       pc.onicecandidate = async (event) => {
         if (!event.candidate) {
           const offerResponse = await sendOffer(url, pc.localDescription!);
@@ -169,6 +204,7 @@ export function usePeer(props: PeerProps): Peer {
         peerConnection.close();
       }
       setControlChannel(null);
+      setTextDataChannel(null);
       setRemoteStream(null);
       setPeerConnection(null);
     }
@@ -200,5 +236,6 @@ export function usePeer(props: PeerProps): Peer {
     peerConnection,
     remoteStream,
     controlChannel,
+    textDataChannel,
   };
 }

@@ -49,3 +49,9 @@ There are multiple options that can be passed to the Comfystream server. To see 
 ```bash
 docker run --gpus all livepeer/comfystream --help
 ```
+
+**Note**: The server supports a `--warmup-workflow` option to specify a custom workflow file for pipeline warmup. The workflow file must exist in `/workspace/comfystream/workflows/comfystream/` within the container. For example:
+
+```bash
+docker run --gpus all livepeer/comfystream --api --warmup-workflow sd15-tensorrt-api.json
+```

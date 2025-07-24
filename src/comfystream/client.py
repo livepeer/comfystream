@@ -1,5 +1,5 @@
 import asyncio
-from typing import List
+from typing import List, Dict, Any
 import logging
 
 from comfystream import tensor_cache
@@ -21,6 +21,7 @@ class ComfyStreamClient:
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
 
+    # Starts a new task to run frames with prompts - used primarily when starting a new stream
     async def set_prompts(self, prompts: List[PromptDictInput]):
         await self.cancel_running_prompts()
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
@@ -28,6 +29,7 @@ class ComfyStreamClient:
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
 
+    # Updates the existing prompts without starting new tasks
     async def update_prompts(self, prompts: List[PromptDictInput]):
         async with self._prompt_update_lock:
             # TODO: currently under the assumption that only already running prompts are updated
@@ -93,6 +95,9 @@ class ComfyStreamClient:
         while not tensor_cache.audio_outputs.empty():
             await tensor_cache.audio_outputs.get()
 
+        while not tensor_cache.text_outputs.empty():
+            await tensor_cache.text_outputs.get()
+
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():
             tensor_cache.image_inputs.get(block=True)
@@ -102,11 +107,66 @@ class ComfyStreamClient:
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
+        if tensor_cache.image_outputs.empty():
+            return None
+        
         return await tensor_cache.image_outputs.get()
     
     async def get_audio_output(self):
+        if tensor_cache.audio_outputs.empty():
+            return None
+        
         return await tensor_cache.audio_outputs.get()
 
+    async def get_text_output(self):
+        if tensor_cache.text_outputs.empty():
+            return None
+        
+        return await tensor_cache.text_outputs.get()
+    
+    async def get_multiple_outputs(self, output_types: List[str]) -> Dict[str, Any]:
+        """Get multiple outputs of different types in a coordinated way.
+        
+        Args:
+            output_types: List of output types to collect ('video', 'audio', 'text')
+            
+        Returns:
+            Dictionary mapping output types to their values
+        """
+        results = {}
+
+        # Collect outputs in parallel to avoid blocking
+        tasks = []
+        for output_type in output_types:
+            if output_type == 'video':
+                tasks.append(self.get_video_output())
+            elif output_type == 'audio':
+                tasks.append(self.get_audio_output())
+            elif output_type == 'text':
+                tasks.append(self.get_text_output())
+
+        if tasks:
+            # Wait for all outputs with a reasonable timeout
+            try:
+                outputs = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=10.0
+                )
+
+                for i, output_type in enumerate(output_types):
+                    if isinstance(outputs[i], Exception):
+                        logger.error(f"Error getting {output_type} output: {outputs[i]}")
+                        results[output_type] = None
+                    else:
+                        results[output_type] = outputs[i]
+
+            except asyncio.TimeoutError:
+                logger.error("Timeout waiting for multiple outputs")
+                for output_type in output_types:
+                    results[output_type] = None
+
+        return results
+    
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
         # TODO: make it for for multiple prompts
