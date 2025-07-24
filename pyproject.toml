@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "comfystream"
 description = "Build Live AI Video with ComfyUI"
 version = "0.1.2"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "asyncio",
     "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
