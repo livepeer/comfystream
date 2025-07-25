@@ -1,9 +1,12 @@
 asyncio
-comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8
+comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@e034d0bb24b0d23e3c40419c68689464dec67690
 aiortc
 aiohttp
 aiohttp_cors
 toml
+tomli
+websockets
 twilio
 prometheus_client
 librosa
+torchvision
