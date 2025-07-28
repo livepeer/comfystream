@@ -63,8 +63,6 @@ COPY . /workspace/comfystream
 
 RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pip install -r ./src/comfystream/scripts/constraints.txt
 
-RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
-
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
@@ -88,6 +86,8 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream py
 RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda
 
 RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
+
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \
