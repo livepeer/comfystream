@@ -50,12 +50,7 @@ RUN mkdir -p /workspace/comfystream && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
 RUN conda run -n comfystream --no-capture-output pip install --upgrade pip && \
-    conda run -n comfystream --no-capture-output pip install wheel && \
-    conda run -n comfystream --no-capture-output pip install --upgrade --root-user-action=ignore \
-    tensorrt-cu12==10.12.0.36 \
-    onnx==1.18.0 \
-    onnxruntime==1.22.0 \
-    onnxruntime-gpu==1.22.0
+    conda run -n comfystream --no-capture-output pip install wheel
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
@@ -88,6 +83,24 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream py
 
 # Setup opencv with CUDA support
 RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda
+
+# Reinstall torch 2.7.1 with CUDA 12.8 support (patch for torch 2.7.1)
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir --force-reinstall \
+    torch==2.7.1+cu128 \
+    torchvision==0.22.1+cu128 \
+    torchaudio==2.7.1+cu128 \
+    numpy==1.26.3 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# Add constraints here so they are installed at last.
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir \
+    tensorrt-cu12==10.12.0.36 \
+    onnx==1.18.0 \
+    onnxruntime==1.22.0 \
+    onnxruntime-gpu==1.22.0 \
+    onnxmltools==1.14.0 \
+    xformers==0.0.30 \
+    --no-deps
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \
