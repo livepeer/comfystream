@@ -20,7 +20,6 @@ RUN apt update && apt install -yqq --no-install-recommends \
     socat \
     libsndfile1 \
     build-essential \
-    \
     llvm \
     tk-dev \
     libglvnd-dev \
@@ -59,8 +58,15 @@ RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/Comfy
 COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
 COPY ./configs /workspace/comfystream/configs
 
+# Clone ComfyUI
+RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
+
 # Copy ComfyStream files into ComfyUI
 COPY . /workspace/comfystream
+
+RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pip install -r ./src/comfystream/scripts/constraints.txt
+
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
 
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
