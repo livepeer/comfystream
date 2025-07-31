@@ -87,7 +87,7 @@ RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/doc
 
 RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
 
-RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --index-url https://download.pytorch.org/whl/cu128
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \
