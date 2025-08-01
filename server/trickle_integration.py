@@ -129,34 +129,30 @@ class FrameProcessor:
     
     @staticmethod
     def convert_trickle_to_av(frame: VideoFrame) -> av.VideoFrame:
+        """Convert pytrickle VideoFrame to av.VideoFrame."""
         return tensor_to_av_frame(frame.tensor)
     
     @staticmethod
-    def convert_comfy_output_to_trickle(comfy_tensor) -> torch.Tensor:
-        try:
-            tensor = comfy_tensor.squeeze(0) if comfy_tensor.dim() == 4 and comfy_tensor.shape[0] == 1 else comfy_tensor
-            if tensor.max() > 1.0:
-                tensor = tensor / 255.0
-            return torch.clamp(tensor, 0.0, 1.0)
-        except Exception as e:
-            logger.error(f"Error converting ComfyUI output: {e}")
-            return torch.zeros(512, 512, 3)
-
-    @staticmethod
-    def create_processed_frame(processed_tensor: torch.Tensor, original_frame: VideoFrame) -> VideoFrame:
+    def convert_av_to_trickle(av_frame: av.VideoFrame, original_frame: VideoFrame) -> VideoFrame:
+        """Convert av.VideoFrame back to pytrickle VideoFrame with original timing."""
+        # Convert av frame tensor back to normalized float tensor
+        frame_np = av_frame.to_ndarray(format="rgb24").astype(np.float32) / 255.0
+        tensor = torch.from_numpy(frame_np)
+        
         return VideoFrame(
-            tensor=processed_tensor,
+            tensor=tensor,
             timestamp=original_frame.timestamp,
             time_base=original_frame.time_base
         )
 
     @staticmethod
-    def preprocess_for_pipeline(frame: VideoFrame, pipeline: Pipeline) -> av.VideoFrame:
-        av_frame = FrameProcessor.convert_trickle_to_av(frame)
-        preprocessed_tensor = pipeline.video_preprocess(av_frame)
-        av_frame.side_data.input = preprocessed_tensor  # type: ignore
-        av_frame.side_data.skipped = True  # type: ignore
-        return av_frame
+    def create_processed_frame(processed_tensor: torch.Tensor, original_frame: VideoFrame) -> VideoFrame:
+        """Create a processed VideoFrame preserving timing from original."""
+        return VideoFrame(
+            tensor=processed_tensor,
+            timestamp=original_frame.timestamp,
+            time_base=original_frame.time_base
+        )
 
 
 class CleanupManager:
@@ -222,12 +218,21 @@ class ComfyStreamTrickleProcessor:
         self.frame_buffer = FrameBuffer(max_frames=300)
         self.last_processed_frame = None
         self.output_collector_task = None
+        self.frame_input_task = None
         self.processing_lock = asyncio.Lock()
+        
+        # Queue to bridge async pipeline with sync trickle interface
+        self.input_frame_queue = asyncio.Queue(maxsize=10)
+        self.output_frame_queue = asyncio.Queue(maxsize=10)
+        
+        # Frame correlation for timing preservation
+        self.pending_frames = {}  # Maps frame processing order to original trickle frames
         
     async def start_processing(self):
         if self.state.running:
             return
         self.state.start()
+        self.frame_input_task = asyncio.create_task(self._process_input_frames())
         self.output_collector_task = asyncio.create_task(self._collect_outputs())
 
     async def stop_processing(self):
@@ -240,10 +245,15 @@ class ComfyStreamTrickleProcessor:
                 async with self.processing_lock:
                     self.state.mark_cleanup_in_progress()
                     await CleanupManager.cleanup_pipeline_resources(self.pipeline, self.request_id)
+                    await CleanupManager.cancel_task_with_timeout(self.frame_input_task, "Frame input processor", timeout=2.0)
                     await CleanupManager.cancel_task_with_timeout(self.output_collector_task, "Output collector", timeout=2.0)
+                    self.frame_input_task = None
                     self.output_collector_task = None
                     await CleanupManager.cleanup_memory(self.request_id)
         except asyncio.TimeoutError:
+            if self.frame_input_task:
+                self.frame_input_task.cancel()
+                self.frame_input_task = None
             if self.output_collector_task:
                 self.output_collector_task.cancel()
                 self.output_collector_task = None
@@ -252,24 +262,88 @@ class ComfyStreamTrickleProcessor:
         finally:
             self.state.finalize()
             
-    async def _collect_outputs(self):
+    async def _process_input_frames(self):
+        """Process frames from input queue through the pipeline using pipeline.put_video_frame()."""
         try:
+            while self.state.is_active:
+                try:
+                    # Get frame from input queue with timeout
+                    frame_data = await asyncio.wait_for(self.input_frame_queue.get(), timeout=0.1)
+                    if not self.state.is_active:
+                        break
+                    
+                    av_frame, original_frame, frame_id = frame_data
+                    
+                    # Store original frame for timing preservation
+                    self.pending_frames[frame_id] = original_frame
+                    
+                    # Use pipeline to process the frame (this handles preprocessing and client interaction)
+                    await self.pipeline.put_video_frame(av_frame)
+                    
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(0.01)
+                    continue
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error processing input frame: {e}")
+                    await asyncio.sleep(0.1)
+                    continue
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Input processor error for {self.request_id}: {e}")
+            
+    async def _collect_outputs(self):
+        """Collect processed frames from pipeline using pipeline.get_processed_video_frame()."""
+        try:
+            frame_id = 0
             while self.state.is_active:
                 if not self.state.pipeline_ready:
                     await asyncio.sleep(0.1)
                     continue
                 
                 try:
-                    output_tensor = await asyncio.wait_for(self.pipeline.client.get_video_output(), timeout=0.05)
+                    # Use pipeline to get processed frame (this handles client interaction and postprocessing)
+                    processed_av_frame = await asyncio.wait_for(
+                        self.pipeline.get_processed_video_frame(), timeout=0.1
+                    )
                     if not self.state.is_active:
                         break
                     
-                    processed_tensor = FrameProcessor.convert_comfy_output_to_trickle(output_tensor)
-                    dummy_frame = VideoFrame(tensor=processed_tensor, timestamp=0, time_base=Fraction(1, 30))
-                    self.last_processed_frame = dummy_frame
+                    # Get the original trickle frame for timing information
+                    original_frame = self.pending_frames.pop(frame_id, None)
+                    if original_frame is None:
+                        # Create a dummy original frame if we don't have timing info
+                        original_frame = VideoFrame(
+                            tensor=torch.zeros(3, 512, 512), 
+                            timestamp=0, 
+                            time_base=Fraction(1, 30)
+                        )
+                    
+                    # Convert back to trickle format with preserved timing
+                    processed_trickle_frame = FrameProcessor.convert_av_to_trickle(
+                        processed_av_frame, original_frame
+                    )
+                    
+                    # Store the latest processed frame for fallback
+                    self.last_processed_frame = processed_trickle_frame
+                    
+                    # Add to output queue for sync access
+                    try:
+                        self.output_frame_queue.put_nowait(processed_trickle_frame)
+                    except asyncio.QueueFull:
+                        # Remove oldest frame if queue is full
+                        try:
+                            self.output_frame_queue.get_nowait()
+                            self.output_frame_queue.put_nowait(processed_trickle_frame)
+                        except asyncio.QueueEmpty:
+                            pass
+                    
+                    frame_id += 1
                     
                 except asyncio.TimeoutError:
-                    await asyncio.sleep(0.005)
+                    await asyncio.sleep(0.01)
                     continue
                 except asyncio.CancelledError:
                     raise
@@ -295,6 +369,11 @@ class ComfyStreamTrickleProcessor:
             return False
     
     def process_frame_sync(self, frame: VideoFrame) -> VideoOutput:
+        """
+        Synchronous frame processing interface for trickle.
+        Converts trickle frame to av frame and queues it for async processing.
+        Returns the latest processed frame or fallback.
+        """
         try:
             if not self.state.is_active or self.processing_lock.locked():
                 return self._get_fallback_output(frame)
@@ -304,10 +383,31 @@ class ComfyStreamTrickleProcessor:
                 return self._get_fallback_output(frame)
             
             self.frame_count += 1
+            
             try:
-                av_frame = FrameProcessor.preprocess_for_pipeline(frame, self.pipeline)
-                self.pipeline.client.put_video_input(av_frame)
+                # Convert trickle frame to av frame
+                av_frame = FrameProcessor.convert_trickle_to_av(frame)
+                
+                # Queue frame for async processing with frame ID
+                frame_data = (av_frame, frame, self.frame_count)
+                
+                # Try to add to input queue (non-blocking)
+                try:
+                    self.input_frame_queue.put_nowait(frame_data)
+                except asyncio.QueueFull:
+                    # If queue is full, skip this frame but keep processing
+                    logger.debug(f"Input queue full, skipping frame {self.frame_count}")
+                
+                # Try to get latest processed frame (non-blocking)
+                try:
+                    latest_processed = self.output_frame_queue.get_nowait()
+                    self.last_processed_frame = latest_processed
+                except asyncio.QueueEmpty:
+                    # No new processed frame available, use fallback
+                    pass
+                
                 return self._get_fallback_output(frame)
+                
             except Exception as e:
                 logger.error(f"Error processing frame {self.frame_count}: {e}")
                 return self._get_fallback_output(frame)
