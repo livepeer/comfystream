@@ -483,7 +483,7 @@ async def offer(request):
                                 if not request.app.get("pipeline_warmed", {}).get("video", False):
                                     health_manager = request.app["health_manager"]
                                     health_manager.set_pipeline_warming(True)
-                                    await pipeline.warm_video()
+                                    await pipeline.warm_pipeline()
                                     request.app["pipeline_warmed"]["video"] = True
                                     health_manager.set_pipeline_warming(False)
                                     logger.info(f"[Control] Pipeline warmed with new resolution {width}x{height}")
@@ -644,18 +644,19 @@ async def on_startup(app: web.Application) -> None:
         
     
     # Track warming status to avoid redundant warming
-    app["pipeline_warmed"] = {"video": False}
+    app["pipeline_warmed"] = {"video": False, "audio": False}
     
     # Warm up pipeline by default unless explicitly skipped
     if app.get("warm_pipeline", True):
         try:
-            logger.info("Warming up video pipeline on startup...")
+            logger.info("Warming up pipeline on startup (smart warmup)...")
             health_manager.set_pipeline_warming(True)
-            await app["pipeline"].warm_video()
+            await app["pipeline"].warm_pipeline()
             app["pipeline_warmed"]["video"] = True
+            app["pipeline_warmed"]["audio"] = True
             health_manager.set_pipeline_warming(False)
             health_manager.set_pipeline_ready(True)
-            logger.info("Video pipeline warmed up successfully on startup")
+            logger.info("Pipeline warmed up successfully on startup")
         except Exception as e:
             logger.error(f"Error warming up pipeline on startup: {e}")
             health_manager.set_error("Error warming up pipeline on startup")

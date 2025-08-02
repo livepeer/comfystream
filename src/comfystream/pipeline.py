@@ -109,6 +109,31 @@ class Pipeline:
             self.client.put_audio_input(dummy_frame)
             await self.client.get_audio_output()
 
+    async def warm_pipeline(self):
+        """
+        Smart warmup that automatically chooses video or audio warmup based on the current workflow.
+        
+        This method analyzes the loaded prompts to determine if the workflow is audio-focused
+        and calls the appropriate warmup method (warm_audio or warm_video).
+        """
+        from .utils import is_audio_focused_workflow
+        
+        # Check if we have prompts loaded
+        if not hasattr(self, 'prompts') or not self.prompts:
+            logger.warning("No prompts loaded, defaulting to video warmup")
+            await self.warm_video()
+            return
+            
+        # Analyze the first prompt to determine workflow type
+        first_prompt = self.prompts[0] if self.prompts else {}
+        
+        if is_audio_focused_workflow(first_prompt):
+            logger.info("Audio-focused workflow detected, warming audio pipeline")
+            await self.warm_audio()
+        else:
+            logger.info("Video-focused workflow detected, warming video pipeline")
+            await self.warm_video()
+
     def _parse_prompt_data(self, prompt_data: Union[Dict, List[Dict]]) -> List[Dict]:
         """Parse prompt data into a list of prompt dictionaries.
         

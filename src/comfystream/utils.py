@@ -85,3 +85,35 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     prompt = Prompt.validate(prompt)
 
     return prompt
+
+
+def is_audio_focused_workflow(prompt: Dict[Any, Any]) -> bool:
+    """
+    Detect if a workflow is audio-focused by checking for audio processing nodes.
+    
+    A workflow is considered audio-focused if:
+    - It contains LoadAudioTensor or SaveAudioTensor nodes
+    - It doesn't contain video processing nodes (LoadTensor, SaveTensor)
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        True if the workflow is audio-focused, False otherwise
+    """
+    has_audio_nodes = False
+    has_video_nodes = False
+    
+    for node in prompt.values():
+        class_type = node.get("class_type", "")
+        
+        # Check for audio processing nodes
+        if class_type in ["LoadAudioTensor", "SaveAudioTensor"]:
+            has_audio_nodes = True
+            
+        # Check for video processing nodes
+        elif class_type in ["LoadTensor", "SaveTensor", "LoadImage", "SaveImage", "PreviewImage", "PrimaryInputLoadImage"]:
+            has_video_nodes = True
+    
+    # Audio-focused if it has audio nodes and no video nodes
+    return has_audio_nodes and not has_video_nodes
