@@ -43,6 +43,7 @@ class Pipeline:
         self.audio_incoming_frames = asyncio.Queue()
 
         self.processed_audio_buffer = np.array([], dtype=np.int16)
+        self.prompts = []  # Initialize prompts storage for workflow analysis
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
 
@@ -102,8 +103,9 @@ class Pipeline:
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
         dummy_frame = av.AudioFrame()
-        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
-        dummy_frame.sample_rate = 48000
+        # Use 16000Hz to match ComfyUI audio processing expectations
+        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(16000 * 0.5), dtype=np.int16)
+        dummy_frame.sample_rate = 16000
 
         for _ in range(WARMUP_RUNS):
             self.client.put_audio_input(dummy_frame)
@@ -111,12 +113,12 @@ class Pipeline:
 
     async def warm_pipeline(self):
         """
-        Smart warmup that automatically chooses video or audio warmup based on the current workflow.
+        Smart warmup that automatically chooses warmup type based on the current workflow frame requirements.
         
-        This method analyzes the loaded prompts to determine if the workflow is audio-focused
-        and calls the appropriate warmup method (warm_audio or warm_video).
+        This method analyzes the loaded prompts to determine what frame types the workflow requires
+        and calls the appropriate warmup method(s).
         """
-        from .utils import is_audio_focused_workflow
+        from .utils import analyze_workflow_frame_requirements, is_audio_focused_workflow
         
         # Check if we have prompts loaded
         if not hasattr(self, 'prompts') or not self.prompts:
@@ -124,14 +126,19 @@ class Pipeline:
             await self.warm_video()
             return
             
-        # Analyze the first prompt to determine workflow type
+        # Analyze the first prompt to determine workflow frame requirements
         first_prompt = self.prompts[0] if self.prompts else {}
+        frame_requirements = analyze_workflow_frame_requirements(first_prompt)
         
+        logger.info(f"Workflow frame requirements: {frame_requirements}")
+        
+        # For now, use the existing logic for backward compatibility
+        # Future enhancement: support warming multiple frame types
         if is_audio_focused_workflow(first_prompt):
             logger.info("Audio-focused workflow detected, warming audio pipeline")
             await self.warm_audio()
         else:
-            logger.info("Video-focused workflow detected, warming video pipeline")
+            logger.info("Video-focused workflow detected, warming video pipeline") 
             await self.warm_video()
 
     def _parse_prompt_data(self, prompt_data: Union[Dict, List[Dict]]) -> List[Dict]:
@@ -162,6 +169,8 @@ class Pipeline:
             prompts: Either a single prompt dict or list of prompt dicts
         """
         parsed_prompts = self._parse_prompt_data(prompts)
+        # Store the original prompts for workflow analysis (e.g., warmup detection)
+        self.prompts = parsed_prompts
         await self.client.set_prompts(parsed_prompts)
 
     async def update_prompts(self, prompts: Union[Dict, List[Dict]]):
@@ -171,6 +180,8 @@ class Pipeline:
             prompts: Either a single prompt dict or list of prompt dicts
         """
         parsed_prompts = self._parse_prompt_data(prompts)
+        # Store the updated prompts for workflow analysis
+        self.prompts = parsed_prompts
         await self.client.update_prompts(parsed_prompts)
 
     async def put_video_frame(self, frame: av.VideoFrame):

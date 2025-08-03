@@ -87,13 +87,136 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     return prompt
 
 
+# Node type to frame type mapping - extensible and centralized
+NODE_TO_FRAME_TYPE_MAPPING = {
+    # Audio input/output nodes require AudioFrame
+    "LoadAudioTensor": "AudioFrame",
+    "SaveAudioTensor": "AudioFrame",
+    
+    # Video/Image input/output nodes require VideoFrame  
+    "LoadTensor": "VideoFrame",
+    "SaveTensor": "VideoFrame", 
+    "LoadImage": "VideoFrame",
+    "SaveImage": "VideoFrame",
+    "PreviewImage": "VideoFrame",
+    "PrimaryInputLoadImage": "VideoFrame",
+    
+    # Text nodes could work with any frame type but don't require specific input frames
+    "SaveTextTensor": "TextFrame",
+    
+    # Processing nodes that indicate workflow type
+    "PitchShifter": "AudioFrame",  # Audio processing indicates audio workflow
+}
+
+# Nodes that modify audio output (vs just analyzing audio)
+AUDIO_MODIFICATION_NODES = {
+    "SaveAudioTensor",  # Outputs modified audio
+    "PitchShifter",     # Modifies audio pitch
+    # Add other audio modification nodes here
+}
+
+# Nodes that only analyze audio for other outputs (text, etc.)
+AUDIO_ANALYSIS_NODES = {
+    "LoadAudioTensor",  # Reads audio for analysis
+    # Add other audio analysis nodes here
+}
+
+def analyze_workflow_frame_requirements(prompt: Dict[Any, Any]) -> Dict[str, bool]:
+    """
+    Analyze a workflow to determine what frame types are required.
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        Dictionary with frame types as keys and boolean values indicating if required
+        e.g., {"AudioFrame": True, "VideoFrame": False, "TextFrame": False}
+    """
+    frame_requirements = {
+        "AudioFrame": False,
+        "VideoFrame": False, 
+        "TextFrame": False
+    }
+    
+    for node in prompt.values():
+        class_type = node.get("class_type", "")
+        required_frame_type = NODE_TO_FRAME_TYPE_MAPPING.get(class_type)
+        
+        if required_frame_type and required_frame_type in frame_requirements:
+            frame_requirements[required_frame_type] = True
+    
+    return frame_requirements
+
+def has_audio_modification_nodes(prompt: Dict[Any, Any]) -> bool:
+    """
+    Check if a workflow has nodes that modify audio output.
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        True if the workflow has audio modification nodes, False otherwise
+    """
+    for node in prompt.values():
+        class_type = node.get("class_type", "")
+        if class_type in AUDIO_MODIFICATION_NODES:
+            return True
+    return False
+
+def has_audio_analysis_nodes(prompt: Dict[Any, Any]) -> bool:
+    """
+    Check if a workflow has nodes that analyze audio for other outputs.
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        True if the workflow has audio analysis nodes, False otherwise
+    """
+    for node in prompt.values():
+        class_type = node.get("class_type", "")
+        if class_type in AUDIO_ANALYSIS_NODES:
+            return True
+    return False
+
+def is_audio_modification_workflow(prompt: Dict[Any, Any]) -> bool:
+    """
+    Detect if a workflow modifies audio (vs just analyzing it).
+    
+    A workflow is considered audio-modification if:
+    - It has audio modification nodes (SaveAudioTensor, PitchShifter, etc.)
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        True if the workflow modifies audio, False otherwise
+    """
+    return has_audio_modification_nodes(prompt)
+
+def is_audio_analysis_workflow(prompt: Dict[Any, Any]) -> bool:
+    """
+    Detect if a workflow only analyzes audio without modifying it.
+    
+    A workflow is considered audio-analysis if:
+    - It has audio analysis nodes (LoadAudioTensor)
+    - It doesn't have audio modification nodes (SaveAudioTensor, PitchShifter, etc.)
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        True if the workflow only analyzes audio, False otherwise
+    """
+    return has_audio_analysis_nodes(prompt) and not has_audio_modification_nodes(prompt)
+
 def is_audio_focused_workflow(prompt: Dict[Any, Any]) -> bool:
     """
     Detect if a workflow is audio-focused by checking for audio processing nodes.
     
     A workflow is considered audio-focused if:
-    - It contains LoadAudioTensor or SaveAudioTensor nodes
-    - It doesn't contain video processing nodes (LoadTensor, SaveTensor)
+    - It contains audio processing nodes (requiring AudioFrame)
+    - It doesn't contain video processing nodes (requiring VideoFrame)
     
     Args:
         prompt: The workflow prompt dictionary
@@ -101,19 +224,7 @@ def is_audio_focused_workflow(prompt: Dict[Any, Any]) -> bool:
     Returns:
         True if the workflow is audio-focused, False otherwise
     """
-    has_audio_nodes = False
-    has_video_nodes = False
+    frame_requirements = analyze_workflow_frame_requirements(prompt)
     
-    for node in prompt.values():
-        class_type = node.get("class_type", "")
-        
-        # Check for audio processing nodes
-        if class_type in ["LoadAudioTensor", "SaveAudioTensor"]:
-            has_audio_nodes = True
-            
-        # Check for video processing nodes
-        elif class_type in ["LoadTensor", "SaveTensor", "LoadImage", "SaveImage", "PreviewImage", "PrimaryInputLoadImage"]:
-            has_video_nodes = True
-    
-    # Audio-focused if it has audio nodes and no video nodes
-    return has_audio_nodes and not has_video_nodes
+    # Audio-focused if it requires audio frames and doesn't require video frames
+    return frame_requirements["AudioFrame"] and not frame_requirements["VideoFrame"]
