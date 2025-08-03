@@ -438,14 +438,22 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                     if not self.state.is_active:
                         break
                     
-                    logger.debug(f"Got text output: {text_output[:100]}...")
+                    logger.debug(f"Retrieved text from cache: {text_output[:50]}... (length: {len(text_output)})")
+                    
+                    # Filter out warmup sentinel values from actual publishing
+                    is_sentinel = "__WARMUP_SENTINEL__" in text_output if text_output else False
+                    if is_sentinel:
+                        logger.debug("Filtered out warmup sentinel from publishing")
+                        continue
+                    
                     # Text outputs will be handled by TrickleStreamHandler
                     # Store in a way that the handler can access it
                     if hasattr(self, '_text_output_callback') and self._text_output_callback:
                         try:
                             await self._text_output_callback(text_output)
+                            logger.info(f"✅ Published text to data channel (length: {len(text_output)} chars): '{text_output[:100]}...'")
                         except Exception as e:
-                            logger.error(f"Error in text output callback: {e}")
+                            logger.error(f"Error publishing text to data channel: {e}")
                     
                 except asyncio.TimeoutError:
                     await asyncio.sleep(0.01)

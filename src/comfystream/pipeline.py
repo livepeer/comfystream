@@ -100,25 +100,116 @@ class Pipeline:
                 await asyncio.sleep(1.0)
                 continue
 
-    async def warm_audio(self):
-        """Warm up the audio processing pipeline with dummy frames."""
+    async def warm_audio_workflow(self, output_types: Dict[str, bool] = None):
+        """
+        Warm up audio processing workflows with intelligent output detection.
+        
+        Args:
+            output_types: Dictionary indicating what output types the workflow produces
+        """
+        # Determine what output to wait for based on workflow analysis
+        if output_types is None:
+            output_types = {"audio_output": True, "video_output": False, "text_output": False}
+        
+        # Detect if this is a transcription workflow that needs longer buffering
+        is_transcription_workflow = output_types.get("text_output", False)
+        
+        # Transcription workflows (like AudioTranscriptionNode) need 4+ seconds to fill buffer
+        # Send enough audio data to fill the buffer and trigger first transcription
+        frame_duration = 1.5  # seconds per frame
+        warmup_runs = 4  # Send 6 seconds total (4 × 1.5s) to fill 4s buffer + overlap
+        timeout_per_frame = 10.0  # Reasonable timeout for 4s buffer workflows
+        
+        frame_samples = int(16000 * frame_duration)
+        total_audio_duration = warmup_runs * frame_duration
+        
         dummy_frame = av.AudioFrame()
-        # Use 16000Hz to match ComfyUI audio processing expectations
-        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(16000 * 0.5), dtype=np.int16)
+        dummy_frame.side_data.input = np.random.randint(-32768, 32767, frame_samples, dtype=np.int16)
         dummy_frame.sample_rate = 16000
 
-        for _ in range(WARMUP_RUNS):
-            self.client.put_audio_input(dummy_frame)
-            await self.client.get_audio_output()
+        logger.info(f"Starting audio workflow warmup with {warmup_runs} frames ({frame_duration}s each, {total_audio_duration}s total audio)...")
+        logger.info(f"Expected output types: {output_types}")
+        
+        # For transcription workflows, send frames quickly to fill buffer before waiting
+        if is_transcription_workflow:
+            logger.info(f"Sending {warmup_runs} frames quickly to fill transcription buffer...")
+            # Send all frames first to fill the buffer
+            for i in range(warmup_runs):
+                logger.debug(f"Sending audio frame {i+1}/{warmup_runs}")
+                self.client.put_audio_input(dummy_frame)
+                await asyncio.sleep(0.1)  # Small delay between sends
+            
+            # Now wait for transcription outputs (buffer should be full)
+            logger.info("Buffer filled, waiting for transcription outputs...")
+            successful_outputs = 0
+            for attempt in range(3):  # Try to get a few outputs to confirm it's working
+                try:
+                    output = await asyncio.wait_for(self.client.get_text_output(), timeout=timeout_per_frame)
+                    # Accept both actual transcription and sentinel values as success
+                    is_sentinel = "__WARMUP_SENTINEL__" in output if output else False
+                    if output and (output.strip() or is_sentinel):
+                        if is_sentinel:
+                            logger.debug(f"Transcription warmup output {attempt+1}: sentinel (model working, no speech detected)")
+                        else:
+                            logger.debug(f"Transcription warmup output {attempt+1}: {output[:50] if output else 'empty'}...")
+                        successful_outputs += 1
+                        if successful_outputs >= 1:  # Even 1 output (including sentinel) means warmup worked
+                            break
+                    else:
+                        logger.debug(f"Transcription warmup output {attempt+1}: empty, continuing...")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Transcription warmup attempt {attempt+1} timed out after {timeout_per_frame}s")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Transcription warmup attempt {attempt+1} failed: {e}")
+                    continue
+            
+            if successful_outputs > 0:
+                logger.info(f"Transcription warmup successful ({successful_outputs} outputs received)")
+            else:
+                logger.warning("Transcription warmup completed but no outputs received")
+        else:
+            # Regular audio workflows - send one frame at a time and wait
+            for i in range(warmup_runs):
+                logger.debug(f"Audio workflow warmup frame {i+1}/{warmup_runs}")
+                self.client.put_audio_input(dummy_frame)
+                
+                try:
+                    if output_types.get("audio_output", False):
+                        # Wait for audio output (e.g., audio modification workflows)
+                        output = await asyncio.wait_for(self.client.get_audio_output(), timeout=timeout_per_frame)
+                        logger.debug(f"Audio workflow warmup frame {i+1} processed (audio output) successfully")
+                    elif output_types.get("video_output", False):
+                        # Wait for video output (e.g., audio-to-video workflows)
+                        output = await asyncio.wait_for(self.client.get_video_output(), timeout=timeout_per_frame)
+                        logger.debug(f"Audio workflow warmup frame {i+1} processed (video output) successfully")
+                    else:
+                        # Fallback to audio output for backward compatibility
+                        logger.warning(f"No specific output type detected, falling back to audio output")
+                        output = await asyncio.wait_for(self.client.get_audio_output(), timeout=timeout_per_frame)
+                        logger.debug(f"Audio workflow warmup frame {i+1} processed (fallback audio output) successfully")
+                        
+                except asyncio.TimeoutError:
+                    logger.warning(f"Audio workflow warmup frame {i+1} timed out after {timeout_per_frame}s, continuing...")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Audio workflow warmup frame {i+1} failed: {e}, continuing...")
+                    continue
+        
+        logger.info("Audio workflow warmup completed")
+
+    async def warm_audio(self):
+        """Legacy audio warmup method for backward compatibility."""
+        await self.warm_audio_workflow({"audio_output": True, "video_output": False, "text_output": False})
 
     async def warm_pipeline(self):
         """
-        Smart warmup that automatically chooses warmup type based on the current workflow frame requirements.
+        Smart warmup that automatically chooses warmup type based on the current workflow frame requirements and output types.
         
         This method analyzes the loaded prompts to determine what frame types the workflow requires
-        and calls the appropriate warmup method(s).
+        and what output types it produces, then calls the appropriate warmup method(s).
         """
-        from .utils import analyze_workflow_frame_requirements, is_audio_focused_workflow
+        from .utils import analyze_workflow_frame_requirements, analyze_workflow_output_types, is_audio_focused_workflow
         
         # Check if we have prompts loaded
         if not hasattr(self, 'prompts') or not self.prompts:
@@ -126,17 +217,18 @@ class Pipeline:
             await self.warm_video()
             return
             
-        # Analyze the first prompt to determine workflow frame requirements
+        # Analyze the first prompt to determine workflow frame requirements and output types
         first_prompt = self.prompts[0] if self.prompts else {}
         frame_requirements = analyze_workflow_frame_requirements(first_prompt)
+        output_types = analyze_workflow_output_types(first_prompt)
         
         logger.info(f"Workflow frame requirements: {frame_requirements}")
+        logger.info(f"Workflow output types: {output_types}")
         
-        # For now, use the existing logic for backward compatibility
-        # Future enhancement: support warming multiple frame types
+        # Choose warmup strategy based on input and output analysis
         if is_audio_focused_workflow(first_prompt):
-            logger.info("Audio-focused workflow detected, warming audio pipeline")
-            await self.warm_audio()
+            logger.info("Audio-focused workflow detected, warming audio pipeline with intelligent output detection")
+            await self.warm_audio_workflow(output_types)
         else:
             logger.info("Video-focused workflow detected, warming video pipeline") 
             await self.warm_video()
@@ -227,7 +319,25 @@ class Pipeline:
         Returns:
             The preprocessed frame as a tensor or numpy array
         """
-        return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
+        # Convert frame to numpy array
+        audio_data = frame.to_ndarray()
+        
+        # Handle different channel configurations
+        if audio_data.ndim == 1:
+            # Already mono - return as is
+            return audio_data.astype(np.int16)
+        elif audio_data.ndim == 2:
+            # Multi-channel audio - determine layout
+            if audio_data.shape[0] < audio_data.shape[1]:
+                # Shape is (channels, samples) - take mean across channels
+                return audio_data.mean(axis=0).astype(np.int16)
+            else:
+                # Shape is (samples, channels) - take mean across channels
+                return audio_data.mean(axis=1).astype(np.int16)
+        else:
+            # Flatten complex layouts and return first portion
+            flattened = audio_data.ravel()
+            return flattened.astype(np.int16)
     
     def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
         """Postprocess a video frame after processing.

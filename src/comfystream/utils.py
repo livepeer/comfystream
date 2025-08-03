@@ -47,7 +47,7 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
         # Count inputs and outputs
         if class_type == "PrimaryInputLoadImage":
             num_primary_inputs += 1
-        elif class_type in ["LoadImage", "LoadTensor", "LoadAudioTensor"]:
+        elif class_type in ["LoadImage", "LoadTensor", "LoadAudioTensor", "LoadAudioTensorStream"]:
             num_inputs += 1
         elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor", "SaveTextTensor"]:
             num_outputs += 1
@@ -92,6 +92,7 @@ NODE_TO_FRAME_TYPE_MAPPING = {
     # Audio input/output nodes require AudioFrame
     "LoadAudioTensor": "AudioFrame",
     "SaveAudioTensor": "AudioFrame",
+    "LoadAudioTensorStream": "AudioFrame",
     
     # Video/Image input/output nodes require VideoFrame  
     "LoadTensor": "VideoFrame",
@@ -118,6 +119,7 @@ AUDIO_MODIFICATION_NODES = {
 # Nodes that only analyze audio for other outputs (text, etc.)
 AUDIO_ANALYSIS_NODES = {
     "LoadAudioTensor",  # Reads audio for analysis
+    "LoadAudioTensorStream",  # Reads audio for analysis
     # Add other audio analysis nodes here
 }
 
@@ -146,6 +148,40 @@ def analyze_workflow_frame_requirements(prompt: Dict[Any, Any]) -> Dict[str, boo
             frame_requirements[required_frame_type] = True
     
     return frame_requirements
+
+def analyze_workflow_output_types(prompt: Dict[Any, Any]) -> Dict[str, bool]:
+    """
+    Analyze a workflow to determine what output types it produces.
+    
+    Args:
+        prompt: The workflow prompt dictionary
+        
+    Returns:
+        Dictionary with output types as keys and boolean values indicating if produced
+        e.g., {"audio_output": True, "video_output": False, "text_output": True}
+    """
+    output_types = {
+        "audio_output": False,
+        "video_output": False,
+        "text_output": False
+    }
+    
+    # Define nodes that produce specific output types
+    audio_output_nodes = {"SaveAudioTensor"}
+    video_output_nodes = {"SaveImageTensor", "SaveTensor"}  
+    text_output_nodes = {"SaveTextTensor", "SRTGeneratorNode"}
+    
+    for node in prompt.values():
+        class_type = node.get("class_type", "")
+        
+        if class_type in audio_output_nodes:
+            output_types["audio_output"] = True
+        elif class_type in video_output_nodes:
+            output_types["video_output"] = True
+        elif class_type in text_output_nodes:
+            output_types["text_output"] = True
+    
+    return output_types
 
 def has_audio_modification_nodes(prompt: Dict[Any, Any]) -> bool:
     """
