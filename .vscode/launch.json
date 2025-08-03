@@ -32,7 +32,7 @@
                 "--host=0.0.0.0",
                 "--port=8889",
                 "--log-level=DEBUG",
-                "--warmup-workflow=audio-passthrough.json"
+                "--warmup-workflow=audio-transcription-srt-optimized.json"
             ],
             "python": "/workspace/miniconda3/envs/comfystream/bin/python"
         },

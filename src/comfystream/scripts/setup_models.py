@@ -107,14 +107,15 @@ def setup_directories(workspace_dir):
         models_dir = models_dir.resolve()
 
     # Create model subdirectories
-    model_dirs = [
-        "checkpoints/SD1.5",
-        "controlnet",
-        "vae",
-        "tensorrt",
-        "unet",
-        "LLM",
-    ]
+        model_dirs = [
+            "checkpoints/SD1.5",
+            "controlnet",
+            "vae",
+            "tensorrt",
+            "unet",
+            "LLM",
+            "whisper",
+        ]
     for dir_name in model_dirs:
         subdir = models_dir / dir_name
         subdir.mkdir(parents=True, exist_ok=True)
