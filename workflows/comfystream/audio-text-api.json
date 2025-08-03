@@ -1,0 +1,34 @@
+{
+  "1": {
+    "inputs": {
+      "buffer_size": 500.5
+    },
+    "class_type": "LoadAudioTensor",
+    "_meta": {
+      "title": "Load Audio Tensor"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveTextTensor",
+    "_meta": {
+      "title": "SaveTextTensor"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "Hello from comfystream",
+      "strip_whitespace": true,
+      "remove_empty_lines": false
+    },
+    "class_type": "MultilineText",
+    "_meta": {
+      "title": "Multiline Text"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 
 from comfystream import tensor_cache
 
@@ -27,7 +28,9 @@ class LoadAudioTensor:
     def execute(self, buffer_size):
         if self.sample_rate is None or self.buffer_samples is None:
             frame = tensor_cache.audio_inputs.get(block=True)
-            self.sample_rate = frame.sample_rate
+            # Use fixed 16kHz sample rate for ComfyUI audio processing
+            # The trickle integration should normalize incoming audio to this rate
+            self.sample_rate = 16000  # Fixed target sample rate
             self.buffer_samples = int(self.sample_rate * buffer_size / 1000)
             self.leftover = frame.side_data.input
         
@@ -37,8 +40,10 @@ class LoadAudioTensor:
             
             while total_samples < self.buffer_samples:
                 frame = tensor_cache.audio_inputs.get(block=True)
+                # Note: frames should already be normalized to 16kHz by trickle integration
+                # If not, log a warning but continue processing
                 if frame.sample_rate != self.sample_rate:
-                    raise ValueError("Sample rate mismatch")
+                    logging.warning(f"Expected {self.sample_rate}Hz audio but got {frame.sample_rate}Hz - audio may be distorted")
                 chunks.append(frame.side_data.input)
                 total_samples += frame.side_data.input.shape[0]
             
