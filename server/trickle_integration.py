@@ -249,6 +249,18 @@ class CleanupManager:
                                 cleared += 1
                             except:
                                 break
+                    # Clear text outputs cache as well
+                    async def clear_text_outputs():
+                        while not tensor_cache.text_outputs.empty():
+                            try:
+                                await tensor_cache.text_outputs.get()
+                            except:
+                                break
+                    try:
+                        import asyncio
+                        asyncio.create_task(clear_text_outputs())
+                    except:
+                        pass
                     return cleared
                 await asyncio.to_thread(clear_caches)
                 return True
@@ -267,6 +279,7 @@ class ComfyStreamTrickleProcessor:
         self.last_processed_frame = None
         self.output_collector_task = None
         self.frame_input_task = None
+        self.text_streaming_task = None
         self.processing_lock = asyncio.Lock()
         
         # Queue to bridge async pipeline with sync trickle interface
@@ -282,6 +295,8 @@ class ComfyStreamTrickleProcessor:
         self.state.start()
         self.frame_input_task = asyncio.create_task(self._process_input_frames())
         self.output_collector_task = asyncio.create_task(self._collect_outputs())
+        # Start text streaming task for audio->text workflows
+        self.text_streaming_task = asyncio.create_task(self._stream_text_outputs())
 
     async def stop_processing(self):
         if not self.state.running:
@@ -295,8 +310,10 @@ class ComfyStreamTrickleProcessor:
                     await CleanupManager.cleanup_pipeline_resources(self.pipeline, self.request_id)
                     await CleanupManager.cancel_task_with_timeout(self.frame_input_task, "Frame input processor", timeout=2.0)
                     await CleanupManager.cancel_task_with_timeout(self.output_collector_task, "Output collector", timeout=2.0)
+                    await CleanupManager.cancel_task_with_timeout(self.text_streaming_task, "Text streaming", timeout=2.0)
                     self.frame_input_task = None
                     self.output_collector_task = None
+                    self.text_streaming_task = None
                     await CleanupManager.cleanup_memory(self.request_id)
         except asyncio.TimeoutError:
             if self.frame_input_task:
@@ -305,6 +322,9 @@ class ComfyStreamTrickleProcessor:
             if self.output_collector_task:
                 self.output_collector_task.cancel()
                 self.output_collector_task = None
+            if self.text_streaming_task:
+                self.text_streaming_task.cancel()
+                self.text_streaming_task = None
         except Exception as e:
             logger.error(f"Error during stop processing for {self.request_id}: {e}")
         finally:
@@ -412,6 +432,49 @@ class ComfyStreamTrickleProcessor:
             raise
         except Exception as e:
             logger.error(f"Output collector error for {self.request_id}: {e}")
+
+    async def _stream_text_outputs(self):
+        """Stream text outputs from the pipeline when they become available."""
+        try:
+            while self.state.is_active:
+                if not self.state.pipeline_ready:
+                    await asyncio.sleep(0.1)
+                    continue
+                
+                try:
+                    # Wait for text output with timeout
+                    text_output = await asyncio.wait_for(
+                        self.pipeline.get_text_output(), timeout=0.1
+                    )
+                    if not self.state.is_active:
+                        break
+                    
+                    logger.debug(f"Got text output: {text_output[:100]}...")
+                    # Text outputs will be handled by TrickleStreamHandler
+                    # Store in a way that the handler can access it
+                    if hasattr(self, '_text_output_callback') and self._text_output_callback:
+                        try:
+                            await self._text_output_callback(text_output)
+                        except Exception as e:
+                            logger.error(f"Error in text output callback: {e}")
+                    
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(0.01)
+                    continue
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"No text output available: {e}")
+                    await asyncio.sleep(0.1)
+                    continue
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Text streaming error for {self.request_id}: {e}")
+            
+    def set_text_output_callback(self, callback):
+        """Set callback for handling text outputs."""
+        self._text_output_callback = callback
             
     async def set_pipeline_ready(self):
         if self.state.pipeline_ready:
@@ -560,11 +623,12 @@ class TrickleStreamHandler:
     
     def __init__(self, subscribe_url: str, publish_url: str, control_url: str, events_url: str,
                  request_id: str, pipeline: Pipeline, width: int = 512, height: int = 512,
-                 app_context: Optional[Dict] = None):
+                 data_url: Optional[str] = None, app_context: Optional[Dict] = None):
         self.subscribe_url = subscribe_url
         self.publish_url = publish_url
         self.control_url = control_url
         self.events_url = events_url
+        self.data_url = data_url
         self.request_id = request_id
         self.pipeline = pipeline
         self.width = width
@@ -575,7 +639,7 @@ class TrickleStreamHandler:
         
         self.protocol = TrickleProtocol(
             subscribe_url=subscribe_url, publish_url=publish_url, control_url=control_url,
-            events_url=events_url, width=width, height=height, error_callback=self._on_error
+            events_url=events_url, data_url=data_url, width=width, height=height, error_callback=self._on_error
         )
         
         self.client = TrickleClient(
@@ -607,6 +671,15 @@ class TrickleStreamHandler:
             await self.client.protocol.emit_monitoring_event(data, event_type)
         except Exception as e:
             logger.warning(f"Failed to emit {event_type} event for {self.request_id}: {e}")
+    
+    async def _publish_data(self, text_data: str):
+        """Publish text data via the data channel."""
+        if not self.data_url:
+            return
+        try:
+            await self.client.publish_data(text_data)
+        except Exception as e:
+            logger.warning(f"Failed to publish data for {self.request_id}: {e}")
     
     async def _on_error(self, error_type: str, exception: Optional[Exception] = None):
         if self.shutdown_event.is_set():
@@ -697,6 +770,8 @@ class TrickleStreamHandler:
             return False
         
         try:
+            # Set up text output callback before starting processing
+            self.processor.set_text_output_callback(self._publish_data)
             await self.processor.start_processing()
             await self._emit_monitoring_event({"type": "stream_started", "request_id": self.request_id}, "stream_trace")
             
@@ -831,7 +906,7 @@ class TrickleStreamManager:
     
     async def create_stream(self, request_id: str, subscribe_url: str, publish_url: str,
                           control_url: str, events_url: str, pipeline: Pipeline,
-                          width: int = 512, height: int = 512) -> bool:
+                          width: int = 512, height: int = 512, data_url: Optional[str] = None) -> bool:
         async with self.lock:
             if request_id in self.handlers:
                 return False
@@ -848,7 +923,7 @@ class TrickleStreamManager:
                     subscribe_url=subscribe_url, publish_url=publish_url,
                     control_url=control_url, events_url=events_url,
                     request_id=request_id, pipeline=pipeline,
-                    width=width, height=height, app_context=self.app_context
+                    width=width, height=height, data_url=data_url, app_context=self.app_context
                 )
                 
                 success = await handler.start()

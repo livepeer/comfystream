@@ -1,0 +1,18 @@
+graph TD
+    A["Audio Input"] --> B["LoadAudioTensor Node"]
+    B --> C["Audio Processing Workflow<br/>(e.g., Whisper transcription)"]
+    C --> D["SaveTextTensor Node"]
+    D --> E["tensor_cache.text_outputs<br/>(AsyncQueue)"]
+    
+    F["ComfyStreamTrickleProcessor"] --> G["_stream_text_outputs() task"]
+    G --> H["pipeline.get_text_output()"]
+    H --> E
+    G --> I["text_output_callback"]
+    I --> J["TrickleStreamHandler._publish_data()"]
+    J --> K["TrickleClient.publish_data()"]
+    K --> L["TrickleProtocol.data_publisher"]
+    L --> M["Data Channel Output<br/>(text/JSON via Trickle)"]
+    
+    style E fill:#e1f5fe
+    style G fill:#fff3e0
+    style M fill:#e8f5e8

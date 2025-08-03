@@ -290,6 +290,17 @@ class Pipeline:
         
         return processed_frame
     
+    async def get_text_output(self) -> str:
+        """Get the next text output from SaveTextTensor nodes.
+        
+        This method is non-blocking and independent from video/audio processing.
+        It directly retrieves text data stored by SaveTextTensor nodes in workflows.
+        
+        Returns:
+            The text string output
+        """
+        return await self.client.get_text_output()
+    
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
         
