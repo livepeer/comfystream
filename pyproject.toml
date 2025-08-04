@@ -10,7 +10,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "asyncio",
     "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
-    "pytrickle @ git+https://github.com/livepeer/pytrickle.git@b55469a025737034e90f830ef88296d109495db9",
+    "pytrickle @ git+https://github.com/livepeer/pytrickle.git@c9e1b6440243a467c1e4b5662207a64350a85a48",
     "aiortc",
     "aiohttp",
     "aiohttp_cors",
