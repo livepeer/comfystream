@@ -332,8 +332,6 @@ async def health_check(request):
         )
         return web.json_response(response_data.model_dump(), status=500)
 
-
-
 async def root_info(request):
     """Root endpoint with service info (webrtc-worker compatible)."""
     try:

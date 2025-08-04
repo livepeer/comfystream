@@ -9,7 +9,6 @@ show_help() {
   echo ""
   echo "Options:"
   echo "  --use-volume     Initialize persistent volume mount"
-  echo "  --use-volume     Initialize persistent volume mount"
   echo "  --download-models       Download default models"
   echo "  --build-engines         Build TensorRT engines for default models"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
