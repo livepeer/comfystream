@@ -13,10 +13,14 @@ import json
 from fractions import Fraction
 from typing import Optional, Callable, Dict, Any, Deque, Union, List
 from collections import deque
-from pytrickle import TrickleClient, VideoFrame, VideoOutput, TrickleSubscriber, TricklePublisher
-from pytrickle import TrickleProtocol, AudioFrame, AudioOutput
-from pytrickle.tensors import tensor_to_av_frame
+from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber, TricklePublisher
+from pytrickle.frames import (
+    VideoFrame, AudioFrame, VideoOutput, AudioOutput,
+    FrameProcessor, FrameConversionMixin, tensor_to_av_frame,
+    FrameBuffer, StreamState, StreamErrorHandler, StreamingUtils
+)
 from comfystream.pipeline import Pipeline
+from pytrickle.manager import BaseStreamManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,198 +30,22 @@ logger = logging.getLogger(__name__)
 PROCESS_AUDIO_THROUGH_PIPELINE = False
 
 
-class FrameBuffer:
-    """Rolling frame buffer that keeps a fixed number of frames."""
-    
-    def __init__(self, max_frames: int = 300):
-        self.max_frames = max_frames
-        self.frames: Deque[Union[VideoFrame, AudioFrame]] = deque(maxlen=max_frames)
-        self.total_frames_received = 0
-        self.total_frames_discarded = 0
-        
-    def add_frame(self, frame: Union[VideoFrame, AudioFrame]):
-        if len(self.frames) >= self.max_frames:
-            self.total_frames_discarded += 1
-        self.frames.append(frame)
-        self.total_frames_received += 1
-        
-    def get_frame(self) -> Optional[Union[VideoFrame, AudioFrame]]:
-        return self.frames.popleft() if self.frames else None
-        
-    def get_all_frames(self) -> List[Union[VideoFrame, AudioFrame]]:
-        frames = list(self.frames)
-        self.frames.clear()
-        return frames
-        
-    def clear(self):
-        self.frames.clear()
-        
-    def size(self) -> int:
-        return len(self.frames)
-        
-    def get_stats(self) -> Dict[str, int]:
-        return {
-            "current_frames": len(self.frames),
-            "max_frames": self.max_frames,
-            "total_received": self.total_frames_received,
-            "total_discarded": self.total_frames_discarded
-        }
+# These utilities have been moved to pytrickle.frames for better reusability:
+# - FrameBuffer: Rolling frame buffer for VideoFrame/AudioFrame
+# - StreamState: Unified state management for stream lifecycle  
+# - StreamErrorHandler: Centralized error handling
+# - StreamingUtils: Generic async utilities
 
 
-class StreamState:
-    """Unified state management for stream lifecycle."""
-    
-    def __init__(self):
-        self.running = False
-        self.pipeline_ready = False
-        self.shutting_down = False
-        self.error_occurred = False
-        self.cleanup_in_progress = False
-        
-        self.running_event = asyncio.Event()
-        self.shutdown_event = asyncio.Event()
-        self.error_event = asyncio.Event()
-        self.pipeline_ready_event = asyncio.Event()
-    
-    @property
-    def is_active(self) -> bool:
-        return self.running and not self.shutting_down and not self.error_occurred
-    
-    @property
-    def shutdown_flags(self) -> Dict[str, bool]:
-        return {
-            'shutdown_event': self.shutdown_event.is_set(),
-            'cleanup_in_progress': self.cleanup_in_progress
-        }
-    
-    def start(self):
-        self.running = True
-        self.running_event.set()
-    
-    def mark_pipeline_ready(self):
-        self.pipeline_ready = True
-        self.pipeline_ready_event.set()
-    
-    def initiate_shutdown(self, due_to_error: bool = False):
-        self.shutting_down = True
-        self.shutdown_event.set()
-        if due_to_error:
-            self.error_occurred = True
-            self.error_event.set()
-    
-    def mark_cleanup_in_progress(self):
-        self.cleanup_in_progress = True
-    
-    def finalize(self):
-        self.running = False
-        self.running_event.clear()
-
-
-class ErrorHandler:
-    """Centralized error handling."""
-    
-    @staticmethod
-    def log_error(error_type: str, exception: Optional[Exception], request_id: str, critical: bool = False):
-        level = logger.error if critical else logger.warning
-        msg = f"{error_type} for stream {request_id}"
-        if exception:
-            msg += f": {exception}"
-        level(msg)
-
-    @staticmethod
-    def is_shutdown_error(shutdown_flags: Dict) -> bool:
-        return shutdown_flags.get('shutdown_event', False) or shutdown_flags.get('cleanup_in_progress', False)
-
-
-class FrameProcessor:
-    """Frame conversion and processing logic."""
-    
-    @staticmethod
-    def convert_trickle_to_av(frame: VideoFrame) -> av.VideoFrame:
-        """Convert pytrickle VideoFrame to av.VideoFrame."""
-        return tensor_to_av_frame(frame.tensor)
-    
-    @staticmethod
-    def convert_av_to_trickle(av_frame: av.VideoFrame, original_frame: VideoFrame) -> VideoFrame:
-        """Convert av.VideoFrame back to pytrickle VideoFrame with original timing."""
-        # Convert av frame tensor back to normalized float tensor
-        frame_np = av_frame.to_ndarray(format="rgb24").astype(np.float32) / 255.0
-        tensor = torch.from_numpy(frame_np)
-        
-        return VideoFrame(
-            tensor=tensor,
-            timestamp=original_frame.timestamp,
-            time_base=original_frame.time_base
-        )
-
-    @staticmethod
-    def create_processed_frame(processed_tensor: torch.Tensor, original_frame: VideoFrame) -> VideoFrame:
-        """Create a processed VideoFrame preserving timing from original."""
-        return VideoFrame(
-            tensor=processed_tensor,
-            timestamp=original_frame.timestamp,
-            time_base=original_frame.time_base
-        )
-
-    @staticmethod
-    def convert_trickle_audio_to_av(frame: AudioFrame) -> av.AudioFrame:
-        """Convert pytrickle AudioFrame to av.AudioFrame."""
-        try:
-            samples = frame.samples
-            
-            # Handle different audio format requirements
-            if frame.format.endswith('p'):
-                # Planar format - channels are separated (channels, samples)
-                if samples.ndim == 1:
-                    samples = samples.reshape(1, -1)
-            else:
-                # Packed format - channels are interleaved
-                if samples.ndim == 2 and samples.shape[0] > 1:
-                    # Convert (channels, samples) to (samples, channels) for packed format
-                    samples = samples.T
-                elif samples.ndim == 1:
-                    # Keep 1D for mono packed format or reshape for multi-channel
-                    if frame.layout != 'mono':
-                        # For non-mono, interpret as interleaved samples
-                        pass  # Keep as-is for now
-            
-            av_frame = av.AudioFrame.from_ndarray(samples, format=frame.format, layout=frame.layout)
-            av_frame.sample_rate = frame.rate
-            av_frame.pts = frame.timestamp
-            av_frame.time_base = frame.time_base
-            return av_frame
-            
-        except Exception as e:
-            # If conversion fails, create a simple dummy frame for now
-            logger.warning(f"Audio conversion failed ({e}), creating dummy frame")
-            dummy_samples = np.zeros((1, 1024), dtype=np.int16)
-            av_frame = av.AudioFrame.from_ndarray(dummy_samples, format='s16', layout='mono')
-            av_frame.sample_rate = frame.rate
-            av_frame.pts = frame.timestamp
-            av_frame.time_base = frame.time_base
-            return av_frame
-
-    @staticmethod
-    def convert_av_audio_to_trickle(av_frame: av.AudioFrame, original_frame: AudioFrame) -> AudioFrame:
-        """Convert av.AudioFrame back to pytrickle AudioFrame with original timing."""
-        return AudioFrame.from_av_audio(av_frame)
+# FrameProcessor has been moved to pytrickle.frame_processor
+# Import is now at the top of the file
 
 
 class CleanupManager:
-    """Centralized cleanup management."""
+    """ComfyUI-specific cleanup management."""
     
-    @staticmethod
-    async def cancel_task_with_timeout(task: Optional[asyncio.Task], task_name: str, timeout: float = 3.0) -> bool:
-        if not task or task.done():
-            return True
-        task.cancel()
-        try:
-            await asyncio.wait_for(task, timeout=timeout)
-            return True
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            return True
-        except Exception:
-            return False
+    # Generic task cancellation moved to pytrickle.frames.StreamingUtils
+    cancel_task_with_timeout = StreamingUtils.cancel_task_with_timeout
     
     @staticmethod
     async def cleanup_pipeline_resources(pipeline: Pipeline, request_id: str, timeout: float = 8.0) -> bool:
@@ -267,7 +95,7 @@ class CleanupManager:
         except (asyncio.TimeoutError, Exception):
             return False
 
-class ComfyStreamTrickleProcessor:
+class ComfyStreamTrickleProcessor(FrameConversionMixin):
     """Processes video frames through ComfyStream pipeline for trickle streaming."""
     
     def __init__(self, pipeline: Pipeline, request_id: str):
@@ -308,9 +136,9 @@ class ComfyStreamTrickleProcessor:
                 async with self.processing_lock:
                     self.state.mark_cleanup_in_progress()
                     await CleanupManager.cleanup_pipeline_resources(self.pipeline, self.request_id)
-                    await CleanupManager.cancel_task_with_timeout(self.frame_input_task, "Frame input processor", timeout=2.0)
-                    await CleanupManager.cancel_task_with_timeout(self.output_collector_task, "Output collector", timeout=2.0)
-                    await CleanupManager.cancel_task_with_timeout(self.text_streaming_task, "Text streaming", timeout=2.0)
+                    await StreamingUtils.cancel_task_with_timeout(self.frame_input_task, "Frame input processor", timeout=2.0)
+                    await StreamingUtils.cancel_task_with_timeout(self.output_collector_task, "Output collector", timeout=2.0)
+                    await StreamingUtils.cancel_task_with_timeout(self.text_streaming_task, "Text streaming", timeout=2.0)
                     self.frame_input_task = None
                     self.output_collector_task = None
                     self.text_streaming_task = None
@@ -399,7 +227,7 @@ class ComfyStreamTrickleProcessor:
                         )
                     
                     # Convert back to trickle format with preserved timing
-                    processed_trickle_frame = FrameProcessor.convert_av_to_trickle(
+                    processed_trickle_frame = self.convert_av_to_trickle(
                         processed_av_frame, original_frame
                     )
                     
@@ -541,7 +369,7 @@ class ComfyStreamTrickleProcessor:
             
             try:
                 # Convert trickle frame to av frame
-                av_frame = FrameProcessor.convert_trickle_to_av(frame)
+                av_frame = self.convert_trickle_to_av(frame)
                 
                 # Queue frame for async processing with frame ID
                 frame_data = (av_frame, frame, self.frame_count)
@@ -584,7 +412,7 @@ class ComfyStreamTrickleProcessor:
             
             try:
                 # Convert trickle audio frame to av audio frame
-                av_frame = FrameProcessor.convert_trickle_audio_to_av(frame)
+                av_frame = self.convert_trickle_audio_to_av(frame)
                 
                 # Queue audio frame for async processing with frame ID
                 frame_data = ("audio", av_frame, frame, self.frame_count)
@@ -613,7 +441,7 @@ class ComfyStreamTrickleProcessor:
         
         # VideoFrame fallback logic (existing)
         if self.last_processed_frame is not None:
-            fallback_frame = FrameProcessor.create_processed_frame(self.last_processed_frame.tensor, frame)
+            fallback_frame = self.create_processed_frame(self.last_processed_frame.tensor, frame)
             return VideoOutput(fallback_frame, self.request_id)
         return VideoOutput(frame, self.request_id)
 
@@ -839,9 +667,9 @@ class TrickleStreamHandler:
                 except (asyncio.TimeoutError, Exception):
                     pass
                 
-                await CleanupManager.cancel_task_with_timeout(self._task, "Main task")
-                await CleanupManager.cancel_task_with_timeout(self._stats_task, "Stats task")
-                await CleanupManager.cancel_task_with_timeout(self._control_task, "Control loop")
+                await StreamingUtils.cancel_task_with_timeout(self._task, "Main task")
+                await StreamingUtils.cancel_task_with_timeout(self._stats_task, "Stats task")
+                await StreamingUtils.cancel_task_with_timeout(self._control_task, "Control loop")
                 
                 if self.control_subscriber:
                     try:
@@ -897,12 +725,16 @@ class TrickleStreamHandler:
 
 
 class TrickleStreamManager:
-    """Manages multiple trickle stream handlers."""
+    """ComfyUI-specific trickle stream manager that extends the base manager."""
     
     def __init__(self, app_context: Optional[Dict] = None):
+        # Extract health manager for parent class
+        health_manager = app_context.get('health_manager') if app_context else None
+        
         self.handlers: Dict[str, TrickleStreamHandler] = {}
         self.lock = asyncio.Lock()
         self.app_context = app_context or {}
+        self.health_manager = health_manager
     
     async def create_stream(self, request_id: str, subscribe_url: str, publish_url: str,
                           control_url: str, events_url: str, pipeline: Pipeline,
@@ -912,12 +744,10 @@ class TrickleStreamManager:
                 return False
             
             try:
-                health_manager = self.app_context.get('health_manager')
-                if health_manager and health_manager.state == "ERROR":
+                # Clear error state if this is the first stream after error
+                if self.health_manager and self.health_manager.state == "ERROR":
                     if len(self.handlers) == 0:
-                        health_manager.clear_error()
-                    else:
-                        health_manager.clear_error()
+                        self.health_manager.clear_error()
                 
                 handler = TrickleStreamHandler(
                     subscribe_url=subscribe_url, publish_url=publish_url,
@@ -935,9 +765,8 @@ class TrickleStreamManager:
                     return False
             except Exception as e:
                 logger.error(f"Error creating stream {request_id}: {e}")
-                health_manager = self.app_context.get('health_manager')
-                if health_manager:
-                    health_manager.set_error("Error creating trickle stream")
+                if self.health_manager:
+                    self.health_manager.set_error("Error creating trickle stream")
                 return False
     
     async def stop_stream(self, request_id: str) -> bool:
@@ -952,12 +781,15 @@ class TrickleStreamManager:
             return success
     
     def _update_health_manager(self):
-        health_manager = self.app_context.get('health_manager')
-        if health_manager:
+        if self.health_manager:
             stream_count = len(self.handlers)
-            health_manager.update_trickle_streams(stream_count)
-            if stream_count == 0 and health_manager.state == "ERROR":
-                health_manager.clear_error()
+            # Use trickle-specific method if available (ComfyStreamHealthManager)
+            if hasattr(self.health_manager, 'update_trickle_streams'):
+                self.health_manager.update_trickle_streams(stream_count)
+            else:
+                self.health_manager.update_active_streams(stream_count)
+            if stream_count == 0 and self.health_manager.state == "ERROR":
+                self.health_manager.clear_error()
     
     def _get_stream_status_unlocked(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get stream status without acquiring the lock (for internal use when lock is already held)."""
@@ -1007,6 +839,7 @@ class TrickleStreamManager:
                 pass
             
             self.handlers.clear()
+            self._update_health_manager()
     
     async def _stop_stream_with_timeout(self, request_id: str) -> bool:
         try:

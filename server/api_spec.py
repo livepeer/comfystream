@@ -1,13 +1,23 @@
 """
-Pydantic models for ComfyStream API parameters.
+ComfyUI-specific Pydantic models for ComfyStream API parameters.
 
-This module defines reusable BaseModel classes for validating and serializing
-API request parameters used across the ComfyStream trickle API endpoints.
+This module defines ComfyUI-specific BaseModel classes for validating and serializing
+API request parameters. Core streaming models are imported from pytrickle.
 """
 
 import json
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
+
+# Import core streaming models from pytrickle
+from pytrickle.api_spec import (
+    StreamStartRequest as BaseStreamStartRequest,
+    StreamParamsUpdateRequest as BaseStreamParamsUpdateRequest, 
+    StreamResponse,
+    StreamStatusResponse,
+    HealthCheckResponse,
+    ServiceInfoResponse
+)
 
 from comfystream.server.workflows import get_default_workflow
 DEFAULT_WORKFLOW_JSON = get_default_workflow()
@@ -77,18 +87,8 @@ class ComfyUIParams(BaseModel):
                 raise ValueError(f"Invalid dimension value: {v} cannot be converted to integer")
         return v
 
-class StreamStartRequest(BaseModel):
-    subscribe_url: str = Field(..., description="URL for subscribing to input video stream")
-    publish_url: str = Field(..., description="URL for publishing output video stream")
-    control_url: Optional[str] = Field(default=None, description="URL for control channel communication")
-    events_url: Optional[str] = Field(default=None, description="URL for events channel communication")
-    data_url: Optional[str] = Field(default=None, description="URL for publishing text/data output via data channel")
-    gateway_request_id: str = Field(..., description="Unique identifier for the stream request")
-    
-    # Optional fields that may be present in the request
-    manifest_id: Optional[str] = Field(default=None, description="Manifest identifier")
-    model_id: Optional[str] = Field(default=None, description="Model identifier")
-    stream_id: Optional[str] = Field(default=None, description="Stream identifier")
+class StreamStartRequest(BaseStreamStartRequest):
+    """ComfyUI-specific stream start request with ComfyUI parameters."""
     
     # Make params optional with default values
     params: Optional[ComfyUIParams] = Field(
@@ -103,8 +103,8 @@ class StreamStartRequest(BaseModel):
         
         return ComfyUIParams()
 
-class StreamParamsUpdateRequest(BaseModel):
-    """Request model for updating stream parameters with flat structure."""
+class StreamParamsUpdateRequest(BaseStreamParamsUpdateRequest):
+    """ComfyUI-specific request model for updating stream parameters with prompts."""
     width: int = Field(default=DEFAULT_WIDTH, description="Width of the generated video")
     height: int = Field(default=DEFAULT_HEIGHT, description="Height of the generated video")  
     prompts: Optional[Union[str, List[Union[str, Dict[str, Any]]]]] = Field(..., description="ComfyUI workflow as JSON string or dict")
@@ -154,29 +154,5 @@ class StreamParamsUpdateRequest(BaseModel):
         
         raise ValueError("Prompts must be either a JSON string, dictionary, or list of JSON strings/dictionaries")
 
-class StreamResponse(BaseModel):
-    status: str = Field(..., description="Operation status (success/error)")
-    message: str = Field(..., description="Human-readable message")
-    request_id: Optional[str] = Field(default=None, description="Stream request ID")
-    config: Optional[dict] = Field(default=None, description="Stream configuration details")
-
-class StreamStatusResponse(BaseModel):
-    processing_active: bool = Field(..., description="Whether stream processing is active")
-    stream_count: int = Field(..., description="Number of active streams")
-    message: Optional[str] = Field(default=None, description="Status message")
-    current_stream: Optional[dict] = Field(default=None, description="Current stream details")
-    all_streams: Optional[dict] = Field(default=None, description="All active streams")
-
-class HealthCheckResponse(BaseModel):
-    status: str = Field(..., description="Service health status")
-    service: str = Field(..., description="Service name")
-    version: str = Field(..., description="Service version")
-    stream_manager_ready: Optional[bool] = Field(default=None, description="Whether stream manager is ready")
-    error: Optional[str] = Field(default=None, description="Error message if unhealthy")
-
-class ServiceInfoResponse(BaseModel):
-    service: str = Field(..., description="Service name")
-    version: str = Field(..., description="Service version")
-    description: str = Field(..., description="Service description")
-    capabilities: list = Field(..., description="List of service capabilities")
-    endpoints: dict = Field(..., description="Available API endpoints") 
+# StreamResponse, StreamStatusResponse, HealthCheckResponse, and ServiceInfoResponse
+# are now imported from pytrickle.api_spec 

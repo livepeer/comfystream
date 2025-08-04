@@ -12,9 +12,8 @@ from aiohttp import web
 from pydantic import ValidationError
 
 from trickle_integration import TrickleStreamManager
-from api_spec import (
-    StreamStartRequest, 
-    StreamParamsUpdateRequest, 
+from api_spec import StreamStartRequest, StreamParamsUpdateRequest
+from pytrickle.api_spec import (
     StreamResponse, 
     StreamStatusResponse, 
     HealthCheckResponse, 
