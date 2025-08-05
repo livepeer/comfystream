@@ -117,6 +117,12 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
         # Frame correlation for timing preservation
         self.pending_frames = {}  # Maps frame processing order to original trickle frames
         
+        # Event-based coordination to replace sleep patterns
+        self.input_frame_available = asyncio.Event()
+        self.output_frame_available = asyncio.Event()
+        self.text_output_available = asyncio.Event()
+        self.shutdown_event = asyncio.Event()
+        
     async def start_processing(self):
         if self.state.running:
             return
@@ -130,7 +136,10 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
         if not self.state.running:
             return
         
+        # Signal shutdown to all async loops
+        self.shutdown_event.set()
         self.state.initiate_shutdown()
+        
         try:
             async with asyncio.timeout(10.0):
                 async with self.processing_lock:
@@ -161,10 +170,31 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
     async def _process_input_frames(self):
         """Process frames from input queue through the pipeline using pipeline.put_video_frame() or put_audio_frame()."""
         try:
-            while self.state.is_active:
+            while self.state.is_active and not self.shutdown_event.is_set():
                 try:
-                    # Get frame from input queue with timeout
-                    frame_data = await asyncio.wait_for(self.input_frame_queue.get(), timeout=0.1)
+                    # Wait for either a frame to be available or shutdown
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(self.input_frame_queue.get()),
+                            asyncio.create_task(self.shutdown_event.wait())
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # Cancel any pending tasks
+                    for task in pending:
+                        task.cancel()
+                    
+                    # Check if shutdown was requested
+                    if self.shutdown_event.is_set():
+                        break
+                    
+                    # Get the result from the completed frame task
+                    frame_task = next(iter(done))
+                    if frame_task.exception():
+                        raise frame_task.exception()
+                    
+                    frame_data = frame_task.result()
                     if not self.state.is_active:
                         break
                     
@@ -185,15 +215,16 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                         # Use pipeline to process the video frame
                         await self.pipeline.put_video_frame(av_frame)
                     
-                except asyncio.TimeoutError:
-                    await asyncio.sleep(0.01)
-                    continue
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     logger.error(f"Error processing input frame: {e}")
-                    await asyncio.sleep(0.1)
-                    continue
+                    # Brief pause on error to prevent tight error loops
+                    try:
+                        await asyncio.wait_for(self.shutdown_event.wait(), timeout=0.1)
+                        break  # Shutdown requested during error wait
+                    except asyncio.TimeoutError:
+                        continue  # No shutdown, continue processing
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -203,16 +234,37 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
         """Collect processed frames from pipeline using pipeline.get_processed_video_frame()."""
         try:
             frame_id = 0
-            while self.state.is_active:
+            while self.state.is_active and not self.shutdown_event.is_set():
+                # Wait for pipeline to be ready
                 if not self.state.pipeline_ready:
-                    await asyncio.sleep(0.1)
-                    continue
+                    await asyncio.wait_for(self.state.pipeline_ready_event.wait(), timeout=None)
+                    if not self.state.is_active or self.shutdown_event.is_set():
+                        break
                 
                 try:
-                    # Use pipeline to get processed frame (this handles client interaction and postprocessing)
-                    processed_av_frame = await asyncio.wait_for(
-                        self.pipeline.get_processed_video_frame(), timeout=0.1
+                    # Wait for either a processed frame or shutdown
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(self.pipeline.get_processed_video_frame()),
+                            asyncio.create_task(self.shutdown_event.wait())
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED
                     )
+                    
+                    # Cancel any pending tasks
+                    for task in pending:
+                        task.cancel()
+                    
+                    # Check if shutdown was requested
+                    if self.shutdown_event.is_set():
+                        break
+                    
+                    # Get the result from the completed frame task
+                    frame_task = next(iter(done))
+                    if frame_task.exception():
+                        raise frame_task.exception()
+                    
+                    processed_av_frame = frame_task.result()
                     if not self.state.is_active:
                         break
                     
@@ -247,15 +299,16 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                     
                     frame_id += 1
                     
-                except asyncio.TimeoutError:
-                    await asyncio.sleep(0.01)
-                    continue
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     logger.error(f"Error collecting output: {e}")
-                    await asyncio.sleep(0.1)
-                    continue
+                    # Brief pause on error to prevent tight error loops
+                    try:
+                        await asyncio.wait_for(self.shutdown_event.wait(), timeout=0.1)
+                        break  # Shutdown requested during error wait
+                    except asyncio.TimeoutError:
+                        continue  # No shutdown, continue processing
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -264,16 +317,38 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
     async def _stream_text_outputs(self):
         """Stream text outputs from the pipeline when they become available."""
         try:
-            while self.state.is_active:
+            while self.state.is_active and not self.shutdown_event.is_set():
+                # Wait for pipeline to be ready
                 if not self.state.pipeline_ready:
-                    await asyncio.sleep(0.1)
-                    continue
+                    await asyncio.wait_for(self.state.pipeline_ready_event.wait(), timeout=None)
+                    if not self.state.is_active or self.shutdown_event.is_set():
+                        break
                 
                 try:
-                    # Wait for text output with timeout
-                    text_output = await asyncio.wait_for(
-                        self.pipeline.get_text_output(), timeout=0.1
+                    # Wait for either text output or shutdown
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(self.pipeline.get_text_output()),
+                            asyncio.create_task(self.shutdown_event.wait())
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED
                     )
+                    
+                    # Cancel any pending tasks
+                    for task in pending:
+                        task.cancel()
+                    
+                    # Check if shutdown was requested
+                    if self.shutdown_event.is_set():
+                        break
+                    
+                    # Get the result from the completed text task
+                    text_task = next(iter(done))
+                    if text_task.exception():
+                        # Most likely no text output available, continue waiting
+                        continue
+                    
+                    text_output = text_task.result()
                     if not self.state.is_active:
                         break
                     
@@ -286,15 +361,16 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                         except Exception as e:
                             logger.error(f"Error in text output callback: {e}")
                     
-                except asyncio.TimeoutError:
-                    await asyncio.sleep(0.01)
-                    continue
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     logger.debug(f"No text output available: {e}")
-                    await asyncio.sleep(0.1)
-                    continue
+                    # Brief pause on error to prevent tight error loops
+                    try:
+                        await asyncio.wait_for(self.shutdown_event.wait(), timeout=0.1)
+                        break  # Shutdown requested during error wait
+                    except asyncio.TimeoutError:
+                        continue  # No shutdown, continue processing
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -538,7 +614,6 @@ class TrickleStreamHandler:
                 except (json.JSONDecodeError, UnicodeDecodeError) as e:
                     logger.warning(f"Invalid control message: {e}")
                     continue
-                
                 if params == keepalive_message:
                     continue
                 
@@ -588,7 +663,12 @@ class TrickleStreamHandler:
                 except Exception as e:
                     logger.error(f"Error sending stats for {self.request_id}: {e}")
                 
-                await asyncio.sleep(20.0)
+                # Wait for 20 seconds or until shutdown
+                try:
+                    await asyncio.wait_for(self.shutdown_event.wait(), timeout=20.0)
+                    break  # Shutdown requested
+                except asyncio.TimeoutError:
+                    pass  # Continue with next stats interval
         except asyncio.CancelledError:
             raise
         except Exception as e:
