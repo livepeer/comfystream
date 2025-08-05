@@ -49,7 +49,7 @@
         "3",
         0
       ],
-      "debug_info": false
+      "debug_info": true
     },
     "class_type": "SaveTextTensor",
     "_meta": {
