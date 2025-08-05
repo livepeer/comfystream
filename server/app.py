@@ -582,7 +582,7 @@ async def on_shutdown(app: web.Application) -> None:
     pcs.clear()
     
     # Cleanup trickle streams
-    await cleanup_trickle_streams()
+    await cleanup_trickle_streams(app)
     logger.info("Trickle streams cleaned up")
 
 

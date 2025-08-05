@@ -23,12 +23,10 @@ from pytrickle.api_spec import (
 logger = logging.getLogger(__name__)
 logger.info("Using trickle integration")
 
-# Global stream manager instance - will be initialized in setup_trickle_routes
-stream_manager: Optional[TrickleStreamManager] = None
-
 async def start_stream(request):
     """Start a new trickle stream."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
         data = await request.json()
@@ -116,6 +114,7 @@ async def start_stream(request):
 async def stop_stream(request):
     """Stop a trickle stream."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
             
@@ -146,6 +145,7 @@ async def stop_stream(request):
 async def get_stream_status(request):
     """Get status of a trickle stream."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
             
@@ -172,6 +172,7 @@ async def get_stream_status(request):
 async def list_streams(request):
     """List all active trickle streams."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
             
@@ -191,6 +192,7 @@ async def list_streams(request):
 async def stop_current_stream(request):
     """Stop the current stream (webrtc-worker compatible endpoint)."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
         
@@ -231,6 +233,7 @@ async def stop_current_stream(request):
 async def get_current_stream_status(request):
     """Get current stream status (webrtc-worker compatible endpoint)."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
         
@@ -266,6 +269,7 @@ async def get_current_stream_status(request):
 async def update_stream_params(request):
     """Update parameters for a specific stream."""
     try:
+        stream_manager = request.app.get('stream_manager')
         if not stream_manager:
             return web.json_response({'error': 'Stream manager not initialized'}, status=500)
         request_id = request.match_info.get('request_id')
@@ -313,6 +317,7 @@ async def health_check(request):
     """Health check endpoint (webrtc-worker compatible)."""
     try:
         # Check if stream manager is initialized
+        stream_manager = request.app.get('stream_manager')
         manager_healthy = stream_manager is not None
         
         response_data = HealthCheckResponse(
@@ -369,7 +374,6 @@ def setup_trickle_routes(app, cors):
         app: The aiohttp web application
         cors: The CORS setup object
     """
-    global stream_manager
     stream_manager = TrickleStreamManager(app_context={
         'warm_pipeline': app.get('warm_pipeline', False),
         'workspace': app.get('workspace'),
@@ -379,6 +383,9 @@ def setup_trickle_routes(app, cors):
     
     # CRITICAL: Add the stream manager reference to its own app_context so streams can remove themselves during error cleanup
     stream_manager.app_context['stream_manager'] = stream_manager
+    
+    # Store stream manager in app context for dependency injection
+    app['stream_manager'] = stream_manager
 
     # Core trickle streaming routes
     cors.add(app.router.add_post("/stream/start", start_stream))
@@ -401,7 +408,8 @@ def setup_trickle_routes(app, cors):
     logger.info("Trickle API routes registered")
 
 # Cleanup function for app shutdown
-async def cleanup_trickle_streams():
+async def cleanup_trickle_streams(app):
     """Cleanup all trickle streams on app shutdown."""
+    stream_manager = app.get('stream_manager')
     if stream_manager:
         await stream_manager.cleanup_all()
