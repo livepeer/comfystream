@@ -11,7 +11,7 @@ from typing import Optional
 from aiohttp import web
 from pydantic import ValidationError
 
-from trickle_integration import TrickleStreamManager
+from trickle_stream_manager import TrickleStreamManager
 from api_spec import StreamStartRequest, StreamParamsUpdateRequest
 from pytrickle.api_spec import (
     StreamResponse, 
