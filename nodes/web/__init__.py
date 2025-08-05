@@ -1,6 +1,5 @@
 """ComfyStream Web UI nodes"""
 import os
-import folder_paths
 
 # Define a simple Python class for the UI Preview node
 class ComfyStreamUIPreview:

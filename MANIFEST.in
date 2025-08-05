@@ -1,0 +1,2 @@
+include src/comfystream/comfyui_hiddenswitch_v0.3.40/**/*
+recursive-include src/comfystream/comfyui_hiddenswitch_v0.3.40 * 

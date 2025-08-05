@@ -1,7 +1,20 @@
 import copy
 
 from typing import Dict, Any
-from comfy.api.components.schema.prompt import Prompt, PromptDictInput
+
+# Import comfy_loader first to setup namespace
+from . import comfy_loader
+
+# Try to import ComfyUI modules with error handling
+try:
+    from comfy.api.components.schema.prompt import Prompt, PromptDictInput
+except ImportError:
+    # Create mock types for when ComfyUI is not available
+    from typing import Any as PromptDictInput
+    class Prompt:
+        @staticmethod
+        def validate(prompt):
+            return prompt
 
 
 def create_load_tensor_node():

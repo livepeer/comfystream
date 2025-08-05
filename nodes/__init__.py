@@ -1,10 +1,23 @@
 """ComfyStream nodes package"""
 
-from .audio_utils import *
-from .tensor_utils import *
-from .video_stream_utils import *
-from .api import *
-from .web import *
+# Import comfy_loader first to ensure proper namespace setup
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from comfystream import comfy_loader
+
+# Import node modules (comfy namespace should already be set up)
+try:
+    from .audio_utils import *
+    from .tensor_utils import *
+    from .video_stream_utils import *
+    from .api import *
+    from .web import *
+except ImportError as e:
+    # If imports fail, provide empty mappings
+    print(f"Warning: Failed to import comfystream node modules: {e}")
+    NODE_CLASS_MAPPINGS = {}
+    NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Collect all NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS from submodules
 NODE_CLASS_MAPPINGS = {}

@@ -7,17 +7,8 @@ name = "comfystream"
 description = "Build Live AI Video with ComfyUI"
 version = "0.1.3"
 license = { file = "LICENSE" }
-dependencies = [
-    "asyncio",
-    "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
-    "aiortc",
-    "aiohttp",
-    "aiohttp_cors",
-    "toml",
-    "twilio",
-    "prometheus_client",
-    "librosa"
-]
+dynamic = ["dependencies"]
+# Dependencies are dynamically loaded from requirements.txt (see tool.setuptools.dynamic below)
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov"]
@@ -34,5 +25,14 @@ Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/ic
 package-dir = {"" = "src"}
 packages = {find = {where = ["src", "nodes"]}}
 
+[tool.setuptools.package-data]
+comfystream = ["comfyui_hiddenswitch_v0.3.40/**/*",
+  "comfyui_hiddenswitch_v0.3.40/**/*",
+  "workflows/comfystream/*.json",
+  "scripts/constraints.txt",
+  "scripts/requirements.txt",
+  "scripts/requirements-hs.txt"
+]
+
 [tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+dependencies = {file = ["requirements.txt", "requirements-hs.txt"]}

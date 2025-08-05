@@ -22,6 +22,6 @@ launch.json
 nodes/web/static/*
 .cursor/
 !nodes/web/static/.gitkeep
-
+src/comfystream/comfyui_hiddenswitch_v0.3.40
 # opencv files
 opencv
