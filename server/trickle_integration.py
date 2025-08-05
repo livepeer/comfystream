@@ -535,7 +535,8 @@ class TrickleStreamHandler:
                 
                 try:
                     params = json.loads(params_data.decode('utf-8'))
-                except (json.JSONDecodeError, UnicodeDecodeError):
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    logger.warning(f"Invalid control message: {e}")
                     continue
                 
                 if params == keepalive_message:
