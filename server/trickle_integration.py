@@ -6,26 +6,15 @@ import asyncio
 import logging
 import torch
 import numpy as np
-import av
-import traceback
-import warnings
-import json
 from fractions import Fraction
-from typing import Optional, Callable, Dict, Any, Deque, Union, List
+from typing import Union
 from collections import deque
-from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber, TricklePublisher
 from pytrickle.frames import (
-    VideoFrame, AudioFrame, VideoOutput, AudioOutput,
-    FrameProcessor, FrameConversionMixin, tensor_to_av_frame,
-    FrameBuffer, StreamState, StreamErrorHandler, StreamingUtils
+    VideoFrame, AudioFrame, VideoOutput, AudioOutput, FrameConversionMixin,
+    FrameBuffer, StreamState, StreamingUtils
 )
 from comfystream.pipeline import Pipeline
-from pytrickle.manager import BaseStreamManager
-
-# Import moved classes for backward compatibility
 from cleanup_manager import CleanupManager
-from trickle_stream_handler import TrickleStreamHandler
-from trickle_stream_manager import TrickleStreamManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +22,6 @@ logger = logging.getLogger(__name__)
 # If True: audio frames go through ComfyUI pipeline, video frames pass through unchanged
 # If False: video frames go through ComfyUI pipeline, audio frames pass through unchanged
 PROCESS_AUDIO_THROUGH_PIPELINE = False
-
-
-# These utilities have been moved to pytrickle.frames for better reusability:
-# - FrameBuffer: Rolling frame buffer for VideoFrame/AudioFrame
-# - StreamState: Unified state management for stream lifecycle  
-# - StreamErrorHandler: Centralized error handling
-# - StreamingUtils: Generic async utilities
-
-
-# FrameProcessor has been moved to pytrickle.frame_processor
-# Import is now at the top of the file
-
 
 class ComfyStreamTrickleProcessor(FrameConversionMixin):
     """Processes video frames through ComfyStream pipeline for trickle streaming."""
@@ -377,54 +354,86 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                     
         except Exception as e:
             logger.error(f"Error in sync frame processing: {e}")
-            return self._get_fallback_output(frame)
+            return self._get_last_processed_frame(frame)
     
+    def _can_process_frame(self) -> bool:
+        """Check if the frame can be processed through the pipeline."""
+        return (self.state.is_active and 
+                not self.processing_lock.locked() and 
+                self.state.pipeline_ready)
+    
+    def _enqueue_frame_for_processing(self, frame: VideoFrame) -> bool:
+        """Enqueue frame for async processing. Returns True if successful."""
+        try:
+            # Convert trickle frame to av frame
+            av_frame = self.convert_trickle_to_av(frame)
+            
+            # Queue frame for async processing with frame ID
+            frame_data = (av_frame, frame, self.frame_count)
+            
+            # Try to add to input queue (non-blocking)
+            self.input_frame_queue.put_nowait(frame_data)
+            return True
+        except asyncio.QueueFull:
+            # If queue is full, skip this frame but keep processing
+            logger.debug(f"Input queue full, skipping frame {self.frame_count}")
+            return False
+        except Exception as e:
+            logger.error(f"Error enqueueing frame {self.frame_count}: {e}")
+            return False
+    
+    def _try_get_latest_processed_frame(self) -> bool:
+        """Try to get the latest processed frame from the output queue. Returns True if successful."""
+        try:
+            latest_processed = self.output_frame_queue.get_nowait()
+            self.last_processed_frame = latest_processed
+            return True
+        except asyncio.QueueEmpty:
+            # No new processed frame available
+            return False
+        except Exception as e:
+            logger.error(f"Error getting latest processed frame: {e}")
+            return False
+    
+    def _get_last_processed_frame(self, frame: Union[VideoFrame, AudioFrame]) -> Union[VideoOutput, AudioOutput]:
+        """Get the last processed frame or fallback to original frame."""
+        if isinstance(frame, AudioFrame):
+            return AudioOutput([frame], self.request_id)
+        
+        # VideoFrame fallback logic
+        if self.last_processed_frame is not None:
+            fallback_frame = self.create_processed_frame(self.last_processed_frame.tensor, frame)
+            return VideoOutput(fallback_frame, self.request_id)
+        return VideoOutput(frame, self.request_id)
+
     def _process_video_frame(self, frame: VideoFrame) -> VideoOutput:
         """
         Process video frame through the pipeline.
         This is the original video processing logic extracted.
         """
         try:
-            if not self.state.is_active or self.processing_lock.locked():
-                return self._get_fallback_output(frame)
+            # Check if we can process this frame
+            if not self._can_process_frame():
+                return self._get_last_processed_frame(frame)
             
+            # If pipeline not ready, buffer the frame and return fallback
             if not self.state.pipeline_ready:
                 self.frame_buffer.add_frame(frame)
-                return self._get_fallback_output(frame)
+                return self._get_last_processed_frame(frame)
             
             self.frame_count += 1
             
-            try:
-                # Convert trickle frame to av frame
-                av_frame = self.convert_trickle_to_av(frame)
-                
-                # Queue frame for async processing with frame ID
-                frame_data = (av_frame, frame, self.frame_count)
-                
-                # Try to add to input queue (non-blocking)
-                try:
-                    self.input_frame_queue.put_nowait(frame_data)
-                except asyncio.QueueFull:
-                    # If queue is full, skip this frame but keep processing
-                    logger.debug(f"Input queue full, skipping frame {self.frame_count}")
-                
-                # Try to get latest processed frame (non-blocking)
-                try:
-                    latest_processed = self.output_frame_queue.get_nowait()
-                    self.last_processed_frame = latest_processed
-                except asyncio.QueueEmpty:
-                    # No new processed frame available, use fallback
-                    pass
-                
-                return self._get_fallback_output(frame)
-                
-            except Exception as e:
-                logger.error(f"Error processing frame {self.frame_count}: {e}")
-                return self._get_fallback_output(frame)
+            # Enqueue frame for processing
+            self._enqueue_frame_for_processing(frame)
+            
+            # Try to get latest processed frame
+            self._try_get_latest_processed_frame()
+            
+            return self._get_last_processed_frame(frame)
                 
         except Exception as e:
             logger.error(f"Error processing video frame: {e}")
-            return self._get_fallback_output(frame)
+            return self._get_last_processed_frame(frame)
     
     def _process_audio_frame(self, frame: AudioFrame) -> AudioOutput:
         """
@@ -433,7 +442,7 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
         """
         try:
             if not self.state.is_active or not self.state.pipeline_ready:
-                return AudioOutput([frame], self.request_id)
+                return self._get_last_processed_frame(frame)
             
             self.frame_count += 1
             
@@ -452,22 +461,12 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                 
                 # For now, return passthrough audio since audio processing is complex
                 # TODO: Implement proper audio output retrieval when needed
-                return AudioOutput([frame], self.request_id)
+                return self._get_last_processed_frame(frame)
                 
             except Exception as e:
                 logger.error(f"Error processing audio frame {self.frame_count}: {e}")
-                return AudioOutput([frame], self.request_id)
+                return self._get_last_processed_frame(frame)
             
         except Exception as e:
             logger.error(f"Error processing audio frame: {e}")
-            return AudioOutput([frame], self.request_id)
-    
-    def _get_fallback_output(self, frame: Union[VideoFrame, AudioFrame]) -> Union[VideoOutput, AudioOutput]:
-        if isinstance(frame, AudioFrame):
-            return AudioOutput([frame], self.request_id)
-        
-        # VideoFrame fallback logic (existing)
-        if self.last_processed_frame is not None:
-            fallback_frame = self.create_processed_frame(self.last_processed_frame.tensor, frame)
-            return VideoOutput(fallback_frame, self.request_id)
-        return VideoOutput(frame, self.request_id)
+            return self._get_last_processed_frame(frame)

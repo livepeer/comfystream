@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber
 from pytrickle.frames import StreamingUtils
 from comfystream.pipeline import Pipeline
+from trickle_integration import ComfyStreamTrickleProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,7 @@ class TrickleStreamHandler:
         self.width = width
         self.height = height
         self.app_context = app_context or {}
-        
-        # Import here to avoid circular imports
-        from trickle_integration import ComfyStreamTrickleProcessor
+
         self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
         
         self.protocol = TrickleProtocol(

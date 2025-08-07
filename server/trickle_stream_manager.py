@@ -23,10 +23,19 @@ class TrickleStreamManager:
         self.lock = asyncio.Lock()
         self.app_context = app_context or {}
         self.health_manager = health_manager
-    
-    async def create_stream(self, request_id: str, subscribe_url: str, publish_url: str,
-                          control_url: str, events_url: str, pipeline: Pipeline,
-                          width: int = 512, height: int = 512, data_url: Optional[str] = None) -> bool:
+
+    async def create_stream(
+        self,
+        request_id: str,
+        subscribe_url: str,
+        publish_url: str,
+        control_url: str,
+        events_url: str,
+        pipeline: Pipeline,
+        width: int = 512,
+        height: int = 512,
+        data_url: Optional[str] = None
+    ) -> bool:
         async with self.lock:
             if request_id in self.handlers:
                 return False
