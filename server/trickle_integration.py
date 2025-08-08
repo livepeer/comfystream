@@ -10,7 +10,7 @@ from fractions import Fraction
 from typing import Union
 from collections import deque
 from pytrickle.frames import (
-    VideoFrame, AudioFrame, VideoOutput, AudioOutput, FrameConversionMixin,
+    VideoFrame, AudioFrame, VideoOutput, AudioOutput,
     FrameBuffer, StreamState, StreamingUtils
 )
 from comfystream.pipeline import Pipeline
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # If False: video frames go through ComfyUI pipeline, audio frames pass through unchanged
 PROCESS_AUDIO_THROUGH_PIPELINE = False
 
-class ComfyStreamTrickleProcessor(FrameConversionMixin):
+class ComfyStreamTrickleProcessor:
     """Processes video frames through ComfyStream pipeline for trickle streaming."""
     
     def __init__(self, pipeline: Pipeline, request_id: str):
@@ -207,7 +207,7 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
                         )
                     
                     # Convert back to trickle format with preserved timing
-                    processed_trickle_frame = self.convert_av_to_trickle(
+                    processed_trickle_frame = VideoFrame.from_av_frame_with_timing(
                         processed_av_frame, original_frame
                     )
                     
@@ -366,7 +366,7 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
         """Enqueue frame for async processing. Returns True if successful."""
         try:
             # Convert trickle frame to av frame
-            av_frame = self.convert_trickle_to_av(frame)
+            av_frame = frame.to_av_frame()
             
             # Queue frame for async processing with frame ID
             frame_data = (av_frame, frame, self.frame_count)
@@ -402,7 +402,7 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
         
         # VideoFrame fallback logic
         if self.last_processed_frame is not None:
-            fallback_frame = self.create_processed_frame(self.last_processed_frame.tensor, frame)
+            fallback_frame = frame.replace_tensor(self.last_processed_frame.tensor)
             return VideoOutput(fallback_frame, self.request_id)
         return VideoOutput(frame, self.request_id)
 
@@ -448,7 +448,7 @@ class ComfyStreamTrickleProcessor(FrameConversionMixin):
             
             try:
                 # Convert trickle audio frame to av audio frame
-                av_frame = self.convert_trickle_audio_to_av(frame)
+                av_frame = frame.to_av_frame()
                 
                 # Queue audio frame for async processing with frame ID
                 frame_data = ("audio", av_frame, frame, self.frame_count)
