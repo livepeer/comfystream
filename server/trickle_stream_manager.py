@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 
 from pytrickle.manager import TrickleStreamManager as GenericTrickleStreamManager, StreamHandler
 from comfystream.pipeline import Pipeline
-from trickle_stream_handler import TrickleStreamHandler
+from comfy_stream_handler import ComfyStreamHandler
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +33,16 @@ class TrickleStreamManager(GenericTrickleStreamManager):
             app_context: Optional[Dict] = None,
             **_kwargs
         ) -> StreamHandler:
-            return TrickleStreamHandler(
+            return ComfyStreamHandler(
+                pipeline=pipeline,
+                request_id=request_id,
                 subscribe_url=subscribe_url,
                 publish_url=publish_url,
                 control_url=control_url,
                 events_url=events_url,
-                request_id=request_id,
-                pipeline=pipeline,
+                data_url=data_url,
                 width=width,
                 height=height,
-                data_url=data_url,
                 app_context=app_context,
             )
         self.set_stream_handler_factory(factory)
@@ -57,7 +57,7 @@ class TrickleStreamManager(GenericTrickleStreamManager):
             if stream_count == 0 and self.health_manager.is_error():
                 self.health_manager.clear_error()
 
-    def build_stream_status(self, request_id: str, handler: TrickleStreamHandler) -> Dict[str, Any]:
+    def build_stream_status(self, request_id: str, handler: ComfyStreamHandler) -> Dict[str, Any]:
         # Extend base status with Comfy-specific fields
         base = super().build_stream_status(request_id, handler)
         base.update({
@@ -65,11 +65,10 @@ class TrickleStreamManager(GenericTrickleStreamManager):
             'publish_url': handler.publish_url,
             'control_url': handler.control_url,
             'events_url': handler.events_url,
-            'events_available': handler.events_available,
+            'data_url': handler.data_url,
             'width': handler.width,
             'height': handler.height,
             'frame_count': getattr(handler.processor, 'frame_count', None),
-            'stats_monitoring_active': getattr(handler, '_stats_task', None) is not None and not getattr(getattr(handler, '_stats_task', None), 'done', lambda: True)(),
             'pipeline_ready': getattr(getattr(handler, 'processor', None), 'state', None).pipeline_ready if getattr(getattr(handler, 'processor', None), 'state', None) else None,
         })
         return base

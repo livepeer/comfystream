@@ -1,8 +1,88 @@
-# comfystream
+# ComfyStream
 
-comfystream is a package for running img2img [Comfy](https://www.comfy.org/) workflows on video streams.
+ComfyStream is a package for running img2img [ComfyUI](https://www.comfy.org/) workflows on real-time video streams. It integrates with PyTrickle to provide high-performance streaming with HTTP APIs for remote control.
 
-This repo also includes a WebRTC server and UI that uses comfystream to support streaming from a webcam and processing the stream with a workflow JSON file (API format) created in ComfyUI. If you have an existing ComfyUI installation, the same custom nodes used to create the workflow in ComfyUI will be re-used when processing the video stream.
+This repo includes:
+- **Real-time video processing** with ComfyUI workflows
+- **HTTP streaming server** with REST API endpoints  
+- **WebRTC server and UI** for webcam streaming
+- **PyTrickle integration** for production-grade streaming infrastructure
+
+If you have an existing ComfyUI installation, the same custom nodes used to create workflows in ComfyUI will be re-used when processing video streams.
+
+## Simple Integration Example
+
+Here's how ComfyStream integrates PyTrickle to create a streaming server:
+
+```python
+import asyncio
+from aiohttp import web
+from comfystream.pipeline import Pipeline
+from pytrickle import TrickleApp
+from pytrickle.frames import VideoFrame, VideoOutput
+
+class ComfyStreamProcessor:
+    def __init__(self, pipeline: Pipeline):
+        self.pipeline = pipeline
+        self.last_processed = None
+    
+    async def start(self):
+        """Initialize the ComfyUI pipeline."""
+        await self.pipeline.warm_pipeline()
+        
+    def process_frame_sync(self, frame: VideoFrame) -> VideoOutput:
+        """Process video frames through ComfyUI workflow."""
+        try:
+            # Convert to AV frame and process through pipeline
+            av_frame = frame.to_av_frame()
+            
+            # This would normally be async, but we use caching for real-time performance
+            # See the full ComfyStream implementation for the complete async bridge
+            
+            # For now, return the frame (real implementation uses async processing)
+            return VideoOutput(frame, "comfy_processed")
+            
+        except Exception as e:
+            print(f"Processing error: {e}")
+            return VideoOutput(frame, "passthrough")
+
+async def create_comfystream_app():
+    """Create a ComfyStream application with PyTrickle integration."""
+    
+    # Initialize ComfyUI pipeline
+    pipeline = Pipeline(workspace_path="/workspace", width=512, height=512)
+    
+    # Create processor
+    processor = ComfyStreamProcessor(pipeline)
+    await processor.start()
+    
+    # Create TrickleApp with ComfyUI processing
+    app = TrickleApp(
+        frame_processor=processor.process_frame_sync,
+        port=8080,
+        host="0.0.0.0"
+    )
+    
+    return app
+
+async def main():
+    app = await create_comfystream_app()
+    await app.run_forever()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**Key Integration Points:**
+- `Pipeline` class handles ComfyUI workflow execution
+- `process_frame_sync()` bridges between PyTrickle's sync interface and ComfyUI's async processing
+- Production version uses async queues and frame caching for optimal performance
+- HTTP endpoints automatically available: `/api/stream/start`, `/api/stream/params`, etc.
+
+For the complete production implementation, see `server/trickle_integration.py` and `server/comfy_stream_handler.py`.
+
+**Parameter Updates:**
+ComfyStream uses standardized parameter validation through the `ComfyUIParams` model, ensuring consistent handling of prompts, width, height, and other workflow parameters across WebRTC, HTTP API, and control channel updates.
 
 - [comfystream](#comfystream)
   - [Quick Start](#quick-start)
