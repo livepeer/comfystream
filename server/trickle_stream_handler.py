@@ -7,20 +7,24 @@ import asyncio
 import logging
 import json
 from typing import Optional, Dict, Any
-from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber
+from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber, StreamHandler
 from cleanup_manager import CleanupManager
 from comfystream.pipeline import Pipeline
+from api import ComfyUIParams
 from trickle_integration import ComfyStreamTrickleProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class TrickleStreamHandler:
+class TrickleStreamHandler(StreamHandler):
     """Handles a complete trickle stream with ComfyStream integration."""
     
     def __init__(self, subscribe_url: str, publish_url: str, control_url: str, events_url: str,
                  request_id: str, pipeline: Pipeline, width: int = 512, height: int = 512,
                  data_url: Optional[str] = None, app_context: Optional[Dict] = None):
+        # Initialize StreamHandler first (handles width/height)
+        super().__init__(width=width, height=height)
+        
         self.subscribe_url = subscribe_url
         self.publish_url = publish_url
         self.control_url = control_url
@@ -28,8 +32,6 @@ class TrickleStreamHandler:
         self.data_url = data_url
         self.request_id = request_id
         self.pipeline = pipeline
-        self.width = width
-        self.height = height
         self.app_context = app_context or {}
 
         self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
@@ -119,18 +121,26 @@ class TrickleStreamHandler:
     
     async def _handle_control_message(self, params: Dict[str, Any]):
         try:
-            if "prompts" not in params:
-                return
+            # Use ComfyUIParams.merge_with_defaults for validation and merging
+            validated_params = ComfyUIParams.merge_with_defaults(
+                updates=params,
+                current_width=self.width,
+                current_height=self.height
+            )
             
-            prompts = params["prompts"]
-            if isinstance(prompts, str):
-                try:
-                    prompts = json.loads(prompts)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse prompt string for stream {self.request_id}: {e}")
-                    return
+            # Handle prompts if present in original params
+            if "prompts" in params:
+                await self.pipeline.update_prompts(validated_params.prompts)
             
-            await self.pipeline.update_prompts(prompts)
+            # Handle dimension updates if present
+            if "width" in params or "height" in params:
+                # Update resolution and check if it changed
+                resolution_changed = self.update_resolution(validated_params.width, validated_params.height)
+                
+                # Update processor dimensions if resolution changed
+                if resolution_changed and hasattr(self.processor, 'update_dimensions'):
+                    self.processor.update_dimensions(self.width, self.height)
+                    
         except Exception as e:
             logger.error(f"Error handling control message for {self.request_id}: {e}")
             health_manager = self.app_context.get('health_manager')

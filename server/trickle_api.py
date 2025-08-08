@@ -12,8 +12,8 @@ from aiohttp import web
 from pydantic import ValidationError
 
 from trickle_stream_manager import TrickleStreamManager
-from api_spec import StreamStartRequest, StreamParamsUpdateRequest
-from pytrickle.api_spec import (
+from api import StreamStartRequest, StreamParamsUpdateRequest
+from pytrickle.api import (
     StreamResponse, 
     StreamStatusResponse, 
     HealthCheckResponse, 
@@ -294,9 +294,9 @@ async def update_stream_params(request):
         handler = stream_manager.handlers.get(request_id)
         if not handler:
             return web.json_response({'error': f'Stream handler {request_id} not found'}, status=404)
-        # Use the validated prompts directly from the request
-        # HTTP API uses 'prompts' (plural) - single workflow object
-        await handler._handle_control_message({'prompts': params_request.prompts, 'width': params_request.width, 'height': params_request.height})
+        # Use the validated params directly from the request
+        # The params object contains all the dynamic parameters including prompts, width, height, etc.
+        await handler._handle_control_message(params_request.params)
         response_data = StreamResponse(
             status='success',
             message=f'Parameters updated for stream {request_id}',
