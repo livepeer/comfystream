@@ -4,8 +4,8 @@ ComfyUI-specific cleanup management.
 
 import asyncio
 import logging
+from typing import Optional
 from comfystream.pipeline import Pipeline
-from pytrickle.frames import StreamingUtils
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +13,22 @@ logger = logging.getLogger(__name__)
 class CleanupManager:
     """ComfyUI-specific cleanup management."""
     
-    # Generic task cancellation moved to pytrickle.frames.StreamingUtils
-    cancel_task_with_timeout = StreamingUtils.cancel_task_with_timeout
+    @staticmethod
+    async def cancel_task_with_timeout(task: Optional[asyncio.Task], task_name: str, timeout: float = 3.0) -> bool:
+        """Cancel an asyncio task with a timeout, ignoring common errors.
+
+        Returns True in all normal cases so callers can proceed with cleanup.
+        """
+        if not task or task.done():
+            return True
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=timeout)
+            return True
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            return True
+        except Exception:
+            return False
     
     @staticmethod
     async def cleanup_pipeline_resources(pipeline: Pipeline, request_id: str, timeout: float = 8.0) -> bool:
@@ -37,29 +51,39 @@ class CleanupManager:
         try:
             async with asyncio.timeout(timeout):
                 from comfystream import tensor_cache
-                def clear_caches():
-                    cleared = 0
-                    for cache in [tensor_cache.image_inputs, tensor_cache.audio_inputs]:
-                        while not cache.empty():
-                            try:
-                                cache.get_nowait()
-                                cleared += 1
-                            except:
-                                break
-                    # Clear text outputs cache as well
-                    async def clear_text_outputs():
-                        while not tensor_cache.text_outputs.empty():
-                            try:
-                                await tensor_cache.text_outputs.get()
-                            except:
-                                break
+
+                # 1) Drain synchronous queues off the event loop thread
+                def clear_sync_queues() -> int:
+                    cleared_items = 0
+                    for q in [tensor_cache.image_inputs, tensor_cache.audio_inputs]:
+                        try:
+                            while True:
+                                q.get_nowait()
+                                cleared_items += 1
+                        except Exception:
+                            # Queue empty or other benign issue; move on
+                            pass
+                    return cleared_items
+
+                try:
+                    await asyncio.to_thread(clear_sync_queues)
+                except Exception:
+                    # Best-effort cleanup; continue to async drains
+                    pass
+
+                # 2) Drain async queues properly on the running loop
+                async def drain_async_queue(q: asyncio.Queue):
                     try:
-                        import asyncio
-                        asyncio.create_task(clear_text_outputs())
-                    except:
+                        while not q.empty():
+                            await q.get()
+                    except Exception:
                         pass
-                    return cleared
-                await asyncio.to_thread(clear_caches)
+
+                # Drain any pending outputs/text in async caches
+                await drain_async_queue(tensor_cache.image_outputs)
+                await drain_async_queue(tensor_cache.audio_outputs)
+                await drain_async_queue(tensor_cache.text_outputs)
+
                 return True
         except (asyncio.TimeoutError, Exception):
             return False

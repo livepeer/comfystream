@@ -38,6 +38,7 @@ class Pipeline:
         self.client = ComfyStreamClient(**kwargs)
         self.width = width
         self.height = height
+        self.prompts = []
 
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
@@ -119,7 +120,7 @@ class Pipeline:
         from .utils import is_audio_focused_workflow
         
         # Check if we have prompts loaded
-        if not hasattr(self, 'prompts') or not self.prompts:
+        if not self.prompts is [] or not self.prompts:
             logger.warning("No prompts loaded, defaulting to video warmup")
             await self.warm_video()
             return
@@ -162,6 +163,7 @@ class Pipeline:
             prompts: Either a single prompt dict or list of prompt dicts
         """
         parsed_prompts = self._parse_prompt_data(prompts)
+        self.prompts = parsed_prompts
         await self.client.set_prompts(parsed_prompts)
 
     async def update_prompts(self, prompts: Union[Dict, List[Dict]]):
@@ -171,6 +173,7 @@ class Pipeline:
             prompts: Either a single prompt dict or list of prompt dicts
         """
         parsed_prompts = self._parse_prompt_data(prompts)
+        self.prompts = parsed_prompts
         await self.client.update_prompts(parsed_prompts)
 
     async def put_video_frame(self, frame: av.VideoFrame):

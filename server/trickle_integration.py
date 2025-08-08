@@ -9,10 +9,11 @@ import numpy as np
 from fractions import Fraction
 from typing import Union
 from collections import deque
-from pytrickle.frames import (
+from pytrickle import (
     VideoFrame, AudioFrame, VideoOutput, AudioOutput,
-    FrameBuffer, StreamState, StreamingUtils
+    FrameBuffer,
 )
+from pytrickle.state import StreamState
 from comfystream.pipeline import Pipeline
 from cleanup_manager import CleanupManager
 
@@ -38,9 +39,9 @@ class ComfyStreamTrickleProcessor:
         self.text_streaming_task = None
         self.processing_lock = asyncio.Lock()
         
-        # Queue to bridge async pipeline with sync trickle interface
-        self.input_frame_queue = asyncio.Queue(maxsize=10)
-        self.output_frame_queue = asyncio.Queue(maxsize=10)
+        # Queues to bridge async pipeline with sync trickle interface
+        self.input_frame_queue = asyncio.Queue(maxsize=30)
+        self.output_frame_queue = asyncio.Queue(maxsize=30)
         
         # Frame correlation for timing preservation
         self.pending_frames = {}  # Maps frame processing order to original trickle frames
@@ -52,16 +53,21 @@ class ComfyStreamTrickleProcessor:
         self.shutdown_event = asyncio.Event()
         
     async def start_processing(self):
-        if self.state.running:
+        # Check if tasks are already running
+        if (self.frame_input_task and not self.frame_input_task.done() and 
+            self.output_collector_task and not self.output_collector_task.done()):
             return
+            
         self.state.start()
+        
+        # Always start/restart the async tasks
         self.frame_input_task = asyncio.create_task(self._process_input_frames())
         self.output_collector_task = asyncio.create_task(self._collect_outputs())
         # Start text streaming task for audio->text workflows
         self.text_streaming_task = asyncio.create_task(self._stream_text_outputs())
 
     async def stop_processing(self):
-        if not self.state.running:
+        if not self.state.is_active:
             return
         
         # Signal shutdown to all async loops
@@ -71,11 +77,10 @@ class ComfyStreamTrickleProcessor:
         try:
             async with asyncio.timeout(10.0):
                 async with self.processing_lock:
-                    self.state.mark_cleanup_in_progress()
                     await CleanupManager.cleanup_pipeline_resources(self.pipeline, self.request_id)
-                    await StreamingUtils.cancel_task_with_timeout(self.frame_input_task, "Frame input processor", timeout=2.0)
-                    await StreamingUtils.cancel_task_with_timeout(self.output_collector_task, "Output collector", timeout=2.0)
-                    await StreamingUtils.cancel_task_with_timeout(self.text_streaming_task, "Text streaming", timeout=2.0)
+                    await CleanupManager.cancel_task_with_timeout(self.frame_input_task, "Frame input processor", timeout=2.0)
+                    await CleanupManager.cancel_task_with_timeout(self.output_collector_task, "Output collector", timeout=2.0)
+                    await CleanupManager.cancel_task_with_timeout(self.text_streaming_task, "Text streaming", timeout=2.0)
                     self.frame_input_task = None
                     self.output_collector_task = None
                     self.text_streaming_task = None
@@ -311,7 +316,7 @@ class ComfyStreamTrickleProcessor:
     async def set_pipeline_ready(self):
         if self.state.pipeline_ready:
             return
-        self.state.mark_pipeline_ready()
+        self.state.set_pipeline_ready()
     
     async def wait_for_pipeline_ready(self, timeout: float = 30.0) -> bool:
         try:
@@ -424,7 +429,9 @@ class ComfyStreamTrickleProcessor:
             self.frame_count += 1
             
             # Enqueue frame for processing
-            self._enqueue_frame_for_processing(frame)
+            enqueued = self._enqueue_frame_for_processing(frame)
+            if not enqueued:
+                logger.warning(f"Failed to enqueue frame {self.frame_count}")
             
             # Try to get latest processed frame
             self._try_get_latest_processed_frame()

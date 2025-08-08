@@ -2,11 +2,12 @@
 ComfyStream-specific health management.
 
 This module provides ComfyStream-specific health state management that extends
-the base StreamHealthManager from pytrickle with WebRTC and Trickle stream tracking.
+the base HealthManager from pytrickle with WebRTC and Trickle stream tracking.
 """
 
-from pytrickle.health import StreamHealthManager
 from typing import Dict, Any
+from pytrickle.health import StreamHealthManager
+
 
 class ComfyStreamHealthManager(StreamHealthManager):
     """ComfyStream-specific health manager that tracks WebRTC and Trickle streams separately."""
@@ -19,23 +20,24 @@ class ComfyStreamHealthManager(StreamHealthManager):
     def update_webrtc_streams(self, count: int):
         """Update count of active WebRTC streams."""
         self.active_webrtc_streams = count
-        self.active_streams = self.active_webrtc_streams + self.active_trickle_streams
-        self._update_state()
+        total_streams = self.active_webrtc_streams + self.active_trickle_streams
+        self.update_active_streams(total_streams)
         
     def update_trickle_streams(self, count: int):
         """Update count of active trickle streams."""
         self.active_trickle_streams = count
-        self.active_streams = self.active_webrtc_streams + self.active_trickle_streams
-        self._update_state()
+        total_streams = self.active_webrtc_streams + self.active_trickle_streams
+        self.update_active_streams(total_streams)
         
-    def get_status(self) -> Dict[str, Any]:
-        """Get current health status with ComfyStream-specific fields."""
-        status = super().get_status()
-        status.update({
+    def get_pipeline_state(self) -> Dict[str, Any]:
+        """Get current health state with ComfyStream-specific fields."""
+        state = super().get_pipeline_state()
+        state.update({
             "active_webrtc_streams": self.active_webrtc_streams,
             "active_trickle_streams": self.active_trickle_streams,
+            "total_streams": self.active_webrtc_streams + self.active_trickle_streams,
         })
-        return status
+        return state
 
 # Alias for backward compatibility
 HealthStateManager = ComfyStreamHealthManager

@@ -502,8 +502,8 @@ async def set_prompt(request):
 
 async def health(request):
     health_manager = request.app["health_manager"]
-    status = health_manager.get_status()
-    return web.json_response({"status": status["status"]})
+    state = health_manager.get_pipeline_state()
+    return web.json_response({"state": state["state"]})
 
 
 async def on_startup(app: web.Application) -> None:

@@ -8,7 +8,7 @@ import logging
 import json
 from typing import Optional, Dict, Any
 from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber
-from pytrickle.frames import StreamingUtils
+from cleanup_manager import CleanupManager
 from comfystream.pipeline import Pipeline
 from trickle_integration import ComfyStreamTrickleProcessor
 
@@ -126,7 +126,8 @@ class TrickleStreamHandler:
             if isinstance(prompts, str):
                 try:
                     prompts = json.loads(prompts)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse prompt string for stream {self.request_id}: {e}")
                     return
             
             await self.pipeline.update_prompts(prompts)
@@ -183,6 +184,11 @@ class TrickleStreamHandler:
                 await self.processor.set_pipeline_ready()
             else:
                 try:
+                    # reflect warming state for observability
+                    try:
+                        self.processor.state.set_pipeline_warming()
+                    except Exception:
+                        pass
                     await self.pipeline.warm_pipeline()
                     if hasattr(self.pipeline, 'wait_for_first_processed_frame'):
                         try:
@@ -241,9 +247,9 @@ class TrickleStreamHandler:
                 except (asyncio.TimeoutError, Exception):
                     pass
                 
-                await StreamingUtils.cancel_task_with_timeout(self._task, "Main task")
-                await StreamingUtils.cancel_task_with_timeout(self._stats_task, "Stats task")
-                await StreamingUtils.cancel_task_with_timeout(self._control_task, "Control loop")
+                await CleanupManager.cancel_task_with_timeout(self._task, "Main task")
+                await CleanupManager.cancel_task_with_timeout(self._stats_task, "Stats task")
+                await CleanupManager.cancel_task_with_timeout(self._control_task, "Control loop")
                 
                 if self.control_subscriber:
                     try:
