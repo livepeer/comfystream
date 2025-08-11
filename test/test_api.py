@@ -1,5 +1,6 @@
 import pytest
-from server.api import StreamStartRequest, ComfyUIParams
+from pydantic import ValidationError
+from comfystream.server.api import StreamStartRequest, ComfyUIParams
 
 
 @pytest.fixture
@@ -114,7 +115,6 @@ def test_stream_start_request_invalid_dimensions():
         }
     }
     
-    from pydantic import ValidationError
     with pytest.raises(ValidationError):
         StreamStartRequest(**invalid_data)
 
@@ -134,7 +134,6 @@ def test_stream_start_request_missing_one_dimension():
         }
     }
     
-    from pydantic import ValidationError
     with pytest.raises(ValidationError):
         StreamStartRequest(**invalid_data)
 
@@ -154,8 +153,6 @@ def test_stream_start_request_negative_dimensions():
         }
     }
     
-    # The actual error comes from Pydantic ValidationError, not direct ValueError
-    from pydantic import ValidationError
     with pytest.raises(ValidationError):
         StreamStartRequest(**invalid_data)
 
