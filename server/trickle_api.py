@@ -12,7 +12,7 @@ from aiohttp import web
 from pydantic import ValidationError
 
 from trickle_stream_manager import TrickleStreamManager
-from api import StreamStartRequest, StreamParamsUpdateRequest
+from comfystream.server.api import StreamStartRequest, StreamParamsUpdateRequest
 from pytrickle.api import (
     StreamResponse, 
     StreamStatusResponse, 

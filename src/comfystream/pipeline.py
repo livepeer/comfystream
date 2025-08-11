@@ -4,6 +4,7 @@ import numpy as np
 import asyncio
 import logging
 from typing import Any, Dict, Union, List, Optional, cast
+from collections import deque
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
@@ -40,8 +41,14 @@ class Pipeline:
         self.height = height
         self.prompts = []
 
-        self.video_incoming_frames = asyncio.Queue()
+        # Bounded FIFO for incoming video frames to avoid backlog and unfinished tasks
+        self._video_frames = deque(maxlen=10)
+        self._video_lock = asyncio.Lock()
         self.audio_incoming_frames = asyncio.Queue()
+
+        # Bounded FIFO for incoming audio frames to avoid backlog
+        self._audio_frames = deque(maxlen=10)
+        self._audio_lock = asyncio.Lock()
 
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
@@ -183,9 +190,17 @@ class Pipeline:
             frame: The video frame to process
         """
         frame.side_data.input = self.video_preprocess(frame)
-        frame.side_data.skipped = True
+        # Push to comfy client first (input queue is bounded and drops oldest internally)
         self.client.put_video_input(frame)
-        await self.video_incoming_frames.put(frame)
+        # Maintain a bounded FIFO of incoming frames for timestamp mapping
+        async with self._video_lock:
+            if len(self._video_frames) == self._video_frames.maxlen:
+                # Drop oldest to keep most recent frames only
+                try:
+                    self._video_frames.popleft()
+                except Exception:
+                    pass
+            self._video_frames.append(frame)
 
     async def put_audio_frame(self, frame: av.AudioFrame):
         """Queue an audio frame for processing.
@@ -194,9 +209,16 @@ class Pipeline:
             frame: The audio frame to process
         """
         frame.side_data.input = self.audio_preprocess(frame)
-        frame.side_data.skipped = True
+        # Push to comfy client first
         self.client.put_audio_input(frame)
-        await self.audio_incoming_frames.put(frame)
+        # Maintain bounded FIFO of incoming audio frames
+        async with self._audio_lock:
+            if len(self._audio_frames) == self._audio_frames.maxlen:
+                try:
+                    self._audio_frames.popleft()
+                except Exception:
+                    pass
+            self._audio_frames.append(frame)
 
     def video_preprocess(self, frame: av.VideoFrame) -> Union[torch.Tensor, np.ndarray]:
         """Preprocess a video frame before processing.
@@ -254,17 +276,26 @@ class Pipeline:
         """
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_tensor = await self.client.get_video_output()
-        frame = await self.video_incoming_frames.get()
-        while frame.side_data.skipped:
-            frame = await self.video_incoming_frames.get()
+        # Drain to the most recent pending input frame to reduce latency and keep timestamps fresh
+        async with self._video_lock:
+            # If multiple frames pending, discard older and use the most recent
+            chosen_frame: Optional[av.VideoFrame] = None
+            while self._video_frames:
+                chosen_frame = self._video_frames.pop()  # take newest
+                # Clear any remaining older frames to keep queue lean
+                self._video_frames.clear()
+                break
+        # Fallback if no frame recorded (should be rare)
+        if chosen_frame is None:
+            chosen_frame = av.VideoFrame()
 
         processed_frame = self.video_postprocess(out_tensor)
         
-        # Copy timing information from original frame if available
-        if frame.pts is not None:
-            processed_frame.pts = frame.pts
-        if frame.time_base is not None:
-            processed_frame.time_base = frame.time_base
+        # Copy timing information from the matched most-recent input frame
+        if getattr(chosen_frame, 'pts', None) is not None:
+            processed_frame.pts = chosen_frame.pts
+        if getattr(chosen_frame, 'time_base', None) is not None:
+            processed_frame.time_base = chosen_frame.time_base
         
         return processed_frame
 
@@ -274,22 +305,35 @@ class Pipeline:
         Returns:
             The processed audio frame
         """
-        frame = await self.audio_incoming_frames.get()
-        if frame.samples > len(self.processed_audio_buffer):
+        # Select newest pending audio frame, wait until available
+        chosen_frame: Optional[av.AudioFrame] = None
+        while chosen_frame is None:
+            async with self._audio_lock:
+                if self._audio_frames:
+                    chosen_frame = self._audio_frames.pop()
+                    self._audio_frames.clear()
+            if chosen_frame is None:
+                # No pending audio frames yet, yield control briefly
+                await asyncio.sleep(0.001)
+        # Ensure buffer has enough samples for this frame
+        needed = int(getattr(chosen_frame, 'samples', 0) or 0)
+        while needed > len(self.processed_audio_buffer):
             async with temporary_log_level("comfy", self._comfyui_inference_log_level):
                 out_tensor = await self.client.get_audio_output()
+            if out_tensor is None or len(out_tensor) == 0:
+                break
             self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
-        out_data = self.processed_audio_buffer[:frame.samples]
-        self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
+        out_data = self.processed_audio_buffer[:needed]
+        self.processed_audio_buffer = self.processed_audio_buffer[needed:]
 
         processed_frame = self.audio_postprocess(out_data)
         
-        # Copy timing information from original frame if available
-        if frame.pts is not None:
-            processed_frame.pts = frame.pts
-        if frame.time_base is not None:
-            processed_frame.time_base = frame.time_base
-        processed_frame.sample_rate = frame.sample_rate
+        # Copy timing information from original (newest) input audio frame if available
+        if getattr(chosen_frame, 'pts', None) is not None:
+            processed_frame.pts = chosen_frame.pts
+        if getattr(chosen_frame, 'time_base', None) is not None:
+            processed_frame.time_base = chosen_frame.time_base
+        processed_frame.sample_rate = getattr(chosen_frame, 'sample_rate', 48000)
         
         return processed_frame
     

@@ -5,38 +5,49 @@ Handles a complete trickle stream with ComfyStream integration.
 
 import asyncio
 import logging
-import json
-from typing import Optional, Dict, Any
-from pytrickle import TrickleClient, TrickleProtocol, TrickleSubscriber, StreamHandler
-from cleanup_manager import CleanupManager
+from typing import Optional, Dict, Any, Callable
+from pytrickle import TrickleStreamHandler as BaseTrickleStreamHandler
 from comfystream.pipeline import Pipeline
-from api import ComfyUIParams
+from comfystream.server.api import ComfyUIParams
 from trickle_integration import ComfyStreamTrickleProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class TrickleStreamHandler(StreamHandler):
+class TrickleStreamHandler(BaseTrickleStreamHandler):
     """Handles a complete trickle stream with ComfyStream integration."""
     
-    def __init__(self, subscribe_url: str, publish_url: str, control_url: str, events_url: str,
-                 request_id: str, pipeline: Pipeline, width: int = 512, height: int = 512,
-                 data_url: Optional[str] = None, app_context: Optional[Dict] = None):
-        # Initialize StreamHandler first (handles width/height)
-        super().__init__(width=width, height=height)
+    def __init__(
+        self,
+        subscribe_url: str,
+        publish_url: str,
+        control_url: str,
+        events_url: str,
+        request_id: str,
+        pipeline: Pipeline,
+        width: int = 512,
+        height: int = 512,
+        data_url: Optional[str] = None,
+        app_context: Optional[Dict] = None
+    ):
+        """Initialize ComfyStream handler.
         
-        self.subscribe_url = subscribe_url
-        self.publish_url = publish_url
-        self.control_url = control_url
-        self.events_url = events_url
-        self.data_url = data_url
-        self.request_id = request_id
-        self.pipeline = pipeline
-        self.app_context = app_context or {}
-
-        self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
+        Args:
+            subscribe_url: URL to subscribe to input stream
+            publish_url: URL to publish output stream
+            control_url: URL for control channel
+            events_url: URL for events/monitoring
+            request_id: Unique request identifier
+            pipeline: ComfyUI pipeline instance
+            width: Stream width in pixels
+            height: Stream height in pixels
+            data_url: Optional URL for data publishing
+            app_context: Optional application context dict
+        """
+        # Set up error callback to integrate with ComfyStream's error handling
+        error_callback = self._comfy_error_callback
         
-        self.protocol = TrickleProtocol(
+        super().__init__(
             subscribe_url=subscribe_url,
             publish_url=publish_url,
             control_url=control_url,
@@ -44,90 +55,48 @@ class TrickleStreamHandler(StreamHandler):
             data_url=data_url,
             width=width,
             height=height,
-            error_callback=self._on_error
+            error_callback=error_callback,
+            app_context=app_context
         )
         
-        self.client = TrickleClient(
-            protocol=self.protocol,
-            frame_processor=self.processor.create_sync_bridge(),
-            control_handler=self._handle_control_message,
-            error_callback=self._on_error
-        )
+        self.request_id = request_id
+        self.pipeline = pipeline
         
-        self.control_subscriber = TrickleSubscriber(control_url, error_callback=self._on_error) if control_url and control_url.strip() else None
-        self.events_available = bool(events_url and events_url.strip())
-        
-        self.running_event = asyncio.Event()
-        self.shutdown_event = asyncio.Event()
-        self.error_event = asyncio.Event()
-        
-        self._task: Optional[asyncio.Task] = None
-        self._stats_task: Optional[asyncio.Task] = None
-        self._control_task: Optional[asyncio.Task] = None
-        self._critical_error_occurred = False
-        self._cleanup_lock = asyncio.Lock()
+        # Create the ComfyStream processor
+        self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
 
-    @property
-    def running(self) -> bool:
-        return self.running_event.is_set() and not self.shutdown_event.is_set() and not self.error_event.is_set()
-
-    async def _emit_monitoring_event(self, data: Dict[str, Any], event_type: str):
-        if not self.events_available:
-            return
-        try:
-            await self.client.protocol.emit_monitoring_event(data, event_type)
-        except Exception as e:
-            logger.warning(f"Failed to emit {event_type} event for {self.request_id}: {e}")
-    
-    async def _publish_data(self, text_data: str):
-        """Publish text data via the data channel."""
-        if not self.data_url:
-            return
-        try:
-            await self.client.publish_data(text_data)
-        except Exception as e:
-            logger.warning(f"Failed to publish data for {self.request_id}: {e}")
-    
-    async def _on_error(self, error_type: str, exception: Optional[Exception] = None):
-        if self.shutdown_event.is_set():
-            return
-        logger.error(f"Critical error for stream {self.request_id}: {error_type} - {exception}")
-        self._critical_error_occurred = True
-        if self.running:
-            self.error_event.set()
-            asyncio.create_task(self.stop())
-
-    async def _control_loop(self):
-        if not self.control_subscriber:
-            return
+    async def _comfy_error_callback(self, error_type: str, exception: Optional[Exception] = None):
+        """ComfyStream-specific error handling."""
+        logger.error(f"Critical error for ComfyStream {self.request_id}: {error_type} - {exception}")
         
-        keepalive_message = {"keep": "alive"}
-        try:
-            while not self.shutdown_event.is_set() and not self.error_event.is_set():
-                segment = await self.control_subscriber.next()
-                if not segment or segment.eos():
-                    break
-                
-                params_data = await segment.read()
-                if not params_data:
-                    continue
-                
-                try:
-                    params = json.loads(params_data.decode('utf-8'))
-                except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    logger.warning(f"Invalid control message: {e}")
-                    continue
-                if params == keepalive_message:
-                    continue
-                
-                await self._handle_control_message(params)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Control loop error for stream {self.request_id}: {e}")
-            raise
+        # Update health manager
+        health_manager = self.app_context.get('health_manager')
+        if health_manager:
+            health_manager.set_error(f"Stream error: {error_type}")
     
-    async def _handle_control_message(self, params: Dict[str, Any]):
+    async def create_frame_processor(self) -> Callable:
+        """Return ComfyUI frame processor.
+        
+        This method replaces all the complex async task setup from the original
+        implementation by simply returning the processor function that the
+        base class will use.
+        """
+        # Set up text output callback for data publishing
+        # The base class provides _publish_data method
+        self.processor.set_text_output_callback(self._publish_data)
+        
+        # Start the processor's async tasks
+        await self.processor.start_processing()
+        
+        # Return the sync frame processing function
+        return self.processor.create_sync_bridge()
+    
+    async def handle_control_message(self, params: Dict[str, Any]):
+        """Handle ComfyUI parameter updates.
+        
+        This replaces the complex control message handling from the original
+        implementation with just the ComfyUI-specific logic.
+        """
         try:
             # Use ComfyUIParams.merge_with_defaults for validation and merging
             validated_params = ComfyUIParams.merge_with_defaults(
@@ -143,11 +112,22 @@ class TrickleStreamHandler(StreamHandler):
             # Handle dimension updates if present
             if "width" in params or "height" in params:
                 # Update resolution and check if it changed
-                resolution_changed = self.update_resolution(validated_params.width, validated_params.height)
+                resolution_changed = self.update_resolution(
+                    validated_params.width, 
+                    validated_params.height
+                )
                 
-                # Update processor dimensions if resolution changed
-                if resolution_changed and hasattr(self.processor, 'update_dimensions'):
-                    self.processor.update_dimensions(self.width, self.height)
+                # Update processor when resolution changed (without relying on a non-existent method)
+                if resolution_changed:
+                    try:
+                        self.processor.update_params({"width": self.width, "height": self.height})
+                    except Exception:
+                        pass
+                    # Reset timestamp tracking on resolution change to avoid non-monotonic DTS
+                    try:
+                        self.processor.reset_timestamp_tracking()
+                    except Exception:
+                        pass
                     
         except Exception as e:
             logger.error(f"Error handling control message for {self.request_id}: {e}")
@@ -155,142 +135,112 @@ class TrickleStreamHandler(StreamHandler):
             if health_manager:
                 health_manager.set_error("Error handling control message for stream")
     
-    async def _send_stats_periodically(self):
-        try:
-            while self.running:
-                try:
-                    stats = {
-                        "type": "stream_stats",
-                        "request_id": self.request_id,
-                        "timestamp": asyncio.get_event_loop().time(),
-                        "processor": self.processor.get_stats(),
-                        "stream": {"running": self.running, "width": self.width, "height": self.height}
-                    }
-                    await self._emit_monitoring_event(stats, "stream_stats")
-                except Exception as e:
-                    logger.error(f"Error sending stats for {self.request_id}: {e}")
-                
-                # Wait for 20 seconds or until shutdown
-                try:
-                    await asyncio.wait_for(self.shutdown_event.wait(), timeout=20.0)
-                    break  # Shutdown requested
-                except asyncio.TimeoutError:
-                    pass  # Continue with next stats interval
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Stats monitoring error for {self.request_id}: {e}")
-    
-    async def start(self) -> bool:
-        if self.running:
-            return False
+    async def _get_monitoring_stats(self) -> Optional[Dict[str, Any]]:
+        """Override to provide ComfyUI-specific monitoring stats.
         
+        This replaces the _send_stats_periodically method from the original
+        implementation with ComfyUI-specific stats collection.
+        """
+        base_stats = await super()._get_monitoring_stats()
+        if not base_stats:
+            return None
+        
+        # Add ComfyUI-specific monitoring data
         try:
-            # Set up text output callback before starting processing
-            self.processor.set_text_output_callback(self._publish_data)
-            await self.processor.start_processing()
-            await self._emit_monitoring_event({"type": "stream_started", "request_id": self.request_id}, "stream_trace")
-            
+            comfy_stats = {
+                "type": "stream_stats",
+                "request_id": self.request_id,
+                "processor": self.processor.get_stats()
+            }
+            base_stats.update(comfy_stats)
+        except Exception as e:
+            logger.error(f"Error collecting ComfyUI stats for {self.request_id}: {e}")
+        
+        return base_stats
+    
+    async def _setup_pipeline(self):
+        """Set up ComfyUI pipeline before starting stream.
+        
+        This handles the pipeline warming logic from the original implementation.
+        """
+        try:
             pipeline_already_warmed = self.app_context.get("warm_pipeline", False)
             
             if pipeline_already_warmed:
                 self.processor.set_pipeline_ready()
             else:
+                # Warm up the pipeline
                 success = await self.processor.warm_pipeline(timeout=30.0)
                 if not success:
                     logger.error(f"Pipeline warmup failed for {self.request_id}")
-                    await self.processor.stop_processing()
-                    return False
-            
-            self._task = asyncio.create_task(self.client.start(self.request_id))
-            self._task.add_done_callback(self._on_client_done)
-            self.running_event.set()
-            
+                    raise Exception("Pipeline warmup failed")
+                
+        except Exception as e:
+            logger.error(f"Error setting up pipeline for {self.request_id}: {e}")
+            raise
+    
+    async def start(self) -> bool:
+        """Start the ComfyStream handler.
+        
+        This overrides the base class start() to add ComfyUI-specific setup.
+        """
+        try:
+            # Set up ComfyUI pipeline first
+            await self._setup_pipeline()
+            # Reset timestamp tracking at stream start to ensure monotonic timestamps
             try:
-                self._stats_task = asyncio.create_task(self._send_stats_periodically())
+                self.processor.reset_timestamp_tracking()
             except Exception:
                 pass
             
-            if self.control_url and self.control_url.strip():
-                try:
-                    self._control_task = asyncio.create_task(self._control_loop())
-                except Exception:
-                    pass
+            # Call base class start() which handles all the trickle protocol setup
+            success = await super().start()
             
-            return True
+            if success:
+                logger.info(f"ComfyStream handler {self.request_id} started successfully")
+            else:
+                logger.error(f"Failed to start ComfyStream handler {self.request_id}")
+                
+            return success
+            
         except Exception as e:
-            logger.error(f"Failed to start stream handler {self.request_id}: {e}")
-            self._set_final_state()
-            await self.processor.stop_processing()
+            logger.error(f"Error starting ComfyStream handler {self.request_id}: {e}")
+            # Clean up processor if pipeline setup failed
+            try:
+                await self.processor.stop_processing()
+            except Exception:
+                pass
             return False
     
-    def _on_client_done(self, task: asyncio.Task):
-        self.shutdown_event.set()
-        if task.exception():
-            logger.error(f"Client task for {self.request_id} finished with exception: {task.exception()}")
-            cleanup_task = asyncio.create_task(self.stop())
-            cleanup_task.add_done_callback(lambda t: None)
-        else:
-            stop_task = asyncio.create_task(self.stop())
-            stop_task.add_done_callback(lambda t: None)
-
-
     async def stop(self, *, called_by_manager: bool = False) -> bool:
-        async with self._cleanup_lock:
-            self.shutdown_event.set()
-            
+        """Stop the ComfyStream handler.
+        
+        This overrides the base class stop() to add ComfyUI-specific cleanup.
+        """
+        try:
+            # Stop the ComfyUI processor first
             try:
-                try:
-                    await asyncio.wait_for(self.processor.stop_processing(), timeout=8.0)
-                except (asyncio.TimeoutError, Exception):
-                    pass
-                
-                try:
-                    await asyncio.wait_for(self.client.stop(), timeout=3.0)
-                except (asyncio.TimeoutError, Exception):
-                    pass
-                
-                await CleanupManager.cancel_task_with_timeout(self._task, "Main task")
-                await CleanupManager.cancel_task_with_timeout(self._stats_task, "Stats task")
-                await CleanupManager.cancel_task_with_timeout(self._control_task, "Control loop")
-                
-                if self.control_subscriber:
-                    try:
-                        await self.control_subscriber.shutdown()
-                        await self.control_subscriber.close()
-                    except Exception:
-                        pass
-                
-                try:
-                    final_stats = {
-                        "type": "stream_stopped",
-                        "request_id": self.request_id,
-                        "timestamp": asyncio.get_event_loop().time(),
-                        "final_frame_count": self.processor.frame_count
-                    }
-                    await self._emit_monitoring_event(final_stats, "stream_trace")
-                except Exception:
-                    pass
-                
-                if not called_by_manager:
-                    await self._remove_from_manager_and_update_health()
-                
-                self._set_final_state()
-                return True
-                
-            except Exception as e:
-                logger.error(f"Error stopping stream handler {self.request_id}: {e}")
-                if not called_by_manager:
-                    await self._remove_from_manager_and_update_health(emergency=True)
-                self._set_final_state()
-                return False
-
-    def _set_final_state(self):
-        self.running_event.clear()
-        self.shutdown_event.set()
-        self.error_event.set()
-
-    async def _remove_from_manager_and_update_health(self, emergency: bool = False):
+                await asyncio.wait_for(self.processor.stop_processing(), timeout=8.0)
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"Processor stop timeout/error for {self.request_id}: {e}")
+            
+            # Call base class stop() which handles all the trickle protocol cleanup
+            success = await super().stop(called_by_manager=called_by_manager)
+            
+            # ComfyStream-specific cleanup for health manager
+            if not called_by_manager:
+                await self._update_comfy_health_manager()
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error stopping ComfyStream handler {self.request_id}: {e}")
+            if not called_by_manager:
+                await self._update_comfy_health_manager(emergency=True)
+            return False
+    
+    async def _update_comfy_health_manager(self, emergency: bool = False):
+        """Update ComfyStream health manager with stream removal."""
         try:
             stream_manager = self.app_context.get('stream_manager')
             if stream_manager:
@@ -302,6 +252,9 @@ class TrickleStreamHandler(StreamHandler):
                             stream_count = len(stream_manager.handlers)
                             health_manager.update_trickle_streams(stream_count)
                             if stream_count == 0:
-                                health_manager.clear_error()
+                                if emergency:
+                                    health_manager.set_error("Emergency stream shutdown")
+                                else:
+                                    health_manager.clear_error()
         except Exception as e:
-            logger.error(f"Error during cleanup for stream {self.request_id}: {e}")
+            logger.error(f"Error updating health manager for stream {self.request_id}: {e}")

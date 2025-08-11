@@ -50,7 +50,7 @@ class TrickleStreamManager(GenericTrickleStreamManager):
     def _update_health_manager(self):
         if self.health_manager:
             stream_count = len(self.handlers)
-            if hasattr(self.health_manager, 'update_trickle_streams'):
+            if self.health_manager.update_trickle_streams:
                 self.health_manager.update_trickle_streams(stream_count)
             else:
                 self.health_manager.update_active_streams(stream_count)
@@ -65,11 +65,9 @@ class TrickleStreamManager(GenericTrickleStreamManager):
             'publish_url': handler.publish_url,
             'control_url': handler.control_url,
             'events_url': handler.events_url,
-            'events_available': handler.events_available,
+            'data_url': handler.data_url,
             'width': handler.width,
             'height': handler.height,
-            'processor_stats': handler.processor.get_stats(),
-            'stats_monitoring_active': handler._stats_task is not None and not handler._stats_task.done(),
-            'pipeline_ready': handler.processor.pipeline_ready,
+            'processor_stats': handler.processor.get_stats() if handler.processor else None,
         })
         return base

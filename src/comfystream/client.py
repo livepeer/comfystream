@@ -84,7 +84,13 @@ class ComfyStreamClient:
         
     async def cleanup_queues(self):
         while not tensor_cache.image_inputs.empty():
-            tensor_cache.image_inputs.get()
+            try:
+                tensor_cache.image_inputs.get_nowait()
+                # If this is a queue.Queue, mark the dropped task as done
+                if hasattr(tensor_cache.image_inputs, 'task_done'):
+                    tensor_cache.image_inputs.task_done()
+            except Exception:
+                break
 
         while not tensor_cache.audio_inputs.empty():
             tensor_cache.audio_inputs.get()
@@ -99,12 +105,45 @@ class ComfyStreamClient:
             await tensor_cache.text_outputs.get()
 
     def put_video_input(self, frame):
-        if tensor_cache.image_inputs.full():
-            tensor_cache.image_inputs.get(block=True)
-        tensor_cache.image_inputs.put(frame)
+        # Drop oldest frame if full, non-blocking, and mark as done if supported
+        try:
+            if tensor_cache.image_inputs.full():
+                try:
+                    tensor_cache.image_inputs.get_nowait()
+                    if tensor_cache.image_inputs.task_done:
+                        tensor_cache.image_inputs.task_done()
+                except Exception:
+                    pass
+            # Prefer non-blocking put to avoid stalling caller
+            if tensor_cache.image_inputs.put_nowait:
+                tensor_cache.image_inputs.put_nowait(frame)
+            else:
+                tensor_cache.image_inputs.put(frame)
+        except Exception:
+            # As a fallback, attempt a best-effort blocking put
+            try:
+                tensor_cache.image_inputs.put(frame)
+            except Exception:
+                pass
     
     def put_audio_input(self, frame):
-        tensor_cache.audio_inputs.put(frame)
+        try:
+            if tensor_cache.audio_inputs.full:
+                try:
+                    tensor_cache.audio_inputs.get_nowait()
+                    if tensor_cache.audio_inputs.task_done:
+                        tensor_cache.audio_inputs.task_done()
+                except Exception:
+                    pass
+            if tensor_cache.audio_inputs.put_nowait:
+                tensor_cache.audio_inputs.put_nowait(frame)
+            else:
+                tensor_cache.audio_inputs.put(frame)
+        except Exception:
+            try:
+                tensor_cache.audio_inputs.put(frame)
+            except Exception:
+                pass
 
     async def get_video_output(self):
         return await tensor_cache.image_outputs.get()

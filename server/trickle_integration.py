@@ -37,7 +37,7 @@ class ComfyStreamTrickleProcessor(AsyncFrameProcessor):
         self.pipeline = pipeline
         self.request_id = request_id
         self.state = StreamState()
-        self.frame_buffer = FrameBuffer(max_frames=300)
+        self.frame_buffer = FrameBuffer(max_frames=60)
         
         # Text streaming
         self.text_streaming_task = None
@@ -125,7 +125,7 @@ class ComfyStreamTrickleProcessor(AsyncFrameProcessor):
                 logger.error(f"Error processing video frame: {e}")
                 if self.error_callback:
                     self.error_callback(e)
-                return None
+                return frame
         else:
             # Audio processing mode - pass video through unchanged
             return frame
@@ -268,6 +268,11 @@ class ComfyStreamTrickleProcessor(AsyncFrameProcessor):
             self._pipeline_ready = True
             self._pipeline_ready_event.set()
             self.state.set_pipeline_ready()
+            # Ensure timestamp continuity starts fresh after warmup
+            try:
+                self.reset_timestamp_tracking()
+            except Exception:
+                pass
             
             logger.info(f"ComfyStream pipeline ready for {self.request_id}")
             return True
@@ -281,6 +286,12 @@ class ComfyStreamTrickleProcessor(AsyncFrameProcessor):
         self._pipeline_ready = True
         self._pipeline_ready_event.set()
         self.state.set_pipeline_ready()
+        # Reset timestamp tracking when pipeline becomes ready to avoid
+        # non-monotonic DTS across encoder restarts/new segments
+        try:
+            self.reset_timestamp_tracking()
+        except Exception:
+            pass
     
     async def wait_for_pipeline_ready(self, timeout: float = 30.0) -> bool:
         """
