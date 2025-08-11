@@ -37,13 +37,21 @@ class TrickleStreamHandler(StreamHandler):
         self.processor = ComfyStreamTrickleProcessor(pipeline, request_id)
         
         self.protocol = TrickleProtocol(
-            subscribe_url=subscribe_url, publish_url=publish_url, control_url=control_url,
-            events_url=events_url, data_url=data_url, width=width, height=height, error_callback=self._on_error
+            subscribe_url=subscribe_url,
+            publish_url=publish_url,
+            control_url=control_url,
+            events_url=events_url,
+            data_url=data_url,
+            width=width,
+            height=height,
+            error_callback=self._on_error
         )
         
         self.client = TrickleClient(
-            protocol=self.protocol, frame_processor=self.processor.process_frame_sync,
-            control_handler=self._handle_control_message, error_callback=self._on_error
+            protocol=self.protocol,
+            frame_processor=self.processor.create_sync_bridge(),
+            control_handler=self._handle_control_message,
+            error_callback=self._on_error
         )
         
         self.control_subscriber = TrickleSubscriber(control_url, error_callback=self._on_error) if control_url and control_url.strip() else None
@@ -155,12 +163,7 @@ class TrickleStreamHandler(StreamHandler):
                         "type": "stream_stats",
                         "request_id": self.request_id,
                         "timestamp": asyncio.get_event_loop().time(),
-                        "processor": {
-                            "frame_count": self.processor.frame_count,
-                            "pipeline_ready": self.processor.state.pipeline_ready,
-                            "buffer_stats": self.processor.frame_buffer.get_stats(),
-                            "last_processed_frame_available": self.processor.last_processed_frame is not None
-                        },
+                        "processor": self.processor.get_stats(),
                         "stream": {"running": self.running, "width": self.width, "height": self.height}
                     }
                     await self._emit_monitoring_event(stats, "stream_stats")
@@ -191,23 +194,13 @@ class TrickleStreamHandler(StreamHandler):
             pipeline_already_warmed = self.app_context.get("warm_pipeline", False)
             
             if pipeline_already_warmed:
-                await self.processor.set_pipeline_ready()
+                self.processor.set_pipeline_ready()
             else:
-                try:
-                    # reflect warming state for observability
-                    try:
-                        self.processor.state.set_pipeline_warming()
-                    except Exception:
-                        pass
-                    await self.pipeline.warm_pipeline()
-                    if hasattr(self.pipeline, 'wait_for_first_processed_frame'):
-                        try:
-                            await self.pipeline.wait_for_first_processed_frame(timeout=30.0)
-                        except Exception:
-                            pass
-                except Exception as e:
-                    logger.error(f"Pipeline warmup failed: {e}")
-                await self.processor.set_pipeline_ready()
+                success = await self.processor.warm_pipeline(timeout=30.0)
+                if not success:
+                    logger.error(f"Pipeline warmup failed for {self.request_id}")
+                    await self.processor.stop_processing()
+                    return False
             
             self._task = asyncio.create_task(self.client.start(self.request_id))
             self._task.add_done_callback(self._on_client_done)

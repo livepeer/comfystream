@@ -68,8 +68,8 @@ class TrickleStreamManager(GenericTrickleStreamManager):
             'events_available': handler.events_available,
             'width': handler.width,
             'height': handler.height,
-            'frame_count': getattr(handler.processor, 'frame_count', None),
-            'stats_monitoring_active': getattr(handler, '_stats_task', None) is not None and not getattr(getattr(handler, '_stats_task', None), 'done', lambda: True)(),
-            'pipeline_ready': getattr(getattr(handler, 'processor', None), 'state', None).pipeline_ready if getattr(getattr(handler, 'processor', None), 'state', None) else None,
+            'processor_stats': handler.processor.get_stats(),
+            'stats_monitoring_active': handler._stats_task is not None and not handler._stats_task.done(),
+            'pipeline_ready': handler.processor.pipeline_ready,
         })
         return base
