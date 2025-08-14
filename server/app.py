@@ -3,8 +3,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
-import time
 import secrets
 import torch
 
@@ -15,7 +13,6 @@ if torch.cuda.is_available():
 
 from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
-from aiohttp import web
 from aiortc import (
     MediaStreamTrack,
     RTCConfiguration,
@@ -29,9 +26,10 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
 from twilio.rest import Client
+
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
-import time
+from frame_buffer import FrameBuffer
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
@@ -110,20 +108,18 @@ class VideoStreamTrack(MediaStreamTrack):
         """
         processed_frame = await self.pipeline.get_processed_video_frame()
 
-                # Update the frame buffer with the processed frame
+        # Increment the frame count to calculate FPS.
+        await self.fps_meter.increment_frame_count()
+
+        # Update the frame buffer with the processed frame
         try:
-            from frame_buffer import FrameBuffer
             frame_buffer = FrameBuffer.get_instance()
             frame_buffer.update_frame(processed_frame)
         except Exception as e:
             # Don't let frame buffer errors affect the main pipeline
-            print(f"Error updating frame buffer: {e}")
-
-        # Increment the frame count to calculate FPS.
-        await self.fps_meter.increment_frame_count()
+            logger.error(f"Error updating frame buffer: {e}")
 
         return processed_frame
-
 
 class AudioStreamTrack(MediaStreamTrack):
     kind = "audio"
@@ -362,11 +358,11 @@ async def offer(request):
 
 async def cancel_collect_frames(track):
     track.running = False
-    if hasattr(track, 'collect_task') is not None and not track.collect_task.done():
+    if hasattr(track, 'collect_task') and not track.collect_task.done():
         try:
             track.collect_task.cancel()
             await track.collect_task
-        except (asyncio.CancelledError):
+        except asyncio.CancelledError:
             pass
 
 async def set_prompt(request):
@@ -507,10 +503,6 @@ if __name__ == "__main__":
     # NOTE: This ensures that the local and hosted experiences have consistent routes.
     add_prefix_to_app_routes(app, "/live")
 
-    def force_print(*args, **kwargs):
-        print(*args, **kwargs, flush=True)
-        sys.stdout.flush()
-
     # Allow overriding of ComyfUI log levels.
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
@@ -518,4 +510,4 @@ if __name__ == "__main__":
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 
-    web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    web.run_app(app, host=args.host, port=int(args.port), print=print)

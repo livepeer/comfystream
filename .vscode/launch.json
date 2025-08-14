@@ -36,6 +36,34 @@
             "python": "/workspace/miniconda3/envs/comfystream/bin/python"
         },
         {
+            "name": "Run ComfyStream with PyTrickle",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/workspace/comfystream",
+            "program": "main_trickle.py",
+            "purpose": ["debug-in-terminal"],
+            "env": {
+                "PYDEVD_DISABLE_FILE_VALIDATION": "1",
+                "ORCH_URL": "https://192.168.10.61:9995",
+                "ORCH_SECRET": "orch-secret",
+                "CAPABILITY_NAME": "comfystream-trickle",
+                "CAPABILITY_DESCRIPTION": "ComfyUI AI video processing with PyTrickle streaming",
+                "CAPABILITY_URL": "http://192.168.10.61:8037",
+                "CAPABILITY_PRICE_PER_UNIT": "0",
+                "CAPABILITY_PRICE_SCALING": "1",
+                "CAPABILITY_CAPACITY": "1"
+            },
+            "args": [
+                "--workspace=/workspace/ComfyUI",
+                "--host=0.0.0.0",
+                "--port=8037",
+                "--log-level=DEBUG",
+                "--warmup-workflow=workflows/comfystream/inverted-color-api.json",
+                // "--warmup-workflow=workflows/comfystream/sd15-tensorrt-feature-bank-api.json"
+            ],
+            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+        },
+        {
             "name": "Run ComfyStream UI (Node.js)",
             "type": "node",
             "request": "launch",

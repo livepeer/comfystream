@@ -1,83 +1,321 @@
 import asyncio
-from typing import List
+from typing import List, Dict, Any
 import logging
 
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
-
-from comfy.api.components.schema.prompt import PromptDictInput
+from comfy.api.components.schema.prompt import Prompt
 from comfy.cli_args_types import Configuration
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+from comfy.nodes.package import import_all_nodes_in_workspace
 
 logger = logging.getLogger(__name__)
 
-
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
-        config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
-        self.running_prompts = {} # To be used for cancelling tasks
-        self.current_prompts = []
+        # Persist configuration for rebuilds
+        self._config_kwargs: Dict[str, Any] = dict(kwargs)
+        self._max_workers: int = max_workers
+        # Build embedded client (single-executor mode only)
+        self._build_embedded()
+        
+        # Simplified state management
+        self._active_prompt = None  # Single active prompt
+        self._prompt_task = None    # Single running task
         self._cleanup_lock = asyncio.Lock()
-        self._prompt_update_lock = asyncio.Lock()
+        self._shutdown_event = asyncio.Event()  # Event to signal shutdown
+        self._input_event = asyncio.Event()     # Event to signal new input availability
+        
+        # Track running prompts for better cleanup coordination
+        self._running_prompt_tasks = set()  # Track active prompt execution tasks
+        
+        # Always set a basic default prompt
+        self._set_default_prompt()
 
-    async def set_prompts(self, prompts: List[PromptDictInput]):
-        await self.cancel_running_prompts()
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-        for idx in range(len(self.current_prompts)):
-            task = asyncio.create_task(self.run_prompt(idx))
-            self.running_prompts[idx] = task
+    def _build_embedded(self):
+        config = Configuration(**self._config_kwargs)
+        # Always use single-executor mode to avoid VRAM growth across restarts
+        self.comfy_client = EmbeddedComfyClient(config, max_workers=self._max_workers)
 
-    async def update_prompts(self, prompts: List[PromptDictInput]):
-        async with self._prompt_update_lock:
-            # TODO: currently under the assumption that only already running prompts are updated
-            if len(prompts) != len(self.current_prompts):
-                raise ValueError(
-                    "Number of updated prompts must match the number of currently running prompts."
+    def _set_default_prompt(self):
+        """Set a simple default prompt that always works."""
+        self._active_prompt = {
+            "1": {
+                "inputs": {"images": ["2", 0]},
+                "class_type": "SaveTensor",
+                "_meta": {"title": "SaveTensor"}
+            },
+            "2": {
+                "inputs": {},
+                "class_type": "LoadTensor",
+                "_meta": {"title": "LoadTensor"}
+            }
+        }
+        logger.info("Default prompt set (LoadTensor -> SaveTensor)")
+
+    async def set_workflow(self, workflow: dict):
+        """External method: Set a new workflow and start processing."""
+        try:
+            # Convert and validate workflow
+            # If the workflow is already a validated Prompt (immutabledict), avoid reconverting
+            if isinstance(workflow, dict):
+                converted_workflow = convert_prompt(workflow)
+            else:
+                # Best effort: ensure it's a Prompt; this is a no-op if already validated
+                converted_workflow = Prompt.validate(workflow)
+            
+            # Check if we're already running the same workflow to avoid unnecessary restarts
+            if (self._active_prompt is not None and 
+                self._active_prompt == converted_workflow and 
+                self._prompt_task and not self._prompt_task.done()):
+                logger.info("Workflow unchanged, skipping restart to preserve models")
+                return
+            
+            # Only stop execution if we need to change the workflow
+            if self._prompt_task and not self._prompt_task.done():
+                await self._stop_current_execution()
+            
+            # Set as active prompt
+            self._active_prompt = converted_workflow
+            
+            # Start processing
+            await self._start_execution()
+            
+            logger.info("New workflow set and started")
+            
+        except Exception as e:
+            logger.error(f"Failed to set workflow: {e}")
+            # Fall back to default
+            self._set_default_prompt()
+            await self._start_execution()
+            logger.info("Fell back to default prompt")
+
+    async def _start_execution(self):
+        """Internal method: Start executing the active prompt."""
+        if self._active_prompt is None:
+            self._set_default_prompt()
+            
+        # Clear shutdown event and input event to start fresh
+        self._shutdown_event.clear()
+        self._input_event.clear()
+        
+        # Ensure EmbeddedComfyClient context is active so cleanup runs properly later
+        if not self.comfy_client.is_running:
+            await self.comfy_client.__aenter__()
+        
+        # Start prompt execution task
+        self._prompt_task = asyncio.create_task(self._run_prompt_loop())
+        logger.info("Prompt execution started")
+
+    async def _stop_current_execution(self):
+        """Internal method: Stop current prompt execution."""
+        await self.cancel_prompts(flush_queues=False, force=False, timeout=2.0)
+
+
+    async def stop(self):
+        """Public method: Stop prompt scheduling and drain queues to prepare for cleanup or restart."""
+        # Set shutdown event to stop the loop
+        self._shutdown_event.set()
+        
+        # Cancel the prompt task if running
+        if self._prompt_task and not self._prompt_task.done():
+            self._prompt_task.cancel()
+            try:
+                await self._prompt_task
+            except asyncio.CancelledError:
+                pass
+        self._prompt_task = None
+        
+        # Wait for running prompts to complete or cancel them after timeout
+        if self._running_prompt_tasks:
+            logger.info(f"Waiting for {len(self._running_prompt_tasks)} running prompts to complete...")
+            try:
+                # Wait up to 3 seconds for prompts to complete naturally
+                await asyncio.wait_for(
+                    asyncio.gather(*self._running_prompt_tasks, return_exceptions=True),
+                    timeout=3.0
                 )
-            # Validation step before updating the prompt, only meant for a single prompt for now
-            for idx, prompt in enumerate(prompts):
-                converted_prompt = convert_prompt(prompt)
-                try:
-                    await self.comfy_client.queue_prompt(converted_prompt)
-                    self.current_prompts[idx] = converted_prompt
-                except Exception as e:
-                    raise Exception(f"Prompt update failed: {str(e)}") from e
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for prompts, cancelling remaining tasks")
+                # Cancel remaining tasks
+                for task in self._running_prompt_tasks:
+                    if not task.done():
+                        task.cancel()
+                # Wait for cancellations
+                await asyncio.gather(*self._running_prompt_tasks, return_exceptions=True)
+            finally:
+                self._running_prompt_tasks.clear()
+        
+        # Drain tensor cache queues immediately to prevent stale data in next stream
+        await self.cleanup_queues()
 
-    async def run_prompt(self, prompt_index: int):
-        while True:
-            async with self._prompt_update_lock:
+    async def _run_prompt_loop(self):
+        """Internal method: Main prompt execution loop."""
+        while not self._shutdown_event.is_set():
+            try:
+                # Check shutdown event
+                if self._shutdown_event.is_set():
+                    break
+                    
+                # If executor was shut down, exit loop cleanly
+                if not self.comfy_client.is_running:
+                    logger.warning("EmbeddedComfyClient not running; exiting prompt scheduler loop")
+                    break
+
+                # Wait for new input signal to avoid uncontrollable queuing
                 try:
-                    await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    await self.cleanup()
-                    logger.error(f"Error running prompt: {str(e)}")
-                    raise
+                    await asyncio.wait_for(self._input_event.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    # No new input yet; keep idling
+                    continue
+
+                # Queue one prompt execution
+                try:
+                    prompt_task = asyncio.create_task(
+                        self.comfy_client.queue_prompt(self._active_prompt)
+                    )
+                    self._running_prompt_tasks.add(prompt_task)
+                    
+                    await asyncio.wait_for(prompt_task, timeout=5.0)
+                    
+                    # Clean up completed task
+                    self._running_prompt_tasks.discard(prompt_task)
+                    
+                except asyncio.TimeoutError:
+                    logger.debug("Prompt execution timeout in streaming mode")
+                    # Clean up timed out task
+                    self._running_prompt_tasks.discard(prompt_task)
+                    # Do not clear the input event; try again next loop
+                    continue
+
+                # Clear the input signal if queues are empty; otherwise keep it set to drain backlog
+                try:
+                    if tensor_cache.image_inputs.empty() and tensor_cache.audio_inputs.empty():
+                        self._input_event.clear()
+                except Exception:
+                    # Defensive: if queues not available, just clear
+                    self._input_event.clear()
+            except Exception as e:
+                logger.error(f"Error in prompt loop: {str(e)}")
+                # Don't cleanup here, let the calling method handle it
+                raise
+
+    async def _await_no_tasks(self, timeout: float = 2.0):
+        """Wait until EmbeddedComfyClient has no queued tasks or until timeout."""
+        try:
+            deadline = asyncio.get_event_loop().time() + timeout
+            while getattr(self.comfy_client, 'task_count', 0) > 0:
+                if asyncio.get_event_loop().time() >= deadline:
+                    raise TimeoutError("Comfy tasks did not drain in time")
+                await asyncio.sleep(0.05)
+        except Exception:
+            # Don't raise in stop path
+            pass
+
+    async def cancel_prompts(self, flush_queues: bool = True, force: bool = False, timeout: float = 2.0):
+        """Cooperatively cancel current and pending prompt scheduling and optionally flush queues.
+
+        Args:
+            flush_queues: Clear input/output queues after cancellation
+            force: Forcefully exit EmbeddedComfyClient context if still running
+            timeout: Seconds to wait for executor tasks to drain
+        """
+        # Signal cooperative shutdown
+        self._shutdown_event.set()
+
+        # Best-effort interrupt running execution
+        try:
+            if hasattr(self.comfy_client, 'interrupt'):
+                self.comfy_client.interrupt()
+        except Exception as e:
+            logger.debug(f"Interrupt ignored: {e}")
+
+        # Cancel scheduler task
+        if self._prompt_task and not self._prompt_task.done():
+            self._prompt_task.cancel()
+            try:
+                await self._prompt_task
+            except asyncio.CancelledError:
+                pass
+        self._prompt_task = None
+
+        # Wait for executor to drain
+        await self._await_no_tasks(timeout=timeout)
+
+        # Optionally flush queues and cleanup CUDA
+        if flush_queues:
+            try:
+                await self.cleanup_queues()
+            except Exception as e:
+                logger.debug(f"Queue flush failed: {e}")
+
+        # Optionally force context exit
+        if force:
+            try:
+                if self.comfy_client.is_running:
+                    await self.comfy_client.__aexit__()
+            except Exception as e:
+                logger.debug(f"Forced context exit error: {e}")
+
+        logger.info("Prompt cancellation complete")
 
     async def cleanup(self):
-        await self.cancel_running_prompts()
+        """Clean shutdown of the client."""
         async with self._cleanup_lock:
-            if self.comfy_client.is_running:
-                try:
-                    await self.comfy_client.__aexit__()
-                except Exception as e:
-                    logger.error(f"Error during ComfyClient cleanup: {e}")
-
+            # Stop current execution
+            await self.cancel_prompts(flush_queues=True, force=False, timeout=2.0)
+            
+            # Shutdown embedded client
+            await self._shutdown_embedded_client()
+            
+            # Cleanup queues
             await self.cleanup_queues()
+            
             logger.info("Client cleanup complete")
+    
+    async def _shutdown_embedded_client(self):
+        """Shutdown the EmbeddedComfyClient via its async context to free VRAM."""
+        if not self.comfy_client:
+            return
+        try:
+            if self.comfy_client.is_running:
+                logger.info("Stopping EmbeddedComfyClient (context exit)...")
+                await self.comfy_client.__aexit__()
+                logger.info("EmbeddedComfyClient stopped and cleaned up")
+            else:
+                # Enter then exit to force cleanup if needed
+                logger.info("Entering and exiting EmbeddedComfyClient to force cleanup")
+                await self.comfy_client.__aenter__()
+                await self.comfy_client.__aexit__()
+                logger.info("EmbeddedComfyClient cleaned up via context cycle")
+        except Exception as e:
+            logger.error(f"Error during embedded client shutdown: {e}")
+    
 
-    async def cancel_running_prompts(self):
-        async with self._cleanup_lock:
-            tasks_to_cancel = list(self.running_prompts.values())
-            for task in tasks_to_cancel:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            self.running_prompts.clear()
+
+    # Legacy compatibility methods for BufferedComfyStreamProcessor
+    async def set_prompts(self, prompts: List[Dict[str, Any]]):
+        """Legacy method: Set prompts (now just uses first prompt)."""
+        if prompts and len(prompts) > 0:
+            await self.set_workflow(prompts[0])
+        else:
+            # Fall back to default
+            self._set_default_prompt()
+            await self._start_execution()
+
+    async def update_prompts(self, prompts: List[Dict[str, Any]]):
+        """Legacy method: Update prompts (same as set_prompts)."""
+        await self.set_prompts(prompts)
+
+    @property
+    def running_prompts(self):
+        """Legacy property: Returns dict showing if prompt is running."""
+        return {0: self._prompt_task} if self._prompt_task and not self._prompt_task.done() else {}
+    
+    @property 
+    def current_prompts(self):
+        """Legacy property: Returns current active prompt as list."""
+        return [self._active_prompt] if self._active_prompt else []
 
         
     async def cleanup_queues(self):
@@ -94,27 +332,80 @@ class ComfyStreamClient:
             await tensor_cache.audio_outputs.get()
 
     def put_video_input(self, frame):
-        if tensor_cache.image_inputs.full():
-            tensor_cache.image_inputs.get(block=True)
+        # Smart frame dropping: only keep the latest frame to avoid lag
+        # Clear the queue and keep only the newest frame for real-time processing
+        dropped_count = 0
+        while not tensor_cache.image_inputs.empty():
+            try:
+                tensor_cache.image_inputs.get(block=False)
+                dropped_count += 1
+            except:
+                break
+        
         tensor_cache.image_inputs.put(frame)
+        # Signal input availability
+        self._input_event.set()
     
     def put_audio_input(self, frame):
         tensor_cache.audio_inputs.put(frame)
+        # Signal input availability
+        self._input_event.set()
 
-    async def get_video_output(self):
-        return await tensor_cache.image_outputs.get()
+    async def get_video_output(self, timeout=None):
+        """Get video output. 
+        
+        Args:
+            timeout: Maximum time to wait in seconds. None for blocking, 0 for non-blocking.
+                    Returns None if timeout occurs.
+        """
+        if timeout is None:
+            return await tensor_cache.image_outputs.get()
+        elif timeout == 0:
+            # Non-blocking check
+            if tensor_cache.image_outputs.empty():
+                return None
+            try:
+                return await asyncio.wait_for(tensor_cache.image_outputs.get(), timeout=0.001)
+            except asyncio.TimeoutError:
+                return None
+        else:
+            # Timeout specified
+            try:
+                return await asyncio.wait_for(tensor_cache.image_outputs.get(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return None
     
-    async def get_audio_output(self):
-        return await tensor_cache.audio_outputs.get()
+    async def get_audio_output(self, timeout=None):
+        """Get audio output.
+        
+        Args:
+            timeout: Maximum time to wait in seconds. None for blocking, 0 for non-blocking.
+                    Returns None if timeout occurs.
+        """
+        if timeout is None:
+            return await tensor_cache.audio_outputs.get()
+        elif timeout == 0:
+            # Non-blocking check
+            if tensor_cache.audio_outputs.empty():
+                return None
+            try:
+                return await asyncio.wait_for(tensor_cache.audio_outputs.get(), timeout=0.001)
+            except asyncio.TimeoutError:
+                return None
+        else:
+            # Timeout specified
+            try:
+                return await asyncio.wait_for(tensor_cache.audio_outputs.get(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return None
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
         # TODO: make it for for multiple prompts
-        if not self.running_prompts:
+        if not self._running_prompt_tasks:
             return {}
 
         try:
-            from comfy.nodes.package import import_all_nodes_in_workspace
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}

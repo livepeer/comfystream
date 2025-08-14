@@ -4,6 +4,39 @@ from typing import Dict, Any
 from comfy.api.components.schema.prompt import Prompt, PromptDictInput
 
 
+# Input node types
+INPUT_NODES_PRIMARY = ["PrimaryInputLoadImage"]
+INPUT_NODES_GENERAL = ["LoadImage", "LoadTensor", "LoadAudioTensor"]
+INPUT_NODES_GENERATION = ["EmptyLatentImage"]
+
+# Output node types
+OUTPUT_NODES_PREVIEW = ["PreviewImage"]
+OUTPUT_NODES_SAVE = ["SaveImage", "SaveTensor", "SaveAudioTensor"]
+
+# Audio-focused node types
+AUDIO_INPUT_NODES = ["LoadAudioTensor"]
+AUDIO_OUTPUT_NODES = ["SaveAudioTensor"]
+
+# Video/Image-focused node types
+VIDEO_INPUT_NODES = ["LoadTensor", "EmptyLatentImage", "LoadImage", "PrimaryInputLoadImage"]
+VIDEO_OUTPUT_NODES = ["PreviewImage", "SaveImage", "SaveTensor"]
+
+# Node type collections for workflow processing
+REPLACEABLE_NODE_TYPES = INPUT_NODES_PRIMARY + INPUT_NODES_GENERAL + OUTPUT_NODES_PREVIEW + OUTPUT_NODES_SAVE
+
+# All input types (for counting and validation)
+ALL_INPUT_NODES = INPUT_NODES_PRIMARY + INPUT_NODES_GENERAL + INPUT_NODES_GENERATION
+
+# All output types (for counting and validation)
+ALL_OUTPUT_NODES = OUTPUT_NODES_PREVIEW + OUTPUT_NODES_SAVE
+
+# Utility node types that don't require input/output nodes
+UTILITY_NODE_TYPES = [
+    "UnloadAllModels", "UnloadModel", "FreeMemory", "ClearLatentCache",
+    "ClearCacheNode", "GarbageCollectNode", "SystemInfoNode"
+]
+
+
 def create_load_tensor_node():
     return {
         "inputs": {},
@@ -21,9 +54,10 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
 
 
 def convert_prompt(prompt: PromptDictInput) -> Prompt:
-    # Validate the schema
-    Prompt.validate(prompt)
-
+    """
+    Convert and validate a ComfyUI workflow prompt.
+    
+    """
     prompt = copy.deepcopy(prompt)
 
     num_primary_inputs = 0
@@ -45,11 +79,11 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
             keys[class_type].append(key)
 
         # Count inputs and outputs
-        if class_type == "PrimaryInputLoadImage":
+        if class_type in INPUT_NODES_PRIMARY:
             num_primary_inputs += 1
-        elif class_type in ["LoadImage", "LoadTensor", "LoadAudioTensor"]:
+        elif class_type in INPUT_NODES_GENERAL:
             num_inputs += 1
-        elif class_type in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor"]:
+        elif class_type in ALL_OUTPUT_NODES:
             num_outputs += 1
 
     # Only handle single primary input
@@ -85,3 +119,33 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     prompt = Prompt.validate(prompt)
 
     return prompt
+
+
+def is_audio_focused_workflow(prompt: Dict[Any, Any]) -> bool:
+    """
+    Detect if a workflow is audio-focused by checking the input node type.
+    
+    This function should be called AFTER convert_prompt() has been run to ensure
+    consistent node types. It checks for:
+    - LoadAudioTensor = audio workflow
+    - LoadTensor, EmptyLatentImage, LoadImage = video workflow
+    
+    Args:
+        prompt: The workflow prompt dictionary (must be processed by convert_prompt first)
+        
+    Returns:
+        True if the workflow is audio-focused, False otherwise
+    """
+    for node in prompt.values():
+        class_type = node.get("class_type", "")
+        
+        # Check for audio input node
+        if class_type in AUDIO_INPUT_NODES:
+            return True
+            
+        # Check for video/image input nodes
+        elif class_type in VIDEO_INPUT_NODES:
+            return False
+    
+    # Default to video workflow if no clear input node found
+    return False

@@ -4,9 +4,10 @@ import numpy as np
 import asyncio
 import logging
 from typing import Any, Dict, Union, List, Optional
-
+import av
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+from comfystream.utils import convert_prompt, is_audio_focused_workflow
 
 WARMUP_RUNS = 5
 
@@ -35,6 +36,7 @@ class Pipeline:
         self.client = ComfyStreamClient(**kwargs)
         self.width = width
         self.height = height
+        self.prompts = []
 
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
@@ -45,47 +47,124 @@ class Pipeline:
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
-        # Create dummy frame with the CURRENT resolution settings
-        dummy_frame = av.VideoFrame()
-        dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
         
         logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
+        logger.info(f"Current prompts loaded: {len(self.prompts) if self.prompts else 0}")
+        logger.info(f"Running prompts in client: {len(self.client.running_prompts) if self.client else 0}")
 
-        for _ in range(WARMUP_RUNS):
+        # Process frames one by one to avoid queue timing issues
+        for i in range(WARMUP_RUNS):
+            # Create a fresh frame each time with proper initialization
+            dummy_frame = av.VideoFrame(width=self.width, height=self.height, format='rgb24')
+            # Ensure the frame has the side_data attribute
+            if not hasattr(dummy_frame, 'side_data'):
+                dummy_frame.side_data = type('SideData', (), {})()
+            dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+            dummy_frame.side_data.skipped = False
+            
+            logger.info(f"Submitting and processing warmup frame {i+1}/{WARMUP_RUNS}...")
             self.client.put_video_input(dummy_frame)
-            await self.client.get_video_output()
+            
+            # Wait a bit to let the frame be processed
+            await asyncio.sleep(0.1)
+            
+            # Get the output
+            logger.info(f"Waiting for warmup output {i+1}/{WARMUP_RUNS}...")
+            out_tensor = await self.client.get_video_output()
+            logger.info(f"Collected warmup output {i+1}/{WARMUP_RUNS}, shape: {out_tensor.shape if out_tensor is not None else 'None'}")
 
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
-        dummy_frame = av.AudioFrame()
-        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
-        dummy_frame.sample_rate = 48000
-
-        for _ in range(WARMUP_RUNS):
+        
+        logger.info("Warming audio pipeline")
+        
+        # Submit all warmup frames first
+        for i in range(WARMUP_RUNS):
+            # Create a fresh frame each time
+            dummy_frame = av.AudioFrame(format='s16', layout='mono', samples=24000)
+            dummy_frame.sample_rate = 48000
+            # Ensure the frame has the side_data attribute
+            if not hasattr(dummy_frame, 'side_data'):
+                dummy_frame.side_data = type('SideData', (), {})()
+            dummy_frame.side_data.input = np.random.randint(-32768, 32767, 24000, dtype=np.int16)
+            dummy_frame.side_data.skipped = False
+            
             self.client.put_audio_input(dummy_frame)
+
+        
+        # Then collect all outputs
+        for i in range(WARMUP_RUNS):
             await self.client.get_audio_output()
 
-    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+
+    async def warm_pipeline(self):
+        """
+        Smart warmup that automatically chooses video or audio warmup based on the current workflow.
+        
+        This method analyzes the loaded prompts to determine if the workflow is audio-focused
+        and calls the appropriate warmup method (warm_audio or warm_video).
+        """
+        # Check if we have prompts loaded
+        if not self.prompts or len(self.prompts) == 0:
+            logger.warning("No prompts loaded, defaulting to video warmup")
+            await self.warm_video()
+            return
+            
+        # Analyze the first prompt to determine workflow type
+        # Use client's converted prompts if available, otherwise convert the raw ones
+        if hasattr(self.client, 'current_prompts') and self.client.current_prompts:
+            first_prompt = self.client.current_prompts[0]
+        else:
+            # Convert the raw prompt before checking type
+            first_prompt = convert_prompt(self.prompts[0]) if self.prompts else {}
+        
+        if is_audio_focused_workflow(first_prompt):
+            logger.info("Audio-focused workflow detected, warming audio pipeline")
+            await self.warm_audio()
+        else:
+            logger.info("Video-focused workflow detected, warming video pipeline")
+            await self.warm_video()
+
+    def _parse_prompt_data(self, prompt_data: Union[Dict, List[Dict]]) -> List[Dict]:
+        """Parse prompt data into a list of prompt dictionaries.
+        
+        Args:
+            prompt_data: Either a single prompt dict or list of prompt dicts
+            
+        Returns:
+            List of prompt dictionaries
+            
+        Raises:
+            ValueError: If the prompt data format is invalid
+        """
+        if isinstance(prompt_data, dict):
+            return [prompt_data]
+        elif isinstance(prompt_data, list):
+            if not all(isinstance(prompt, dict) for prompt in prompt_data):
+                raise ValueError("All prompts in list must be dictionaries")
+            return prompt_data
+        else:
+            raise ValueError("Prompts must be either a dict or list of dicts")
+
+    async def set_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Set the processing prompts for the pipeline.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dict or list of prompt dicts
         """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        parsed_prompts = self._parse_prompt_data(prompts)
+        self.prompts = parsed_prompts
+        await self.client.set_prompts(parsed_prompts)
 
-    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    async def update_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Update the existing processing prompts.
         
         Args:
-            prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            prompts: Either a single prompt dict or list of prompt dicts
         """
-        if isinstance(prompts, list):
-            await self.client.update_prompts(prompts)
-        else:
-            await self.client.update_prompts([prompts])
+        parsed_prompts = self._parse_prompt_data(prompts)
+        self.prompts = parsed_prompts
+        await self.client.update_prompts(parsed_prompts)
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -204,6 +283,52 @@ class Pipeline:
         """
         nodes_info = await self.client.get_available_nodes()
         return nodes_info
+    
+    async def get_available_audio_output(self) -> Optional[av.AudioFrame]:
+        """Get next available processed audio frame without blocking.
+        
+        Returns:
+            Processed audio frame if available, None if no output ready
+        """
+        try:
+            # Check if we have enough buffer for audio processing
+            if len(self.processed_audio_buffer) == 0:
+                # Try to get audio output with short timeout
+                out_tensor = await asyncio.wait_for(
+                    self.client.get_audio_output(),
+                    timeout=0.001
+                )
+                self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
+            
+            # Check if we have a frame waiting
+            if self.audio_incoming_frames.empty():
+                return None
+                
+            frame = await self.audio_incoming_frames.get()
+            if frame.samples > len(self.processed_audio_buffer):
+                return None  # Not enough processed data yet
+                
+            # Process audio frame
+            out_data = self.processed_audio_buffer[:frame.samples]
+            self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
+            
+            processed_frame = self.audio_postprocess(out_data)
+            processed_frame.pts = frame.pts
+            processed_frame.time_base = frame.time_base
+            processed_frame.sample_rate = frame.sample_rate
+            
+            return processed_frame
+            
+        except asyncio.TimeoutError:
+            return None  # No output ready yet
+    
+    def get_input_buffer_size(self) -> int:
+        """Get current video input buffer depth."""
+        return self.video_incoming_frames.qsize()
+    
+    def get_audio_input_buffer_size(self) -> int:
+        """Get current audio input buffer depth."""
+        return self.audio_incoming_frames.qsize()
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
