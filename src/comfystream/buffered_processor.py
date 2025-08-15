@@ -16,7 +16,6 @@ import torch
 
 from pytrickle import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame, SideData, FrameFactory
-from pytrickle.frames import AudioFrame, VideoFrame
 from comfystream.server.workflows import get_default_workflow
 from comfystream.utils import is_audio_focused_workflow, convert_prompt
 import json
@@ -88,9 +87,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         self._audio_frame_counter = 0
         self._video_outputs_received = 0
         
-        # Gate to control whether new inputs are accepted5        
-        # If prompts are not yet running, passthrough video to start publishing immediately
-        self._accept_inputs = True
+
         
         # A/V sync fix: buffer audio frames during startup to match video processing delay
         self._audio_startup_buffer = []
@@ -102,8 +99,6 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         self._session_start_timestamp = None
         
         # Store ComfyUI client startup parameters to create client during initialize()
-
-        
         # Enable queue mode - BufferedComfyStreamProcessor works with FrameProcessor queues
         # Audio passthrough - no audio workers needed since we pass audio through directly
         # Video processing - TrickleClient calls process_video_async directly, no workers needed
@@ -144,20 +139,6 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             self.ready = False
             raise
     
-    async def _init_queue_workers_async(self):
-        """Initialize queue workers using base class system."""
-        try:
-            await self.start_queue_workers()
-            logger.info("Started queue workers for BufferedComfyStreamProcessor")
-        except Exception as e:
-            logger.error(f"Failed to start queue workers: {e}")
-    
-
-    
-    async def stop_queue_workers(self) -> None:
-        """Stop queue workers using base class system."""
-        await super().stop_queue_workers()
-    
     def initialize(self, **kwargs):
         """
         Initialize the ComfyUI pipeline.
@@ -165,77 +146,20 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         This is called during FrameProcessor construction and should set up
         the pipeline with the given configuration.
         """
-        try:
-            # Initialize queue workers for queue mode
-            if self.queue_mode:
-                asyncio.create_task(self._init_queue_workers_async())
-            
-            # Client already created in constructor
-            if self.client and self.ready:
-                logger.info(f"ComfyStream processor initialized with resolution {self.width}x{self.height}")
-            else:
-                logger.warning("Client not ready, skipping initialization")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize ComfyStream processor: {e}")
-            self.ready = False
-            if self.error_callback:
-                self.error_callback("initialization_error", e)
-    
-    async def _apply_initial_workflow(self, workflow: Dict[str, Any]):
-        """Set the initial workflow on the client during initialization (no warmup)."""
-        if not self.client:
-            logger.warning("No client available to apply initial workflow")
-            return
-            
-        try:
-            # Pass raw workflow; client will handle conversion/validation and start processing
-            self.prompts = [workflow]
-            await self.client.set_workflow(workflow)
-            logger.info("Startup workflow applied - models will load on first real frame")
-        except Exception as e:
-            logger.error(f"Failed to apply startup workflow: {e}")
-            if self.error_callback:
-                self.error_callback("initial_workflow_error", e)
-
-
-    async def pause_inputs(self):
-        """Stop accepting inputs and flush queues safely."""
-        self._accept_inputs = False
-        self._video_outputs_received = 0
-        
-        # Flush client queues
-        try:
-            if self.client:
-                await self.client.cleanup_queues()
-        except Exception as e:
-            logger.warning(f"Could not cleanup client queues: {e}")
-
-        # Reset frame counters
-        self._video_frame_counter = 0
-        self._audio_frame_counter = 0
-        logger.info("Frame counters reset for clean restart")
-
-    async def resume_inputs(self):
-        """Resume accepting inputs."""
-        self._accept_inputs = True
+        # Client already created in constructor
+        if self.client and self.ready:
+            logger.info(f"ComfyStream processor initialized with resolution {self.width}x{self.height}")
+        else:
+            logger.warning("Client not ready, skipping initialization")
 
     async def _ensure_client_ready(self) -> bool:
         """Ensure ComfyStreamClient is ready."""
-        try:
-            if not self.client:
-                logger.warning("No client available - client should be created only once in constructor")
-                return False
-                
-            # Client exists, just ensure it's ready
-            self.ready = True
-            return True
-        except Exception as e:
-            logger.error(f"Failed to ensure client ready: {e}")
-            self.ready = False
+        if not self.client:
+            logger.warning("No client available - client should be created only once in constructor")
             return False
-    
-
+        # Client exists, just ensure it's ready
+        self.ready = True
+        return True
     
     async def process_video_async(self, frame: VideoFrame) -> Optional[VideoFrame]:
         """
@@ -251,10 +175,6 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             Processed VideoFrame or None if processing failed/skipped
         """
         if not self.ready:
-            return None
-        
-        # Respect input gate
-        if not self._accept_inputs:
             return None
         
         # Attempt to feed the pipeline and return processed output as available.
@@ -277,11 +197,11 @@ class BufferedComfyStreamProcessor(FrameProcessor):
                 input_tensor = input_tensor / 255.0
             
             # Simple dimension check
-            if hasattr(input_tensor, 'ndim') and input_tensor.ndim == 3:
+            if input_tensor.ndim == 3:
                 input_tensor = input_tensor.unsqueeze(0)
             
             # Setup frame metadata
-            if not hasattr(frame, 'side_data') or frame.side_data is None:
+            if frame.side_data is None:
                 frame.side_data = SideData()
             
             frame.side_data.input = input_tensor
@@ -297,7 +217,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
                     return None
                 
                 # Process output tensor
-                if hasattr(out_tensor, 'ndim') and out_tensor.ndim == 4:
+                if out_tensor.ndim == 4:
                     out_tensor = out_tensor.squeeze(0)
                 
                 if out_tensor.dtype != torch.float32:
@@ -387,7 +307,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         Normalize frame timestamps to ensure monotonic progression from session start.
         
         This prevents DTS monotonicity errors by establishing a clean timestamp baseline
-        for each new stream session. Only applies during startup sync phase.
+        for each new stream session. Only applies during startup sync phase. 
         """
         # Only normalize during startup sync phase to avoid breaking ongoing streams
         if self._startup_sync_complete:
@@ -527,8 +447,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
                 raise ValueError("Prompts must be either a dict or list of dicts")
             
             # Check if client needs to be restarted after being stopped
-            if (hasattr(self.client, '_shutdown_event') and 
-                self.client._shutdown_event.is_set()):
+            if self.client._shutdown_event.is_set():
                 logger.info("Client was stopped, restarting execution for new stream")
                 # Clear shutdown event to allow restart
                 self.client._shutdown_event.clear()
@@ -699,17 +618,17 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             logger.error(f"Error during startup model warmup: {e}")
             raise  # Re-raise to indicate startup failure
 
-    async def idle(self):
-        """Put processor into idle state while preserving models."""
-        await self.pause_inputs()
+    # async def idle(self):
+    #     """Put processor into idle state while preserving models."""
+    #     await self.pause_inputs()
         
-        if self.client:
-            try:
-                await self.client.stop()
-                await self.client.cancel_prompts(flush_queues=False, force=False, timeout=1.0)
-                logger.info("Client execution stopped")
-            except Exception as e:
-                logger.warning(f"Could not stop client execution: {e}")
+    #     if self.client:
+    #         try:
+    #             await self.client.stop()
+    #             await self.client.cancel_prompts(flush_queues=False, force=False, timeout=1.0)
+    #             logger.info("Client execution stopped")
+    #         except Exception as e:
+    #             logger.warning(f"Could not stop client execution: {e}")
     
     async def reset_timing(self):
         """Reset timing state to prevent cross-stream timestamp conflicts."""
@@ -772,22 +691,6 @@ class BufferedComfyStreamProcessor(FrameProcessor):
                 self.error_callback("nodes_info_error", e)
             return {}
     
-    async def cleanup(self, full_shutdown: bool = False):
-        """Clean up resources, preserving client unless full shutdown."""
-        if self.client:
-            try:
-                await self.client.cleanup()
-                logger.info("Client cleaned up successfully")
-            except Exception as e:
-                logger.error(f"Error cleaning up client: {e}")
-                
-            # Only destroy client on full shutdown to maintain state
-            if full_shutdown:
-                self.client = None
-                self.ready = False
-                logger.info("Client destroyed on full shutdown")
-            else:
-                logger.info("Client preserved for next stream")
     
     def get_client_info(self) -> Dict[str, Any]:
         """Get information about the current client state."""
