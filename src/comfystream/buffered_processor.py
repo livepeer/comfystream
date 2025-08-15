@@ -16,6 +16,7 @@ import torch
 
 from pytrickle import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame, SideData, FrameFactory
+from pytrickle.frames import AudioFrame, VideoFrame
 from comfystream.server.workflows import get_default_workflow
 from comfystream.utils import is_audio_focused_workflow, convert_prompt
 import json
@@ -45,7 +46,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         preview_method: str = 'none',
         comfyui_inference_log_level: Optional[str] = None,
         default_workflow: Optional[Dict[str, Any]] = None,
-
+        audio_passthrough: bool = True,
         **kwargs
     ):
         """
@@ -60,7 +61,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             preview_method: Preview method for ComfyUI
             comfyui_inference_log_level: Logging level for ComfyUI inference
             default_workflow: Default workflow to load
-
+            audio_passthrough: If True, pass audio through without processing (default: True)
             **kwargs: Additional arguments passed to FrameProcessor
         """
         # Store configuration first
@@ -72,6 +73,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         self.preview_method = preview_method
         self.comfyui_inference_log_level = comfyui_inference_log_level
         self.default_workflow = default_workflow
+        self.audio_passthrough = audio_passthrough
 
         def log_error(error_type: str, exception: Optional[Exception] = None):
             logger.warning(f"Processing error: {error_type} - {exception}")
@@ -84,9 +86,20 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         # Frame tracking for stats
         self._video_frame_counter = 0
         self._audio_frame_counter = 0
+        self._video_outputs_received = 0
         
-        # Gate to control whether new inputs are accepted
+        # Gate to control whether new inputs are accepted5        
+        # If prompts are not yet running, passthrough video to start publishing immediately
         self._accept_inputs = True
+        
+        # A/V sync fix: buffer audio frames during startup to match video processing delay
+        self._audio_startup_buffer = []
+        self._video_frames_processed = 0
+        self._audio_delay_frames = 3  # Delay audio by ~3 video frames worth to allow video processing
+        self._startup_sync_complete = False
+        
+        # Timestamp normalization for clean session starts
+        self._session_start_timestamp = None
         
         # Store ComfyUI client startup parameters to create client during initialize()
 
@@ -99,16 +112,16 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             error_callback=log_error,
             queue_mode=True,
             video_queue_size=8,
-            audio_queue_size=32,  # Allow audio queuing for consistency
+            audio_queue_size=32 if not self.audio_passthrough else 0,  # No audio queuing for passthrough
             video_concurrency=1,
-            audio_concurrency=0,  # Audio passthrough mode=0 (otherwise experience audiio latency ~20 seconds if = 1)
+            audio_concurrency=0,  # No audio workers for passthrough
             **kwargs
         )
         
         # Create client once and maintain it throughout lifecycle
         self._create_comfy_client()
         
-        logger.info(f"BufferedComfyStreamProcessor initialized {width}x{height}")
+        logger.info(f"BufferedComfyStreamProcessor initialized {width}x{height} (audio_passthrough={audio_passthrough})")
     
     def _create_comfy_client(self):
         """Create ComfyStreamClient once and maintain state."""
@@ -184,12 +197,12 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             logger.error(f"Failed to apply startup workflow: {e}")
             if self.error_callback:
                 self.error_callback("initial_workflow_error", e)
-    
 
 
     async def pause_inputs(self):
         """Stop accepting inputs and flush queues safely."""
         self._accept_inputs = False
+        self._video_outputs_received = 0
         
         # Flush client queues
         try:
@@ -244,12 +257,11 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         if not self._accept_inputs:
             return None
         
-        # Check if we have running prompts first
-        if not self.client.running_prompts:
-            logger.warning("No running prompts, returning None")
-            return None
+        # Attempt to feed the pipeline and return processed output as available.
+        # While no processed outputs have been received yet, passthrough frames to start publishing.
         
         self._video_frame_counter += 1
+        self._video_frames_processed += 1
         
         try:
             input_tensor = frame.tensor
@@ -275,12 +287,12 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             frame.side_data.input = input_tensor
             frame.side_data.skipped = False
             
-            # Submit to ComfyUI and get result
+            # Always submit to ComfyUI so the pipeline can start producing outputs
             self.client.put_video_input(frame)
             
-            # Get processed result from ComfyUI
+            # Try to get processed result with a very short timeout to avoid stalling FPS
             try:
-                out_tensor = await self.client.get_video_output(timeout=1.0)
+                out_tensor = await self.client.get_video_output(timeout=0.005)
                 if out_tensor is None:
                     return None
                 
@@ -299,7 +311,7 @@ class BufferedComfyStreamProcessor(FrameProcessor):
                     timestamp=frame.timestamp,
                     time_base=frame.time_base
                 )
-                
+                self._video_outputs_received += 1
                 return processed_frame
                 
             except Exception as e:
@@ -312,18 +324,104 @@ class BufferedComfyStreamProcessor(FrameProcessor):
     
     async def process_audio_async(self, frame: AudioFrame) -> Optional[List[AudioFrame]]:
         """
-        Pass through audio frames directly without ComfyUI processing.
+        Process audio frame - implements true passthrough when audio_passthrough=True.
         
-        Audio is passed through with original timestamps to maintain proper timing.
-        The A/V sync issues are actually at the native decoder/encoder level, not here.
+        For passthrough mode:
+        - Returns frame immediately without any buffering or timestamp modification
+        - Preserves original timing to prevent encoder DTS errors
+        - No A/V sync logic applied
         
         Args:
             frame: Input audio frame
             
         Returns:
-            List containing the original audio frame (passthrough)
+            List containing the audio frame(s) to output
         """
-        return [frame]
+        if self.audio_passthrough:
+            # True passthrough: return frame immediately with no modifications
+            # This preserves original timestamps and prevents DTS monotonicity errors
+            self._audio_frame_counter += 1
+            return [frame]
+        
+        # Legacy complex buffering logic for non-passthrough mode (if ever needed)
+        self._audio_frame_counter += 1
+        
+        # Debug logging for startup sync state
+        if self._audio_frame_counter <= 5:  # Only log first few frames
+            logger.info(f"Audio frame #{self._audio_frame_counter}: startup_complete={self._startup_sync_complete}, video_frames={self._video_frames_processed}, buffer_size={len(self._audio_startup_buffer)}")
+        
+        # If startup sync is already complete, pass through immediately
+        if self._startup_sync_complete:
+            return [frame]
+        
+        # During startup: buffer audio frames until video processing is established
+        self._audio_startup_buffer.append(frame)
+        
+        # Check if we should start releasing audio frames
+        if self._video_frames_processed >= self._audio_delay_frames:
+            # Video processing is established, start releasing buffered audio
+            if len(self._audio_startup_buffer) > 0:
+                # Release the oldest buffered frame
+                buffered_frame = self._audio_startup_buffer.pop(0)
+                
+                # If buffer is now empty, mark startup sync as complete
+                if len(self._audio_startup_buffer) == 0:
+                    self._startup_sync_complete = True
+                    logger.info("Audio startup sync completed - switching to passthrough mode")
+                
+                return [buffered_frame]
+        
+        # Safety fallback: if we've buffered too many frames without video progress, 
+        # start releasing to prevent deadlock
+        if len(self._audio_startup_buffer) > 10:  # More than ~300ms of audio buffered
+            logger.warning(f"Audio buffer overflow ({len(self._audio_startup_buffer)} frames), forcing release to prevent deadlock")
+            buffered_frame = self._audio_startup_buffer.pop(0)
+            # Preserve original timing to allow protocol-level sync
+            return [buffered_frame]
+        
+        # Still buffering, don't release audio yet
+        return []
+    
+    def _normalize_frame_timestamp(self, frame):
+        """
+        Normalize frame timestamps to ensure monotonic progression from session start.
+        
+        This prevents DTS monotonicity errors by establishing a clean timestamp baseline
+        for each new stream session. Only applies during startup sync phase.
+        """
+        # Only normalize during startup sync phase to avoid breaking ongoing streams
+        if self._startup_sync_complete:
+            return frame
+        
+        # Establish session start timestamp on first frame of new session
+        if self._session_start_timestamp is None:
+            self._session_start_timestamp = frame.timestamp
+            logger.info(f"Session start timestamp established: {self._session_start_timestamp}")
+        
+        # Calculate normalized timestamp (starts from 0 for new session)
+        normalized_timestamp = frame.timestamp - self._session_start_timestamp
+        
+        # Ensure timestamp is non-negative
+        if normalized_timestamp < 0:
+            normalized_timestamp = 0
+        
+        # Create new frame with normalized timestamp
+        if isinstance(frame, AudioFrame):
+            # For AudioFrame, create a copy with new timestamp
+            normalized_frame = AudioFrame._from_existing_with_timestamp(frame, normalized_timestamp)
+        elif isinstance(frame, VideoFrame):
+            # For VideoFrame, create new instance with normalized timestamp
+            normalized_frame = VideoFrame.from_av_video(
+                tensor=frame.tensor,
+                timestamp=normalized_timestamp,
+                time_base=frame.time_base
+            )
+        else:
+            # Fallback: modify timestamp in place for unknown frame types
+            frame.timestamp = normalized_timestamp
+            normalized_frame = frame
+        
+        return normalized_frame
     
     def update_params(self, params: Dict[str, Any]):
         """
@@ -616,6 +714,14 @@ class BufferedComfyStreamProcessor(FrameProcessor):
     async def reset_timing(self):
         """Reset timing state to prevent cross-stream timestamp conflicts."""
         logger.info("Frame processor timing state reset")
+        
+        # Ensure A/V sync state is reset for new streams
+        self._audio_startup_buffer.clear()
+        self._video_frames_processed = 0
+        self._startup_sync_complete = False
+        self._session_start_timestamp = None
+        self._video_outputs_received = 0
+        logger.info("A/V sync state forcibly reset via reset_timing()")
     
     async def reset_state(self):
         """Reset processor state to prevent cross-stream state carryover."""
@@ -624,7 +730,24 @@ class BufferedComfyStreamProcessor(FrameProcessor):
         self.prompts = []
         self._video_frame_counter = 0
         self._audio_frame_counter = 0
+        self._video_outputs_received = 0
+        
+        # Reset A/V sync state for new session
+        self._audio_startup_buffer.clear()
+        self._video_frames_processed = 0
+        self._startup_sync_complete = False
+        self._session_start_timestamp = None
+        logger.info("A/V sync state reset for new stream session")
         logger.info("Frame processor state reset completed")
+    
+    def force_av_sync_reset(self):
+        """Force immediate A/V sync state reset - call this when starting new streams."""
+        logger.info("Forcing A/V sync state reset")
+        self._audio_startup_buffer.clear()
+        self._video_frames_processed = 0
+        self._startup_sync_complete = False
+        self._session_start_timestamp = None
+        logger.info(f"A/V sync reset complete: startup_complete={self._startup_sync_complete}, video_frames={self._video_frames_processed}, buffer_size={len(self._audio_startup_buffer)}")
     
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
@@ -678,7 +801,10 @@ class BufferedComfyStreamProcessor(FrameProcessor):
             "prompts_loaded": len(self.prompts) if self.prompts else 0,
             "video_frame_counter": self._video_frame_counter,
             "audio_frame_counter": self._audio_frame_counter,
-            "audio_passthrough_enabled": True
+            "audio_passthrough_enabled": self.audio_passthrough,
+            "audio_startup_buffer_size": len(self._audio_startup_buffer),
+            "startup_sync_complete": self._startup_sync_complete,
+            "video_frames_processed": self._video_frames_processed
         }
         
         # Add client-specific information
