@@ -379,20 +379,32 @@ def health(_):
 
 
 async def on_startup(app: web.Application):
-    if app["media_ports"]:
-        patch_loop_datagram(app["media_ports"])
+    try:
+        logger.info("Starting server initialization...")
+        
+        if app["media_ports"]:
+            logger.info("Patching loop datagram...")
+            patch_loop_datagram(app["media_ports"])
 
-    app["pipeline"] = Pipeline(
-        width=512,
-        height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
-        preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
-    )
-    app["pcs"] = set()
-    app["video_tracks"] = {}
+        logger.info("Creating pipeline...")
+        app["pipeline"] = Pipeline(
+            width=512,
+            height=512,
+            cwd=app["workspace"], 
+            disable_cuda_malloc=True, 
+            gpu_only=True, 
+            preview_method='none',
+            comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        )
+        logger.info("Pipeline created successfully")
+        
+        app["pcs"] = set()
+        app["video_tracks"] = {}
+        
+        logger.info("Server initialization completed successfully")
+    except Exception as e:
+        logger.error(f"Error during server startup: {e}", exc_info=True)
+        raise
 
 
 async def on_shutdown(app: web.Application):
