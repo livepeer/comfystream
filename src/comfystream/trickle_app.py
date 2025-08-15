@@ -108,13 +108,8 @@ async def main():
             logger.info(f"Loading warmup workflow: {args.warmup_workflow}")
             logger.info(f"Current working directory: {os.getcwd()}")
             
-            # Use the loader which returns (workflow_dict, resolved_path)
-            workflow, resolved_path = load_workflow(args.warmup_workflow)
-
-            if resolved_path is not None:
-                logger.info(f"Custom workflow loaded successfully: {resolved_path}")
-            else:
-                logger.warning(f"Using default workflow (custom workflow not found: {args.warmup_workflow})")
+            # Load workflow (loader handles package data and dev fallback)
+            workflow = load_workflow(args.warmup_workflow)
         else:
             logger.info("Using default workflow")
             workflow = get_default_workflow()
