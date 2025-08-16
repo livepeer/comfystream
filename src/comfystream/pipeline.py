@@ -7,7 +7,7 @@ from typing import Any, Dict, Union, List, Optional
 import av
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
-from comfystream.utils import convert_prompt, is_audio_focused_workflow
+from comfystream.utils import convert_prompt, is_audio_focused_workflow, parse_prompt_data
 
 WARMUP_RUNS = 5
 
@@ -125,34 +125,13 @@ class Pipeline:
             logger.info("Video-focused workflow detected, warming video pipeline")
             await self.warm_video()
 
-    def _parse_prompt_data(self, prompt_data: Union[Dict, List[Dict]]) -> List[Dict]:
-        """Parse prompt data into a list of prompt dictionaries.
-        
-        Args:
-            prompt_data: Either a single prompt dict or list of prompt dicts
-            
-        Returns:
-            List of prompt dictionaries
-            
-        Raises:
-            ValueError: If the prompt data format is invalid
-        """
-        if isinstance(prompt_data, dict):
-            return [prompt_data]
-        elif isinstance(prompt_data, list):
-            if not all(isinstance(prompt, dict) for prompt in prompt_data):
-                raise ValueError("All prompts in list must be dictionaries")
-            return prompt_data
-        else:
-            raise ValueError("Prompts must be either a dict or list of dicts")
-
     async def set_prompts(self, prompts: Union[Dict, List[Dict]]):
         """Set the processing prompts for the pipeline.
         
         Args:
             prompts: Either a single prompt dict or list of prompt dicts
         """
-        parsed_prompts = self._parse_prompt_data(prompts)
+        parsed_prompts = parse_prompt_data(prompts)
         self.prompts = parsed_prompts
         await self.client.set_prompts(parsed_prompts)
 
@@ -162,7 +141,7 @@ class Pipeline:
         Args:
             prompts: Either a single prompt dict or list of prompt dicts
         """
-        parsed_prompts = self._parse_prompt_data(prompts)
+        parsed_prompts = parse_prompt_data(prompts)
         self.prompts = parsed_prompts
         await self.client.update_prompts(parsed_prompts)
 

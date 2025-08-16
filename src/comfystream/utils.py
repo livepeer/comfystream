@@ -1,7 +1,11 @@
 import copy
+import json
+import logging
 
-from typing import Dict, Any
+from typing import Dict, Any, List, Union
 from comfy.api.components.schema.prompt import Prompt, PromptDictInput
+
+logger = logging.getLogger(__name__)
 
 
 # Input node types
@@ -149,3 +153,37 @@ def is_audio_focused_workflow(prompt: Dict[Any, Any]) -> bool:
     
     # Default to video workflow if no clear input node found
     return False
+
+def parse_prompt_data(prompt_data: Union[str, Dict, List[Dict]]) -> List[Dict[str, Any]]:
+    """Parse prompt data from various formats into a standardized list of dictionaries.
+    
+    Args:
+        prompt_data: Can be:
+            - A JSON string containing a dict or list of dicts
+            - A single prompt dictionary
+            - A list of prompt dictionaries
+            
+    Returns:
+        List of prompt dictionaries
+        
+    Raises:
+        ValueError: If the prompt data format is invalid
+        json.JSONDecodeError: If JSON string is malformed
+    """
+    # Handle JSON string input (common in control messages)
+    if isinstance(prompt_data, str):
+        try:
+            prompt_data = json.loads(prompt_data)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in prompts: {e}")
+            raise ValueError(f"Invalid JSON in prompts: {e}")
+    
+    # Handle dict or list input
+    if isinstance(prompt_data, dict):
+        return [prompt_data]
+    elif isinstance(prompt_data, list):
+        if not all(isinstance(prompt, dict) for prompt in prompt_data):
+            raise ValueError("All prompts in list must be dictionaries")
+        return prompt_data
+    else:
+        raise ValueError(f"Prompts must be dict, list, or JSON string, got {type(prompt_data)}")

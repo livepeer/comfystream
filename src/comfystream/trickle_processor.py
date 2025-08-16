@@ -8,14 +8,13 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any, List, Union
 from fractions import Fraction
-import json
 
 import torch
 
 from pytrickle import StreamProcessor
 from pytrickle.frames import VideoFrame, AudioFrame, SideData
 from comfystream.server.workflows import get_default_workflow
-from comfystream.utils import is_audio_focused_workflow, convert_prompt
+from comfystream.utils import is_audio_focused_workflow, convert_prompt, parse_prompt_data
 from comfystream.client import ComfyStreamClient
 
 logger = logging.getLogger(__name__)
@@ -298,39 +297,25 @@ class ComfyStreamApp:
         try:
             # Handle prompt updates
             if "prompts" in params:
-                prompts = params.get("prompts")
-                # Handle string prompts (JSON) - common in control messages
-                if isinstance(prompts, str):
+                prompts_data = params.get("prompts")
+                
+                # Parse prompts using shared utility
+                self.prompts = parse_prompt_data(prompts_data)
+                
+                # Apply the workflow to the client
+                async def queue_prompt_update():
+                    if not self.client:
+                        logger.warning("No client available to apply workflow")
+                        return
                     try:
-                        prompts = json.loads(prompts)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Invalid JSON in prompts: {e}")
-                        raise ValueError(f"Invalid JSON in prompts: {e}")
+                        await self.client.set_prompts(self.prompts)
+                        logger.info(f"Successfully applied {len(self.prompts)} prompt(s)")
+                    except Exception as e:
+                        logger.error(f"Failed to apply prompts to client: {e}")
                 
-                # Parse prompts - use first prompt only (simplified client)
-                if isinstance(prompts, dict):
-                    workflow = prompts
-                    self.prompts = [prompts]
-                elif isinstance(prompts, list) and len(prompts) > 0:
-                    workflow = prompts[0]  # Use first prompt
-                    self.prompts = prompts
-                else:
-                    raise ValueError(f"Prompts must be dict, list, or JSON string, got {type(prompts)}")
-                
-                # Use simplified client method - always sets new workflow
-                if not self.client:
-                    logger.warning("No client available to apply workflow")
-                    return
-                
-
-
-                logger.info("Scheduling workflow update task")
-                previous_task = self._workflow_update_task
-                new_task = asyncio.create_task(self._set_workflow_after_cancel(previous_task, workflow))
-                self._workflow_update_task = new_task
-                logger.info(f"Workflow update scheduled (task_id={id(new_task)})")
+                asyncio.create_task(queue_prompt_update())
             
-            # Handle resolution updates
+            # Track resolution changes in processor
             if "width" in params or "height" in params:
                 new_width = params.get("width", self.width)
                 new_height = params.get("height", self.height)
@@ -458,6 +443,3 @@ class ComfyStreamApp:
                 await self.stream_processor.server.stop()
         except Exception as e:
             logger.warning(f"Error during cleanup: {e}")
-
-
-
