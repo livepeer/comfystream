@@ -12,8 +12,8 @@ import json
 
 import torch
 
-from pytrickle import StreamProcessor, AudioPassthrough
-from pytrickle.frames import VideoFrame, AudioFrame, SideData, FrameFactory
+from pytrickle import StreamProcessor
+from pytrickle.frames import VideoFrame, AudioFrame, SideData
 from comfystream.server.workflows import get_default_workflow
 from comfystream.utils import is_audio_focused_workflow, convert_prompt
 from comfystream.client import ComfyStreamClient
@@ -94,10 +94,8 @@ class ComfyStreamApp:
         # Timestamp normalization for clean session starts
         self._session_start_timestamp = None
         
-
-        
-        # Create StreamProcessor with our processing functions
-        audio_processor = AudioPassthrough() if self.audio_passthrough else self.process_audio_async
+        # Create StreamProcessor with audio passthrough (audio will not be processed)
+        audio_processor = None if self.audio_passthrough else self.process_audio_async
         
         self.stream_processor = StreamProcessor(
             video_processor=self.process_video_async,
@@ -112,7 +110,6 @@ class ComfyStreamApp:
         )
         
         logger.info(f"ComfyStreamApp initialized {width}x{height} (audio_passthrough={audio_passthrough})")
-    
 
     
     # Delegate methods to StreamProcessor
@@ -395,7 +392,8 @@ class ComfyStreamApp:
                                 break
                                 
                             dummy_audio = torch.zeros((1, 2, 1024), dtype=torch.float32)
-                            audio_frame = FrameFactory.create_audio_frame_from_ndarray(
+                            # TODO: Do we still need  FrameFactory.create_audio_frame_from_ndarray(
+                            audio_frame = AudioFrame.from_av_audio(
                                 samples=dummy_audio.numpy(),
                                 timestamp=i,
                                 time_base=Fraction(1, 30),
