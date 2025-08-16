@@ -30,6 +30,10 @@ from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
 from frame_buffer import FrameBuffer
+from comfystream.server.workflows import get_default_workflow, load_workflow
+from comfystream.trickle_processor import ComfyStreamApp
+from pytrickle import RegisterCapability
+from pytrickle.state import PipelineState
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
@@ -414,6 +418,121 @@ async def on_shutdown(app: web.Application):
     pcs.clear()
 
 
+async def run_trickle_mode(args):
+    """Run the trickle protocol mode using ComfyStreamApp."""
+    try:
+        logger.info("Setting up Trickle protocol server...")
+        
+        # Configure ComfyUI logging levels
+        if args.comfyui_log_level:
+            log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
+            if log_level is not None:
+                logging.getLogger("comfy").setLevel(log_level)
+        
+        # Load workflow for pipeline initialization
+        workflow = None
+        if args.warmup_workflow:
+            logger.info(f"Loading warmup workflow: {args.warmup_workflow}")
+            workflow = load_workflow(args.warmup_workflow)
+        else:
+            logger.info("Using default workflow")
+            workflow = get_default_workflow()
+        
+        # Register with orchestrator if URL provided
+        try:
+            result = await RegisterCapability.register(
+                logger,
+                capability_name=args.capability_name,
+                capability_desc="ComfyStream AI video processing service"
+            )
+            if result and result != False:
+                if hasattr(result, 'port') and result.port:
+                    args.port = result.port
+                    logger.info(f"Registered with orchestrator, using port {args.port}")
+                else:
+                    logger.info("Registered with orchestrator")
+            else:
+                logger.warning("Registration with orchestrator failed")
+        except Exception as e:
+            logger.warning(f"Registration with orchestrator failed: {e}")
+
+        # Create the ComfyStream processor
+        logger.info("Creating ComfyStream processor...")
+        processor = ComfyStreamApp(
+            workspace=args.workspace,
+            disable_cuda_malloc=True,  # Use server default
+            gpu_only=True,  # Use server default
+            preview_method='none',
+            comfyui_inference_log_level=args.comfyui_inference_log_level,
+            default_workflow=workflow,
+            port=args.port,
+            host=args.host,
+            capability_name=args.capability_name,
+            version="0.1.4",
+            # Enable CORS for web clients
+            cors_config={
+                "*": {
+                    "allow_credentials": True,
+                    "expose_headers": "*",
+                    "allow_headers": "*",
+                    "allow_methods": ["GET", "POST", "OPTIONS"]
+                }
+            },
+        )
+
+        if not processor.ready:
+            logger.error("Failed to initialize ComfyStream processor")
+            return
+
+        # Apply the startup workflow and fully warm up ComfyUI models
+        if workflow:
+            logger.info("Applying startup workflow to processor")
+            await processor.warm_models_for_startup(workflow)
+            logger.info("ComfyUI models fully loaded and warmed up")
+        else:
+            logger.info("No startup workflow provided; processor will wait for first stream or warmup endpoint")
+            logger.warning("No workflow provided - models will load on first stream")
+        
+        # Get the server from the processor
+        server = processor.server
+        
+        logger.info(f"🚀 Starting ComfyStream Trickle server on {args.host}:{args.port}")
+        logger.info("📡 Trickle API endpoints:")
+        logger.info(f"  - POST http://{args.host}:{args.port}/api/stream/start")
+        logger.info(f"  - POST http://{args.host}:{args.port}/api/stream/stop")
+        logger.info(f"  - POST http://{args.host}:{args.port}/api/stream/params")
+        logger.info(f"  - GET  http://{args.host}:{args.port}/api/stream/status")
+        logger.info(f"  - GET  http://{args.host}:{args.port}/health")
+
+        # Mark service startup complete and pipeline ready for health endpoint
+        try:
+            server.state.set_state(PipelineState.WARMING_PIPELINE)
+            server.state.set_startup_complete()
+            server.state.set_state(PipelineState.READY)
+        except Exception as e:
+            logger.warning(f"Failed to update health manager readiness: {e}")
+
+        # Run the server
+        await processor.run_forever()
+
+    except KeyboardInterrupt:
+        logger.info("🛑 ComfyStream Trickle server stopped by user")
+    except Exception as e:
+        logger.error(f"ComfyStream Trickle server error: {e}", exc_info=True)
+        raise
+    finally:
+        # Cleanup with coordinated shutdown
+        logger.info("Shutting down ComfyStream Trickle server...")
+        if 'processor' in locals() and processor is not None:
+            try:
+                await processor.cleanup(full_shutdown=True)
+                logger.info("ComfyStream processor cleanup completed")
+            except Exception as e:
+                logger.warning(f"Error during processor cleanup: {e}")
+        
+        logger.info("Cleanup completed")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run comfystream server")
     parser.add_argument("--port", default=8889, help="Set the signaling port")
@@ -454,6 +573,23 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
+    parser.add_argument(
+        "--protocol",
+        default="webrtc",
+        choices=["trickle", "webrtc"],
+        help="Protocol mode: trickle or webrtc (default: webrtc for backward compatibility)",
+    )
+
+    parser.add_argument(
+        "--capability-name",
+        default="comfystream",
+        help="Name of the capability for orchestrator registration (for trickle protocol)",
+    )
+    parser.add_argument(
+        "--warmup-workflow",
+        default=None,
+        help="Specify a workflow file name to use for pipeline warmup (for trickle protocol)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -462,6 +598,14 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
+    # Branch based on protocol
+    if args.protocol == "trickle":
+        logger.info("Starting in Trickle protocol mode...")
+        asyncio.run(run_trickle_mode(args))
+        exit(0)
+    
+    # Continue with WebRTC protocol mode (default/legacy)
+    logger.info("Starting in WebRTC protocol mode...")
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
