@@ -399,6 +399,39 @@ class ComfyStreamClient:
             except asyncio.TimeoutError:
                 return None
 
+    async def get_text_output(self, timeout=None):
+        """Get text output from transcription or other text-generating workflows.
+        
+        Args:
+            timeout: Maximum time to wait in seconds. None for blocking, 0 for non-blocking.
+                    Returns None if timeout occurs.
+        """
+        if timeout is None:
+            text_output = await tensor_cache.text_outputs.get()
+            logger.info(f"ComfyStreamClient: Retrieved text output from cache (length: {len(text_output) if text_output else 0} chars): '{text_output[:100] if text_output else ''}{'...' if text_output and len(text_output) > 100 else ''}'")
+            return text_output
+        elif timeout == 0:
+            # Non-blocking check
+            if tensor_cache.text_outputs.empty():
+                return None
+            try:
+                text_output = await asyncio.wait_for(tensor_cache.text_outputs.get(), timeout=0.001)
+                if text_output:
+                    logger.info(f"ComfyStreamClient: Retrieved text output from cache (non-blocking, length: {len(text_output)} chars): '{text_output[:100]}{'...' if len(text_output) > 100 else ''}'")
+                return text_output
+            except asyncio.TimeoutError:
+                return None
+        else:
+            # Timeout specified
+            try:
+                text_output = await asyncio.wait_for(tensor_cache.text_outputs.get(), timeout=timeout)
+                if text_output:
+                    logger.info(f"ComfyStreamClient: Retrieved text output from cache (timeout={timeout}s, length: {len(text_output)} chars): '{text_output[:100]}{'...' if len(text_output) > 100 else ''}'")
+                return text_output
+            except asyncio.TimeoutError:
+                logger.debug(f"ComfyStreamClient: Text output retrieval timed out after {timeout}s")
+                return None
+
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
         # TODO: make it for for multiple prompts

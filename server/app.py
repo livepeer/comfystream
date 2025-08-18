@@ -292,7 +292,7 @@ async def offer(request):
                         
                         # Warm the video pipeline with the new resolution
                         if "m=video" in pc.remoteDescription.sdp:
-                            await pipeline.warm_video()
+                            await pipeline.warm_unified()
                             
                         response = {
                             "type": "resolution_updated",
@@ -346,9 +346,9 @@ async def offer(request):
 
     # Only warm audio here, video warming happens after resolution update
     if "m=audio" in pc.remoteDescription.sdp:
-        await pipeline.warm_audio()
+        await pipeline.warm_unified()
     
-    # We no longer warm video here - it will be warmed after receiving resolution
+    # NOTE: We no longer warm video here - it will be warmed after receiving resolution
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -496,8 +496,8 @@ async def run_trickle_mode(args):
         # Get the server from the processor
         server = processor.server
         
-        logger.info(f"🚀 Starting ComfyStream Trickle server on {args.host}:{args.port}")
-        logger.info("📡 Trickle API endpoints:")
+        logger.info(f"Starting ComfyStream Trickle server on {args.host}:{args.port}")
+        logger.info("Trickle API endpoints:")
         logger.info(f"  - POST http://{args.host}:{args.port}/api/stream/start")
         logger.info(f"  - POST http://{args.host}:{args.port}/api/stream/stop")
         logger.info(f"  - POST http://{args.host}:{args.port}/api/stream/params")

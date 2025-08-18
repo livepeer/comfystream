@@ -60,7 +60,7 @@
                 "--port=8037",
                 "--protocol=trickle",
                 "--log-level=INFO",
-                "--warmup-workflow=workflows/comfystream/sd15-tensorrt-api.json"
+                "--warmup-workflow=workflows/comfystream/audio-transcription-srt-optimized.json"
             ],
             "python": "/workspace/miniconda3/envs/comfystream/bin/python"
         },

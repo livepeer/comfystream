@@ -2,6 +2,7 @@
 
 from .audio_utils import *
 from .tensor_utils import *
+from .text_utils import *
 from .video_stream_utils import *
 from .api import *
 from .web import *
@@ -11,7 +12,7 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Import and update mappings from submodules
-for module in [audio_utils, tensor_utils, video_stream_utils, api, web]:
+for module in [audio_utils, tensor_utils, text_utils, video_stream_utils, api, web]:
     if hasattr(module, 'NODE_CLASS_MAPPINGS'):
         NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
     if hasattr(module, 'NODE_DISPLAY_NAME_MAPPINGS'):
@@ -21,6 +22,6 @@ for module in [audio_utils, tensor_utils, video_stream_utils, api, web]:
 import os
 WEB_DIRECTORY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "web")
 
-NODE_DISPLAY_NAME_MAPPINGS["ComfyStreamLauncher"] = "Launch ComfyStream 🚀"
+NODE_DISPLAY_NAME_MAPPINGS["ComfyStreamLauncher"] = "Launch ComfyStream"
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']

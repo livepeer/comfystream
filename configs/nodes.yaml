@@ -78,5 +78,5 @@ nodes:
   comfyui-stream-pack:
     name: "ComfyUI Stream Pack"
     url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
-    branch: "main"
+    branch: "realtime-transcription"
     type: "utility"

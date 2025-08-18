@@ -114,6 +114,7 @@ def setup_directories(workspace_dir):
         "tensorrt",
         "unet",
         "LLM",
+        "whisper",
     ]
     for dir_name in model_dirs:
         subdir = models_dir / dir_name
