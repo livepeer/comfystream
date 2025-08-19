@@ -17,14 +17,15 @@ class ComfyStreamUIPreview:
         }
     
     RETURN_TYPES = ()
+    OUTPUT_NODE = True
     
     FUNCTION = "execute"
     CATEGORY = "ComfyStream"
     
     def execute(self):
         # This function doesn't do anything as the real work is done in JavaScript
-        # But we need to return something to satisfy the ComfyUI node execution system
-        return ("UI Preview Node Executed",)
+        # Since this is an output node, we don't need to return anything
+        return ()
 
 # Register the node class
 NODE_CLASS_MAPPINGS = {
