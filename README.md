@@ -4,13 +4,23 @@ comfystream is a package for running img2img [Comfy](https://www.comfy.org/) wor
 
 This repo also includes a WebRTC server and UI that uses comfystream to support streaming from a webcam and processing the stream with a workflow JSON file (API format) created in ComfyUI. If you have an existing ComfyUI installation, the same custom nodes used to create the workflow in ComfyUI will be re-used when processing the video stream.
 
+## Features
+
+- **Real-time video processing** with ComfyUI workflows
+- **WebRTC streaming** support for webcam integration
+- **Translation services** via VLLM sidecar container integration
+- **Docker deployment** with multi-container orchestration
+- **HTTP streaming** and API endpoints
+
 - [comfystream](#comfystream)
+  - [Features](#features)
   - [Quick Start](#quick-start)
     - [Docker DevContainer](#docker-devcontainer)
     - [Docker Image](#docker-image)
       - [RunPod](#runpod)
       - [Tensordock](#tensordock)
       - [Other Cloud Providers](#other-cloud-providers)
+    - [Translation Support (VLLM)](#translation-support-vllm)
   - [Download Models](#download-models)
   - [Install package](#install-package)
     - [Custom Nodes](#custom-nodes)
@@ -48,6 +58,24 @@ We also have a python script that can be used to spin up a ComfyStream instance 
 #### Other Cloud Providers
 
 We also provide an [Ansible playbook](https://docs.ansible.com/ansible/latest/installation_guide/index.html) for deploying ComfyStream on any cloud provider. Refer to [scripts/README.md](./scripts/README.md#cloud-agnostic-automated-setup-ansible-based-deployment) for instructions.
+
+### Translation Support (VLLM)
+
+ComfyStream supports translation functionality through a VLLM sidecar container. This allows you to add text translation capabilities to your streaming workflows.
+
+**Quick Start with Translation:**
+
+```bash
+# Start ComfyStream with VLLM translation support
+docker-compose -f docker/docker-compose.yml up -d
+
+# Test translation API
+curl -X POST http://localhost:8889/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello world", "source_lang": "en", "target_lang": "es"}'
+```
+
+For detailed translation API usage, see [docker/README.md](docker/README.md#translation-api-usage) and [examples/translation_example.py](examples/translation_example.py).
 
 ## Download Models
 

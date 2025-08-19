@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  comfystream:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8188:8188"   # ComfyUI
+      - "8889:8889"   # ComfyStream API
+      - "3000:3000"   # ComfyStream UI
+      - "1024-65535:1024-65535/udp"  # WebRTC media ports
+    environment:
+      - VLLM_ENDPOINT=http://vllm:8000
+      - WORKSPACE_STORAGE=/workspace/storage
+    volumes:
+      - models_data:/workspace/storage
+    depends_on:
+      vllm:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["--server", "--api", "--ui"]
+
+  vllm:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vllm
+    ports:
+      - "8000:8000"
+    environment:
+      - VLLM_MODEL=microsoft/DialoGPT-medium
+      - VLLM_HOST=0.0.0.0
+      - VLLM_PORT=8000
+    volumes:
+      - vllm_models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  models_data:
+  vllm_models:

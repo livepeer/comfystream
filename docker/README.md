@@ -6,6 +6,8 @@ This folder contains the Docker files that can be used to run ComfyStream in a c
 
 - [Dockerfile](Dockerfile) - The main Dockerfile that can be used to run ComfyStream in a containerized fashion.
 - [Dockerfile.base](Dockerfile.base) - The base Dockerfile that can be used to build the base image for ComfyStream.
+- [Dockerfile.vllm](Dockerfile.vllm) - VLLM container for translation services (sidecar pattern).
+- [docker-compose.yml](docker-compose.yml) - Docker Compose configuration for running ComfyStream with VLLM sidecar.
 
 ## Pre-requisites
 
@@ -49,3 +51,45 @@ There are multiple options that can be passed to the Comfystream server. To see 
 ```bash
 docker run --gpus all livepeer/comfystream --help
 ```
+
+### Run with VLLM Translation Support (Docker Compose)
+
+To run ComfyStream with VLLM translation support using Docker Compose:
+
+```bash
+# Build and start both ComfyStream and VLLM containers
+docker-compose -f docker/docker-compose.yml up --build
+
+# Or run in detached mode
+docker-compose -f docker/docker-compose.yml up -d --build
+```
+
+This will start:
+- ComfyStream container on ports 8188 (ComfyUI), 8889 (API), 3000 (UI)
+- VLLM container on port 8000 for translation services
+
+### Translation API Usage
+
+Once running with VLLM support, you can use the translation endpoints:
+
+```bash
+# Single text translation
+curl -X POST http://localhost:8889/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello world", "source_lang": "en", "target_lang": "es"}'
+
+# Batch translation
+curl -X POST http://localhost:8889/translate/batch \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["Hello", "World"], "source_lang": "en", "target_lang": "es"}'
+
+# Check translation service health
+curl http://localhost:8889/translate/health
+```
+
+### Environment Variables
+
+- `VLLM_ENDPOINT`: VLLM service endpoint (default: http://localhost:8000)
+- `VLLM_MODEL`: Model to use for translation (default: microsoft/DialoGPT-medium)
+- `VLLM_HOST`: VLLM service host (default: 0.0.0.0)
+- `VLLM_PORT`: VLLM service port (default: 8000)

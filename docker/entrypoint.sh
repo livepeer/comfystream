@@ -35,6 +35,9 @@ START_COMFYUI=false
 START_API=false
 START_UI=false
 
+# Set default VLLM endpoint if not provided
+export VLLM_ENDPOINT=${VLLM_ENDPOINT:-"http://localhost:8000"}
+
 # First pass: check for service flags and set variables
 for arg in "$@"; do
   case "$arg" in

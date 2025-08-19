@@ -31,6 +31,7 @@ from comfystream.pipeline import Pipeline
 from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
+from comfystream.translation import VLLMTranslationClient
 import time
 
 logger = logging.getLogger(__name__)
@@ -382,6 +383,130 @@ def health(_):
     return web.Response(content_type="application/json", text="OK")
 
 
+async def translate(request):
+    """Handle translation requests via VLLM sidecar."""
+    translation_client = request.app.get("translation_client")
+    
+    if not translation_client:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"error": "Translation service not available"}),
+            status=503
+        )
+    
+    try:
+        params = await request.json()
+        text = params.get("text", "")
+        source_lang = params.get("source_lang", "auto")
+        target_lang = params.get("target_lang", "en")
+        
+        if not text:
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({"error": "Text parameter is required"}),
+                status=400
+            )
+        
+        # Check VLLM health before processing
+        if not await translation_client.health_check():
+            return web.Response(
+                content_type="application/json", 
+                text=json.dumps({"error": "Translation service unavailable"}),
+                status=503
+            )
+        
+        result = await translation_client.translate_text(text, source_lang, target_lang)
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps(result)
+        )
+        
+    except Exception as e:
+        logger.error(f"Translation error: {str(e)}")
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"error": f"Translation failed: {str(e)}"}),
+            status=500
+        )
+
+
+async def translate_batch(request):
+    """Handle batch translation requests via VLLM sidecar."""
+    translation_client = request.app.get("translation_client")
+    
+    if not translation_client:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"error": "Translation service not available"}),
+            status=503
+        )
+    
+    try:
+        params = await request.json()
+        texts = params.get("texts", [])
+        source_lang = params.get("source_lang", "auto")
+        target_lang = params.get("target_lang", "en")
+        
+        if not texts or not isinstance(texts, list):
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({"error": "Texts parameter must be a non-empty list"}),
+                status=400
+            )
+        
+        # Check VLLM health before processing
+        if not await translation_client.health_check():
+            return web.Response(
+                content_type="application/json",
+                text=json.dumps({"error": "Translation service unavailable"}),
+                status=503
+            )
+        
+        results = await translation_client.batch_translate(texts, source_lang, target_lang)
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"results": results})
+        )
+        
+    except Exception as e:
+        logger.error(f"Batch translation error: {str(e)}")
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"error": f"Batch translation failed: {str(e)}"}),
+            status=500
+        )
+
+
+async def translation_health(request):
+    """Check translation service health."""
+    translation_client = request.app.get("translation_client")
+    
+    if not translation_client:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"healthy": False, "error": "Translation client not initialized"}),
+            status=503
+        )
+    
+    try:
+        healthy = await translation_client.health_check()
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "healthy": healthy,
+                "endpoint": translation_client.endpoint
+            })
+        )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"healthy": False, "error": str(e)}),
+            status=500
+        )
+
+
 async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
@@ -397,6 +522,19 @@ async def on_startup(app: web.Application):
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
+    
+    # Initialize translation client
+    app["translation_client"] = VLLMTranslationClient()
+    
+    # Check VLLM service health on startup
+    try:
+        vllm_healthy = await app["translation_client"].health_check()
+        if vllm_healthy:
+            logger.info("VLLM translation service is available")
+        else:
+            logger.warning("VLLM translation service is not available - translation features will be disabled")
+    except Exception as e:
+        logger.warning(f"Failed to check VLLM service health: {e} - translation features will be disabled")
 
 
 async def on_shutdown(app: web.Application):
@@ -404,6 +542,10 @@ async def on_shutdown(app: web.Application):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    
+    # Close translation client
+    if "translation_client" in app:
+        await app["translation_client"].close()
 
 
 if __name__ == "__main__":
@@ -477,6 +619,11 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
+    
+    # Translation API routes
+    app.router.add_post("/translate", translate)
+    app.router.add_post("/translate/batch", translate_batch)
+    app.router.add_get("/translate/health", translation_health)
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)

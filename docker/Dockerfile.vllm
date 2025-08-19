@@ -1,0 +1,35 @@
+FROM vllm/vllm-openai:latest
+
+# Set environment variables
+ENV VLLM_HOST=0.0.0.0
+ENV VLLM_PORT=8000
+ENV VLLM_MODEL=microsoft/DialoGPT-medium
+
+# Create a non-root user
+RUN groupadd -r vllm && useradd -r -g vllm vllm
+
+# Create model cache directory
+RUN mkdir -p /models && chown -R vllm:vllm /models
+
+# Set working directory
+WORKDIR /app
+
+# Copy entrypoint script
+COPY docker/vllm-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && chown vllm:vllm /app/entrypoint.sh
+
+# Switch to non-root user
+USER vllm
+
+# Expose the port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Default command - can be overridden
+CMD ["--model", "microsoft/DialoGPT-medium", "--host", "0.0.0.0", "--port", "8000"]
