@@ -1,7 +1,11 @@
 "use client";
 
 import { PeerConnector } from "@/components/peer";
-import { StreamConfig, StreamSettings, DEFAULT_CONFIG } from "@/components/settings";
+import {
+  StreamConfig,
+  StreamSettings,
+  DEFAULT_CONFIG,
+} from "@/components/settings";
 import { Webcam } from "@/components/webcam";
 import { usePeerContext } from "@/context/peer-context";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,42 +18,45 @@ import {
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
 import { StreamControl } from "@/components/stream-control";
-import fixWebmDuration from 'webm-duration-fix';
-import { set, get, del, keys } from 'idb-keyval';
+import fixWebmDuration from "webm-duration-fix";
+import { set, get, del, keys } from "idb-keyval";
 import { Drawer, DrawerContent, DrawerTitle } from "./ui/drawer";
-import * as Tabs from '@radix-ui/react-tabs';
+import * as Tabs from "@radix-ui/react-tabs";
 
 // Custom hook for managing toast lifecycle
 function useToast() {
   const toastIdRef = useRef<string | number | undefined>(undefined);
-  
-  const showToast = useCallback((message: string, type: 'loading' | 'success' | 'error' = 'loading') => {
-    // Always dismiss previous toast first
-    if (toastIdRef.current) {
-      toast.dismiss(toastIdRef.current);
-    }
-    
-    // Create new toast based on type
-    let id;
-    if (type === 'loading') {
-      id = toast.loading(message);
-    } else if (type === 'success') {
-      id = toast.success(message);
-    } else if (type === 'error') {
-      id = toast.error(message);
-    }
-    
-    toastIdRef.current = id;
-    return id;
-  }, []);
-  
+
+  const showToast = useCallback(
+    (message: string, type: "loading" | "success" | "error" = "loading") => {
+      // Always dismiss previous toast first
+      if (toastIdRef.current) {
+        toast.dismiss(toastIdRef.current);
+      }
+
+      // Create new toast based on type
+      let id;
+      if (type === "loading") {
+        id = toast.loading(message);
+      } else if (type === "success") {
+        id = toast.success(message);
+      } else if (type === "error") {
+        id = toast.error(message);
+      }
+
+      toastIdRef.current = id;
+      return id;
+    },
+    [],
+  );
+
   const dismissToast = useCallback(() => {
     if (toastIdRef.current) {
       toast.dismiss(toastIdRef.current);
       toastIdRef.current = undefined;
     }
   }, []);
-  
+
   return { showToast, dismissToast, toastId: toastIdRef };
 }
 
@@ -58,7 +65,11 @@ interface MediaStreamPlayerProps {
   resolution: { width: number; height: number };
 }
 
-function MediaStreamPlayer({ stream, resolution, onFrame }: MediaStreamPlayerProps & { onFrame?: () => void }) {
+function MediaStreamPlayer({
+  stream,
+  resolution,
+  onFrame,
+}: MediaStreamPlayerProps & { onFrame?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [needsPlayButton, setNeedsPlayButton] = useState(false);
   const frameCheckRef = useRef<number | null>(null);
@@ -80,12 +91,12 @@ function MediaStreamPlayer({ stream, resolution, onFrame }: MediaStreamPlayerPro
           lastTimeRef.current = video.currentTime;
           onFrame();
         }
-        
+
         frameCheckRef.current = requestAnimationFrame(checkFrame);
       };
-      
+
       frameCheckRef.current = requestAnimationFrame(checkFrame);
-      
+
       return () => {
         if (frameCheckRef.current !== null) {
           cancelAnimationFrame(frameCheckRef.current);
@@ -115,7 +126,7 @@ function MediaStreamPlayer({ stream, resolution, onFrame }: MediaStreamPlayerPro
         video.srcObject = null;
         video.pause();
       }
-      
+
       if (frameCheckRef.current !== null) {
         cancelAnimationFrame(frameCheckRef.current);
         frameCheckRef.current = null;
@@ -135,8 +146,8 @@ function MediaStreamPlayer({ stream, resolution, onFrame }: MediaStreamPlayerPro
   };
 
   return (
-    <div 
-      className="relative w-full h-full" 
+    <div
+      className="relative w-full h-full"
       style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
     >
       <video
@@ -168,14 +179,21 @@ interface StageProps {
   onOutputStreamReady: (stream: MediaStream | null) => void;
 }
 
-function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUrl, onOutputStreamReady }: StageProps) {
+function Stage({
+  connected,
+  onStreamReady,
+  onComfyUIReady,
+  resolution,
+  backendUrl,
+  onOutputStreamReady,
+}: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
   // Add state and refs for tracking frames
   const [isComfyUIReady, setIsComfyUIReady] = useState<boolean>(false);
   const frameCountRef = useRef<number>(0);
   const frameReadyReported = useRef<boolean>(false);
-  
+
   // The number of frames to wait before considering ComfyUI ready
   // WARMUP_RUNS is 5, we add a small buffer
   const READY_FRAME_THRESHOLD = 6;
@@ -183,13 +201,18 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
   // Handle frame counting
   const handleFrame = useCallback(() => {
     if (isComfyUIReady || frameReadyReported.current) return;
-    
+
     frameCountRef.current += 1;
     console.log(`[Stage] Frame ${frameCountRef.current} received`);
-    
+
     // Check if we've passed the dummy frames threshold
-    if (frameCountRef.current >= READY_FRAME_THRESHOLD && !frameReadyReported.current) {
-      console.log(`[Stage] Received ${frameCountRef.current} frames, considering ComfyUI ready`);
+    if (
+      frameCountRef.current >= READY_FRAME_THRESHOLD &&
+      !frameReadyReported.current
+    ) {
+      console.log(
+        `[Stage] Received ${frameCountRef.current} frames, considering ComfyUI ready`,
+      );
       frameReadyReported.current = true;
       setIsComfyUIReady(true);
       onComfyUIReady(); // Notify parent when ComfyUI is ready
@@ -208,7 +231,7 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
 
     onStreamReady();
     if (onOutputStreamReady) {
-      console.log('[Stage] Calling onOutputStreamReady with', remoteStream);
+      console.log("[Stage] Calling onOutputStreamReady with", remoteStream);
       onOutputStreamReady(remoteStream);
     }
 
@@ -229,15 +252,21 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [connected, remoteStream, peerConnection, onStreamReady, onOutputStreamReady]);
+  }, [
+    connected,
+    remoteStream,
+    peerConnection,
+    onStreamReady,
+    onOutputStreamReady,
+  ]);
 
   if (!connected || !remoteStream) {
     return (
       <>
-        <video 
-          className="w-full h-full object-cover" 
-          autoPlay 
-          loop 
+        <video
+          className="w-full h-full object-cover"
+          autoPlay
+          loop
           playsInline
           style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
         >
@@ -250,26 +279,30 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
   const hasVideo = remoteStream.getVideoTracks().length > 0;
 
   return (
-    <div 
+    <div
       className="relative w-full h-full"
       style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
     >
-      <MediaStreamPlayer 
-        stream={remoteStream} 
-        resolution={resolution} 
+      <MediaStreamPlayer
+        stream={remoteStream}
+        resolution={resolution}
         onFrame={handleFrame}
       />
-      
+
       {/* Show warm-up overlay when we have a stream but ComfyUI isn't ready yet */}
       {hasVideo && !isComfyUIReady && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/30">
           <div className="flex flex-col items-center space-y-3 bg-black/50 p-4 rounded-lg">
             <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-white"></div>
-            <p className="text-white text-center">ComfyUI is warming up...<br/>This may take a few minutes</p>
+            <p className="text-white text-center">
+              ComfyUI is warming up...
+              <br />
+              This may take a few minutes
+            </p>
           </div>
         </div>
       )}
-      
+
       {hasVideo && (
         <div className="absolute top-2 right-2 bg-black/50 text-white px-2 py-1 rounded text-sm">
           <TooltipProvider>
@@ -299,16 +332,18 @@ export const Room = () => {
     useState<boolean>(true);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [outputStream, _setOutputStream] = useState<MediaStream | null>(null);
-  
+
   // Use the custom toast hook
   const { showToast, dismissToast, toastId } = useToast();
-  
+
   // Add state to track if ComfyUI is ready
   const [isComfyUIReady, setIsComfyUIReady] = useState<boolean>(false);
 
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
-  const [recordings, setRecordings] = useState<{ type: 'input' | 'output'; url: string; filename: string; id: string }[]>([]);
+  const [recordings, setRecordings] = useState<
+    { type: "input" | "output"; url: string; filename: string; id: string }[]
+  >([]);
   const inputRecorderRef = useRef<MediaRecorder | null>(null);
   const outputRecorderRef = useRef<MediaRecorder | null>(null);
   const inputChunksRef = useRef<Blob[]>([]);
@@ -316,10 +351,10 @@ export const Room = () => {
   const [isRecordingsPanelOpen, setIsRecordingsPanelOpen] = useState(false);
 
   // Helper to get timestamped filenames
-  const getFilename = (type: 'input' | 'output') => {
+  const getFilename = (type: "input" | "output") => {
     const now = new Date();
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    const ts = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     return `recording_${type}_${ts}.mp4`;
   };
 
@@ -338,9 +373,7 @@ export const Room = () => {
     setLocalStream(stream);
   }, []);
 
-  const onRemoteStreamReady = useCallback(() => {
-    
-  }, []);
+  const onRemoteStreamReady = useCallback(() => {}, []);
 
   // Add a handler for when ComfyUI is ready (will be passed to Stage component)
   const onComfyUIReady = useCallback(() => {
@@ -351,16 +384,23 @@ export const Room = () => {
     setIsComfyUIReady(true);
   }, [showToast, dismissToast]);
 
-  const onStreamConfigSave = useCallback((config: StreamConfig) => {
-    setConfig(config);
-    
-    // If resolution changed, we need to restart the stream
-    if (localStream && 
-        (config.resolution.width !== DEFAULT_CONFIG.resolution.width || 
-         config.resolution.height !== DEFAULT_CONFIG.resolution.height)) {
-      console.log(`[Room] Resolution changed to ${config.resolution.width}x${config.resolution.height}, restarting stream`);
-    }
-  }, [localStream]);
+  const onStreamConfigSave = useCallback(
+    (config: StreamConfig) => {
+      setConfig(config);
+
+      // If resolution changed, we need to restart the stream
+      if (
+        localStream &&
+        (config.resolution.width !== DEFAULT_CONFIG.resolution.width ||
+          config.resolution.height !== DEFAULT_CONFIG.resolution.height)
+      ) {
+        console.log(
+          `[Room] Resolution changed to ${config.resolution.width}x${config.resolution.height}, restarting stream`,
+        );
+      }
+    },
+    [localStream],
+  );
 
   useEffect(() => {
     if (connectingRef.current) return;
@@ -380,7 +420,10 @@ export const Room = () => {
 
   const handleConnected = useCallback(() => {
     setIsConnected(true);
-    showToast("Stream connected, waiting for ComfyUI to initialize...", "loading");
+    showToast(
+      "Stream connected, waiting for ComfyUI to initialize...",
+      "loading",
+    );
     connectingRef.current = false;
   }, []);
 
@@ -392,26 +435,32 @@ export const Room = () => {
 
   // Helper to get a supported mimeType for MediaRecorder
   function getSupportedMimeType() {
-    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      return 'video/webm;codecs=vp8';
-    } else if (MediaRecorder.isTypeSupported('video/webm')) {
-      return 'video/webm';
-    } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-      return 'video/mp4';
+    if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
+      return "video/webm;codecs=vp8";
+    } else if (MediaRecorder.isTypeSupported("video/webm")) {
+      return "video/webm";
+    } else if (MediaRecorder.isTypeSupported("video/mp4")) {
+      return "video/mp4";
     }
-    return '';
+    return "";
   }
 
   // Helper to generate a unique ID
-  const generateId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const generateId = () =>
+    `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   // Load recordings from IndexedDB on mount
   useEffect(() => {
     (async () => {
       const allKeys = await keys();
-      const recs: { type: 'input' | 'output'; url: string; filename: string; id: string }[] = [];
+      const recs: {
+        type: "input" | "output";
+        url: string;
+        filename: string;
+        id: string;
+      }[] = [];
       for (const key of allKeys) {
-        if (typeof key === 'string' && key.startsWith('recording_')) {
+        if (typeof key === "string" && key.startsWith("recording_")) {
           const { type, filename, blob } = await get(key);
           const url = URL.createObjectURL(blob);
           recs.push({ type, filename, url, id: key });
@@ -422,7 +471,11 @@ export const Room = () => {
   }, []);
 
   // Save a recording to IndexedDB and update state
-  const saveRecording = async (type: 'input' | 'output', filename: string, blob: Blob) => {
+  const saveRecording = async (
+    type: "input" | "output",
+    filename: string,
+    blob: Blob,
+  ) => {
     const id = `recording_${generateId()}`;
     await set(id, { type, filename, blob });
     const url = URL.createObjectURL(blob);
@@ -432,7 +485,7 @@ export const Room = () => {
   // Delete a recording from IndexedDB and update state
   const deleteRecording = async (id: string) => {
     await del(id);
-    setRecordings((prev) => prev.filter(r => r.id !== id));
+    setRecordings((prev) => prev.filter((r) => r.id !== id));
   };
 
   // Share a recording using the Web Share API
@@ -444,10 +497,10 @@ export const Room = () => {
           title: filename,
         });
       } catch (e) {
-        showToast('Sharing cancelled or failed', 'error');
+        showToast("Sharing cancelled or failed", "error");
       }
     } else {
-      showToast('Web Share API not supported on this device', 'error');
+      showToast("Web Share API not supported on this device", "error");
     }
   };
 
@@ -457,13 +510,17 @@ export const Room = () => {
     const mimeType = getSupportedMimeType();
     if (localStream) {
       inputChunksRef.current = [];
-      const inputRecorder = new MediaRecorder(localStream, mimeType ? { mimeType } : undefined);
-      inputRecorder.ondataavailable = (e) => e.data.size && inputChunksRef.current.push(e.data);
+      const inputRecorder = new MediaRecorder(
+        localStream,
+        mimeType ? { mimeType } : undefined,
+      );
+      inputRecorder.ondataavailable = (e) =>
+        e.data.size && inputChunksRef.current.push(e.data);
       inputRecorder.onstop = () => {
-        const filename = getFilename('input');
+        const filename = getFilename("input");
         const blob = new Blob(inputChunksRef.current, { type: mimeType });
-        fixWebmDuration(blob).then(fixedBlob => {
-          saveRecording('input', filename, fixedBlob);
+        fixWebmDuration(blob).then((fixedBlob) => {
+          saveRecording("input", filename, fixedBlob);
         });
       };
       inputRecorder.start();
@@ -471,41 +528,51 @@ export const Room = () => {
     }
     if (outputStream) {
       outputChunksRef.current = [];
-      const outputRecorder = new MediaRecorder(outputStream, mimeType ? { mimeType } : undefined);
-      outputRecorder.ondataavailable = (e) => e.data.size && outputChunksRef.current.push(e.data);
+      const outputRecorder = new MediaRecorder(
+        outputStream,
+        mimeType ? { mimeType } : undefined,
+      );
+      outputRecorder.ondataavailable = (e) =>
+        e.data.size && outputChunksRef.current.push(e.data);
       outputRecorder.onstop = () => {
-        const filename = getFilename('output');
+        const filename = getFilename("output");
         const blob = new Blob(outputChunksRef.current, { type: mimeType });
-        fixWebmDuration(blob).then(fixedBlob => {
-          saveRecording('output', filename, fixedBlob);
+        fixWebmDuration(blob).then((fixedBlob) => {
+          saveRecording("output", filename, fixedBlob);
         });
       };
       outputRecorder.start();
       outputRecorderRef.current = outputRecorder;
     }
     setIsRecording(true);
-    showToast('Recording started', 'success');
+    showToast("Recording started", "success");
   };
 
   // Stop recording both streams
   const stopRecording = () => {
-    if (inputRecorderRef.current && inputRecorderRef.current.state !== 'inactive') {
+    if (
+      inputRecorderRef.current &&
+      inputRecorderRef.current.state !== "inactive"
+    ) {
       inputRecorderRef.current.stop();
     }
-    if (outputRecorderRef.current && outputRecorderRef.current.state !== 'inactive') {
+    if (
+      outputRecorderRef.current &&
+      outputRecorderRef.current.state !== "inactive"
+    ) {
       outputRecorderRef.current.stop();
     }
     setIsRecording(false);
-    showToast('Recording stopped', 'success');
+    showToast("Recording stopped", "success");
   };
 
   const setOutputStream = (stream: MediaStream | null) => {
-    console.log('[Room] setOutputStream called with', stream);
+    console.log("[Room] setOutputStream called with", stream);
     _setOutputStream(stream);
   };
 
   useEffect(() => {
-    console.log('[Room] outputStream state changed:', outputStream);
+    console.log("[Room] outputStream state changed:", outputStream);
   }, [outputStream]);
 
   const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
@@ -529,7 +596,7 @@ export const Room = () => {
           <div className="min-h-[100dvh] flex flex-col items-center justify-center md:justify-start">
             <div className="w-full max-h-[100dvh] flex flex-col md:flex-row landscape:flex-row justify-center items-center lg:space-x-4 md:pt-[10vh]">
               {/* Output stream */}
-              <div 
+              <div
                 className="relative w-full max-w-[100vw] sm:max-w-[640px] md:max-w-[512px] flex justify-center items-center bg-slate-900 sm:border-[2px] md:border-0 lg:border-2 rounded-md overflow-hidden"
                 style={{
                   aspectRatio: `${config.resolution.width}/${config.resolution.height}`,
@@ -555,7 +622,7 @@ export const Room = () => {
                 </div>
               </div>
               {/* Input stream (desktop) */}
-              <div 
+              <div
                 className="hidden md:flex w-full sm:w-full md:w-full max-w-[512px] flex justify-center items-center lg:border-2 lg:rounded-md bg-slate-800 overflow-hidden"
                 style={{
                   aspectRatio: `${config.resolution.width}/${config.resolution.height}`,
@@ -580,7 +647,26 @@ export const Room = () => {
                   className="h-12 w-12 rounded-full bg-gray-800 text-white shadow-lg flex items-center justify-center hover:bg-gray-900"
                   title="Stream Settings"
                 >
-                  <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-sliders"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+                  <svg
+                    width="24"
+                    height="24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="feather feather-sliders"
+                  >
+                    <line x1="4" y1="21" x2="4" y2="14"></line>
+                    <line x1="4" y1="10" x2="4" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12" y2="3"></line>
+                    <line x1="20" y1="21" x2="20" y2="16"></line>
+                    <line x1="20" y1="12" x2="20" y2="3"></line>
+                    <line x1="1" y1="14" x2="7" y2="14"></line>
+                    <line x1="9" y1="8" x2="15" y2="8"></line>
+                    <line x1="17" y1="16" x2="23" y2="16"></line>
+                  </svg>
                 </button>
               )}
               {/* Gear/settings button (only when streaming) */}
@@ -590,22 +676,46 @@ export const Room = () => {
                   className="h-12 w-12 rounded-full bg-gray-800 text-white shadow-lg flex items-center justify-center hover:bg-gray-900"
                   title="Settings"
                 >
-                  <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-settings"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09c0 .66.39 1.26 1 1.51a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09c0 .66.39 1.26 1 1.51H21a2 2 0 0 1 0 4h-.09c-.66 0-1.26.39-1.51 1z"></path></svg>
+                  <svg
+                    width="24"
+                    height="24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="feather feather-settings"
+                  >
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09c0 .66.39 1.26 1 1.51a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09c0 .66.39 1.26 1 1.51H21a2 2 0 0 1 0 4h-.09c-.66 0-1.26.39-1.51 1z"></path>
+                  </svg>
                 </button>
               )}
               {/* Record button (conditionally shown) */}
-              {(localStream && outputStream && isComfyUIReady) && (
+              {localStream && outputStream && isComfyUIReady && (
                 <button
                   onClick={isRecording ? stopRecording : startRecording}
                   className="h-12 w-12 rounded-full shadow-lg transition-shadow flex items-center justify-center bg-red-600 text-white hover:scale-105"
-                  title={isRecording ? 'Stop Recording' : 'Start Recording'}
+                  title={isRecording ? "Stop Recording" : "Start Recording"}
                 >
                   {isRecording ? (
-                    <svg width="32" height="32" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <svg
+                      width="32"
+                      height="32"
+                      viewBox="0 0 32 32"
+                      fill="currentColor"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
                       <rect x="8" y="8" width="16" height="16" rx="3" />
                     </svg>
                   ) : (
-                    <svg width="32" height="32" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <svg
+                      width="32"
+                      height="32"
+                      viewBox="0 0 32 32"
+                      fill="currentColor"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
                       <circle cx="16" cy="16" r="7" />
                     </svg>
                   )}
@@ -617,79 +727,168 @@ export const Room = () => {
                 className="h-12 w-12 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center hover:bg-blue-700"
                 title="Show Recordings"
               >
-                <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-film"><rect x="2" y="7" width="20" height="10" rx="2" ry="2"></rect><path d="M6 7V5M6 19v-2M18 7V5M18 19v-2"></path></svg>
+                <svg
+                  width="24"
+                  height="24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="feather feather-film"
+                >
+                  <rect x="2" y="7" width="20" height="10" rx="2" ry="2"></rect>
+                  <path d="M6 7V5M6 19v-2M18 7V5M18 19v-2"></path>
+                </svg>
               </button>
             </div>
             {/* Recordings Side Panel */}
             {isRecordingsPanelOpen && (
               <div className="fixed inset-0 z-50 flex justify-end">
-                <div className="fixed inset-0 bg-black/30" onClick={() => setIsRecordingsPanelOpen(false)} />
+                <div
+                  className="fixed inset-0 bg-black/30"
+                  onClick={() => setIsRecordingsPanelOpen(false)}
+                />
                 <div className="relative w-full max-w-md h-full bg-white shadow-xl p-6 overflow-y-auto flex flex-col">
                   <button
                     onClick={() => setIsRecordingsPanelOpen(false)}
                     className="absolute top-4 right-4 text-2xl text-gray-500 hover:text-black"
                     title="Close"
-                  >×</button>
+                  >
+                    ×
+                  </button>
                   <h2 className="text-xl font-bold mb-4">Recordings</h2>
                   {recordings.length === 0 ? (
                     <div className="text-gray-500">No recordings yet.</div>
                   ) : (
                     <div className="flex flex-col gap-4">
-                      {Array.from(new Set(recordings.map(r => r.filename.replace(/^recording_(input|output)_/, ''))))
-                        .map(baseTimestamp => {
-                          const inputRec = recordings.find(r => r.type === 'input' && r.filename.replace(/^recording_(input|output)_/, '') === baseTimestamp);
-                          const outputRec = recordings.find(r => r.type === 'output' && r.filename.replace(/^recording_(input|output)_/, '') === baseTimestamp);
-                          const rec = outputRec || inputRec; // Use either recording for the container
-                          if (!rec) return null; // Skip if no valid recording found
-                          return (
-                            <div key={rec.id} className="border rounded-lg p-3 bg-gray-50 flex flex-col gap-2">
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold">{rec.filename.replace(/^recording_(input|output)_/, '')}</span>
-                                <button
-                                  onClick={() => {
-                                    if (inputRec) deleteRecording(inputRec.id);
-                                    if (outputRec) deleteRecording(outputRec.id);
-                                  }}
-                                  className="text-red-500 hover:text-red-700 text-lg ml-2"
-                                  title="Delete"
-                                >🗑️</button>
-                              </div>
-                              <Tabs.Root defaultValue={outputRec ? 'output' : 'input'} className="w-full">
-                                <Tabs.List className="flex gap-2">
-                                  {outputRec && <Tabs.Trigger value="output" className="px-3 py-1 rounded-t bg-slate-100 text-slate-700 data-[state=active]:bg-slate-700 data-[state=active]:text-white transition-colors">Output</Tabs.Trigger>}
-                                  {inputRec && <Tabs.Trigger value="input" className="px-3 py-1 rounded-t bg-gray-100 text-gray-700 data-[state=active]:bg-gray-700 data-[state=active]:text-white transition-colors">Input</Tabs.Trigger>}
-                                </Tabs.List>
+                      {Array.from(
+                        new Set(
+                          recordings.map((r) =>
+                            r.filename.replace(
+                              /^recording_(input|output)_/,
+                              "",
+                            ),
+                          ),
+                        ),
+                      ).map((baseTimestamp) => {
+                        const inputRec = recordings.find(
+                          (r) =>
+                            r.type === "input" &&
+                            r.filename.replace(
+                              /^recording_(input|output)_/,
+                              "",
+                            ) === baseTimestamp,
+                        );
+                        const outputRec = recordings.find(
+                          (r) =>
+                            r.type === "output" &&
+                            r.filename.replace(
+                              /^recording_(input|output)_/,
+                              "",
+                            ) === baseTimestamp,
+                        );
+                        const rec = outputRec || inputRec; // Use either recording for the container
+                        if (!rec) return null; // Skip if no valid recording found
+                        return (
+                          <div
+                            key={rec.id}
+                            className="border rounded-lg p-3 bg-gray-50 flex flex-col gap-2"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold">
+                                {rec.filename.replace(
+                                  /^recording_(input|output)_/,
+                                  "",
+                                )}
+                              </span>
+                              <button
+                                onClick={() => {
+                                  if (inputRec) deleteRecording(inputRec.id);
+                                  if (outputRec) deleteRecording(outputRec.id);
+                                }}
+                                className="text-red-500 hover:text-red-700 text-lg ml-2"
+                                title="Delete"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                            <Tabs.Root
+                              defaultValue={outputRec ? "output" : "input"}
+                              className="w-full"
+                            >
+                              <Tabs.List className="flex gap-2">
                                 {outputRec && (
-                                  <Tabs.Content value="output">
-                                    <video src={outputRec.url} controls className="w-full rounded" preload="metadata" />
-                                    <div className="flex gap-2 mt-1 justify-end">
-                                      <a href={outputRec.url} download={outputRec.filename} className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-800 transition-colors text-sm">Download</a>
-                                    </div>
-                                  </Tabs.Content>
+                                  <Tabs.Trigger
+                                    value="output"
+                                    className="px-3 py-1 rounded-t bg-slate-100 text-slate-700 data-[state=active]:bg-slate-700 data-[state=active]:text-white transition-colors"
+                                  >
+                                    Output
+                                  </Tabs.Trigger>
                                 )}
                                 {inputRec && (
-                                  <Tabs.Content value="input">
-                                    <video src={inputRec.url} controls className="w-full rounded" preload="metadata" />
-                                    <div className="flex gap-2 mt-1 justify-end">
-                                      <a href={inputRec.url} download={inputRec.filename} className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-800 transition-colors text-sm">Download</a>
-                                    </div>
-                                  </Tabs.Content>
+                                  <Tabs.Trigger
+                                    value="input"
+                                    className="px-3 py-1 rounded-t bg-gray-100 text-gray-700 data-[state=active]:bg-gray-700 data-[state=active]:text-white transition-colors"
+                                  >
+                                    Input
+                                  </Tabs.Trigger>
                                 )}
-                              </Tabs.Root>
-                            </div>
-                          );
-                        })}
+                              </Tabs.List>
+                              {outputRec && (
+                                <Tabs.Content value="output">
+                                  <video
+                                    src={outputRec.url}
+                                    controls
+                                    className="w-full rounded"
+                                    preload="metadata"
+                                  />
+                                  <div className="flex gap-2 mt-1 justify-end">
+                                    <a
+                                      href={outputRec.url}
+                                      download={outputRec.filename}
+                                      className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-800 transition-colors text-sm"
+                                    >
+                                      Download
+                                    </a>
+                                  </div>
+                                </Tabs.Content>
+                              )}
+                              {inputRec && (
+                                <Tabs.Content value="input">
+                                  <video
+                                    src={inputRec.url}
+                                    controls
+                                    className="w-full rounded"
+                                    preload="metadata"
+                                  />
+                                  <div className="flex gap-2 mt-1 justify-end">
+                                    <a
+                                      href={inputRec.url}
+                                      download={inputRec.filename}
+                                      className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-800 transition-colors text-sm"
+                                    >
+                                      Download
+                                    </a>
+                                  </div>
+                                </Tabs.Content>
+                              )}
+                            </Tabs.Root>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {isConnected && isComfyUIReady && 
-            <ControlPanelsContainer
-              isOpen={isControlPanelOpen}
-              onOpenChange={setIsControlPanelOpen}
-            />}
+            {isConnected && isComfyUIReady && (
+              <ControlPanelsContainer
+                isOpen={isControlPanelOpen}
+                onOpenChange={setIsControlPanelOpen}
+              />
+            )}
 
             <StreamSettings
               open={isStreamSettingsOpen}

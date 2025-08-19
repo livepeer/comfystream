@@ -13,7 +13,10 @@ export type ControlPanelsContainerProps = {
   onOpenChange: (open: boolean) => void;
 };
 
-export const ControlPanelsContainer = ({ isOpen, onOpenChange }: ControlPanelsContainerProps) => {
+export const ControlPanelsContainer = ({
+  isOpen,
+  onOpenChange,
+}: ControlPanelsContainerProps) => {
   const [panels, setPanels] = useState<number[]>([0]); // Start with one panel
   const [nextPanelId, setNextPanelId] = useState(1);
   const [panelStates, setPanelStates] = useState<
@@ -82,7 +85,7 @@ export const ControlPanelsContainer = ({ isOpen, onOpenChange }: ControlPanelsCo
       <DrawerContent
         id="control-panel-drawer"
         className="max-h-[50vh] min-h-[200px] bg-background/90 backdrop-blur-md border-t shadow-lg overflow-hidden"
-        style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50 }}
+        style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 50 }}
       >
         <DrawerTitle className="sr-only">Control Panels</DrawerTitle>
 
@@ -111,9 +114,7 @@ export const ControlPanelsContainer = ({ isOpen, onOpenChange }: ControlPanelsCo
                   className="flex-none w-80 border rounded-lg bg-white/95 shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col max-h-[calc(50vh-3rem)]"
                 >
                   <div className="flex justify-between items-center p-2 border-b bg-gray-50/80">
-                    <span className="font-medium">
-                      Control Panel {id + 1}
-                    </span>
+                    <span className="font-medium">Control Panel {id + 1}</span>
                     <Button
                       onClick={() => removePanel(id)}
                       variant="ghost"

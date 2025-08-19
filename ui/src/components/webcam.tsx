@@ -41,7 +41,7 @@ function StreamCanvas({
 
     // Stop previous canvas stream if it exists
     if (canvasStreamRef.current) {
-      canvasStreamRef.current.getTracks().forEach(track => track.stop());
+      canvasStreamRef.current.getTracks().forEach((track) => track.stop());
     }
 
     // Create a new stream from the canvas
@@ -51,7 +51,7 @@ function StreamCanvas({
 
     // Add audio tracks from the original stream if they exist
     if (stream.getAudioTracks().length > 0) {
-      stream.getAudioTracks().forEach(track => {
+      stream.getAudioTracks().forEach((track) => {
         canvasStream.addTrack(track);
       });
     }
@@ -61,7 +61,7 @@ function StreamCanvas({
 
     return () => {
       if (canvasStreamRef.current) {
-        canvasStreamRef.current.getTracks().forEach(track => track.stop());
+        canvasStreamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
   }, [stream, frameRate, width, height, onStreamReady]);
@@ -77,12 +77,12 @@ function StreamCanvas({
     const video = videoRef.current!;
 
     let isActive = true;
-    
+
     const drawFrame = () => {
       if (!isActive || !video) {
         return;
       }
-      
+
       if (!video?.videoWidth) {
         requestAnimationFrame(drawFrame);
         return;
@@ -92,7 +92,7 @@ function StreamCanvas({
       const scaleWidth = width / video.videoWidth;
       const scaleHeight = height / video.videoHeight;
       const scale = Math.max(scaleWidth, scaleHeight);
-      
+
       const scaledWidth = video.videoWidth * scale;
       const scaledHeight = video.videoHeight * scale;
       const offsetX = (width - scaledWidth) / 2;
@@ -101,10 +101,10 @@ function StreamCanvas({
       // Clear the canvas and draw black background
       ctx.fillStyle = "black";
       ctx.fillRect(0, 0, width, height);
-      
+
       // Draw the video frame centered and scaled to fit
       ctx.drawImage(video, offsetX, offsetY, scaledWidth, scaledHeight);
-      
+
       requestAnimationFrame(drawFrame);
     };
     drawFrame();
@@ -119,10 +119,10 @@ function StreamCanvas({
     if (!stream || stream.getVideoTracks().length === 0 || !videoRef.current) {
       return;
     }
-    
+
     const video = videoRef.current;
     video.srcObject = stream;
-    
+
     video.onloadedmetadata = () => {
       video.play().catch((error) => {
         console.error("Video play failed:", error);
@@ -148,15 +148,12 @@ function StreamCanvas({
 
   return (
     <>
-      <div className="relative w-full h-full" style={{ aspectRatio: `${width}/${height}` }}>
+      <div
+        className="relative w-full h-full"
+        style={{ aspectRatio: `${width}/${height}` }}
+      >
         {/* Hidden video element that will be used as the source for the canvas */}
-        <video 
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="hidden"
-        />
+        <video ref={videoRef} autoPlay playsInline muted className="hidden" />
         <canvas
           ref={canvasRef}
           width={width}
@@ -206,35 +203,40 @@ export function Webcam({
     });
 
     // Also clean up canvas stream if we're replacing the stream
-    setCanvasStream((oldCanvasStream: MediaStream | null): MediaStream | null => {
-      if (oldCanvasStream) {
-        oldCanvasStream.getTracks().forEach((track) => {
-          // Only stop video tracks, as audio tracks are shared with the main stream
-          if (track.kind === 'video') {
-            track.stop();
-          }
-        });
-      }
-      return null;
-    });
+    setCanvasStream(
+      (oldCanvasStream: MediaStream | null): MediaStream | null => {
+        if (oldCanvasStream) {
+          oldCanvasStream.getTracks().forEach((track) => {
+            // Only stop video tracks, as audio tracks are shared with the main stream
+            if (track.kind === "video") {
+              track.stop();
+            }
+          });
+        }
+        return null;
+      },
+    );
   }, []);
 
-  const handleCanvasStreamReady = useCallback((stream: MediaStream) => {
-    // Clean up any existing canvas stream before setting the new one
-    setCanvasStream((oldStream) => {
-      if (oldStream) {
-        oldStream.getTracks().forEach((track) => {
-          if (track.kind === 'video') {
-            track.stop();
-          }
-        });
-      }
-      return stream;
-    });
-    
-    // Pass the canvas stream to the parent component
-    onStreamReady(stream);
-  }, [onStreamReady]);
+  const handleCanvasStreamReady = useCallback(
+    (stream: MediaStream) => {
+      // Clean up any existing canvas stream before setting the new one
+      setCanvasStream((oldStream) => {
+        if (oldStream) {
+          oldStream.getTracks().forEach((track) => {
+            if (track.kind === "video") {
+              track.stop();
+            }
+          });
+        }
+        return stream;
+      });
+
+      // Pass the canvas stream to the parent component
+      onStreamReady(stream);
+    },
+    [onStreamReady],
+  );
 
   const startWebcam = useCallback(async () => {
     if (deviceId === "none" && selectedAudioDeviceId === "none") {
@@ -273,8 +275,11 @@ export function Webcam({
       try {
         return await navigator.mediaDevices.getUserMedia(constraints);
       } catch (exactError) {
-        console.log("Could not get exact resolution, falling back to ideal constraints", exactError);
-        
+        console.log(
+          "Could not get exact resolution, falling back to ideal constraints",
+          exactError,
+        );
+
         // Fall back to ideal constraints if exact fails
         const idealConstraints: MediaStreamConstraints = {
           video:
@@ -300,7 +305,7 @@ export function Webcam({
                   autoGainControl: false,
                 },
         };
-        
+
         return await navigator.mediaDevices.getUserMedia(idealConstraints);
       }
     } catch (error) {
@@ -358,7 +363,10 @@ export function Webcam({
   }
 
   return (
-    <div className="w-full h-full" style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}>
+    <div
+      className="w-full h-full"
+      style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
+    >
       <StreamCanvas
         stream={stream}
         frameRate={frameRate}

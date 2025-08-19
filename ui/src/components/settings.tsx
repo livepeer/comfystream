@@ -66,7 +66,7 @@ export const DEFAULT_CONFIG: StreamConfig = {
   selectedAudioDeviceId: "",
   resolution: {
     width: 512,
-    height: 512
+    height: 512,
   },
 };
 
@@ -149,13 +149,17 @@ const formSchema = z.object({
   streamUrl: z.string().url(),
   frameRate: z.coerce.number(),
   resolution: z.object({
-    width: z.coerce.number().refine(val => val % 64 === 0 && val >= 64 && val <= 2048, {
-      message: "Width must be a multiple of 64 (between 64 and 2048)"
-    }),
-    height: z.coerce.number().refine(val => val % 64 === 0 && val >= 64 && val <= 2048, {
-      message: "Height must be a multiple of 64 (between 64 and 2048)"
-    })
-  })
+    width: z.coerce
+      .number()
+      .refine((val) => val % 64 === 0 && val >= 64 && val <= 2048, {
+        message: "Width must be a multiple of 64 (between 64 and 2048)",
+      }),
+    height: z.coerce
+      .number()
+      .refine((val) => val % 64 === 0 && val >= 64 && val <= 2048, {
+        message: "Height must be a multiple of 64 (between 64 and 2048)",
+      }),
+  }),
 });
 
 interface ConfigFormProps {
@@ -173,8 +177,8 @@ interface PromptContextType {
 export const PromptContext = createContext<PromptContextType>({
   originalPrompts: null,
   currentPrompts: null,
-  setOriginalPrompts: () => { },
-  setCurrentPrompts: () => { },
+  setOriginalPrompts: () => {},
+  setCurrentPrompts: () => {},
 });
 
 export const usePrompt = () => useContext(PromptContext);
@@ -416,14 +420,18 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
           <Label>Camera</Label>
           {/* TODO: Temporary fix to Warn if no camera or mic; improve later */}
           <Select
-            required={selectedAudioDevice == "none" && selectedVideoDevice == "none" ? true : false}
+            required={
+              selectedAudioDevice == "none" && selectedVideoDevice == "none"
+                ? true
+                : false
+            }
             value={selectedVideoDevice == "none" ? "" : selectedVideoDevice}
             onValueChange={handleCameraSelect}
           >
             <Select.Trigger className="w-full mt-2">
               {selectedVideoDevice
                 ? videoDevices.find((d) => d.deviceId === selectedVideoDevice)
-                  ?.label || "None"
+                    ?.label || "None"
                 : "None"}
             </Select.Trigger>
             <Select.Content>
@@ -451,7 +459,7 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
             <Select.Trigger className="w-full mt-2">
               {selectedAudioDevice
                 ? audioDevices.find((d) => d.deviceId === selectedAudioDevice)
-                  ?.label || "None"
+                    ?.label || "None"
                 : "None"}
             </Select.Trigger>
             <Select.Content>

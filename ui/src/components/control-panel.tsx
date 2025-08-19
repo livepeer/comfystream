@@ -52,13 +52,13 @@ const InputControl = ({
       ? input.options
       : Array.isArray(input.value)
         ? input.value
-        : typeof input.value === 'string'
+        : typeof input.value === "string"
           ? [input.value]
           : [];
-    
+
     // If no value is selected, select the first option by default
-    const currentValue = value || options[0] || '';
-    
+    const currentValue = value || options[0] || "";
+
     return (
       <select
         value={currentValue}
@@ -114,9 +114,13 @@ const InputControl = ({
           className="p-2 border rounded w-full"
         />
       );
-      // Handle combo in the main combo block above
-      case "combo":
-        return InputControl({ input: { ...input, widget: "combo" }, value, onChange });
+    // Handle combo in the main combo block above
+    case "combo":
+      return InputControl({
+        input: { ...input, widget: "combo" },
+        value,
+        onChange,
+      });
     default:
       console.warn(`Unhandled input type: ${input.type}`); // Debug log
       return (
@@ -213,7 +217,7 @@ export const ControlPanel = ({
           ]
         : null;
     if (!currentInput || !currentPrompts) return;
-    
+
     // Don't send updates if this is a combo and we haven't selected a value yet
     if (currentInput.widget === "combo" && !panelState.value) return;
 
@@ -226,37 +230,37 @@ export const ControlPanel = ({
       const options = currentInput.options
         ? currentInput.options
         : Array.isArray(currentInput.value)
-          ? currentInput.value as string[]
-          : typeof currentInput.value === 'string'
+          ? (currentInput.value as string[])
+          : typeof currentInput.value === "string"
             ? [currentInput.value as string]
             : [];
-      
+
       // If no value is selected and we have options, use the first option
-      const validValue = panelState.value || options[0] || '';
-      
+      const validValue = panelState.value || options[0] || "";
+
       // Validate that the value is in the options list
       isValidValue = options.includes(validValue);
       processedValue = validValue;
     } else {
       // Validate and process value based on type
       switch (currentInput.type.toLowerCase()) {
-      case "number":
-        isValidValue =
-          /^-?\d*\.?\d*$/.test(panelState.value) && panelState.value !== "";
-        processedValue = parseFloat(panelState.value);
-        break;
-      case "boolean":
-        isValidValue =
-          panelState.value === "true" || panelState.value === "false";
-        processedValue = panelState.value === "true";
-        break;
-      case "string":
-        // String can be empty, so always valid
-        processedValue = panelState.value;
-        break;
-      default:
-        isValidValue = panelState.value !== "";
-        processedValue = panelState.value;
+        case "number":
+          isValidValue =
+            /^-?\d*\.?\d*$/.test(panelState.value) && panelState.value !== "";
+          processedValue = parseFloat(panelState.value);
+          break;
+        case "boolean":
+          isValidValue =
+            panelState.value === "true" || panelState.value === "false";
+          processedValue = panelState.value === "true";
+          break;
+        case "string":
+          // String can be empty, so always valid
+          processedValue = panelState.value;
+          break;
+        default:
+          isValidValue = panelState.value !== "";
+          processedValue = panelState.value;
       }
     }
 
@@ -296,29 +300,38 @@ export const ControlPanel = ({
               const updatedPrompt = JSON.parse(JSON.stringify(prompt)); // Deep clone
               if (updatedPrompt[panelState.nodeId]?.inputs) {
                 // Ensure we're not overwriting with an invalid value
-                const currentVal = updatedPrompt[panelState.nodeId].inputs[panelState.fieldName];
-                const input = availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[panelState.fieldName];
-                
-                if (input?.widget === 'combo' || input?.type === 'combo') {
+                const currentVal =
+                  updatedPrompt[panelState.nodeId].inputs[panelState.fieldName];
+                const input =
+                  availableNodes[promptIdxToUpdate][panelState.nodeId]?.inputs[
+                    panelState.fieldName
+                  ];
+
+                if (input?.widget === "combo" || input?.type === "combo") {
                   // Get options from either the options field or value field
                   const options = input.options
                     ? input.options
                     : Array.isArray(input.value)
-                      ? input.value as string[]
-                      : typeof input.value === 'string'
+                      ? (input.value as string[])
+                      : typeof input.value === "string"
                         ? [input.value as string]
                         : [];
-                  
+
                   // If no value is selected and we have options, use the first option
-                  const validValue = (processedValue as string) || options[0] || '';
-                  
+                  const validValue =
+                    (processedValue as string) || options[0] || "";
+
                   // Only update if it's a valid combo value
                   if (options.includes(validValue)) {
-                    updatedPrompt[panelState.nodeId].inputs[panelState.fieldName] = validValue;
+                    updatedPrompt[panelState.nodeId].inputs[
+                      panelState.fieldName
+                    ] = validValue;
                     hasUpdated = true;
                   }
                 } else {
-                  updatedPrompt[panelState.nodeId].inputs[panelState.fieldName] = processedValue;
+                  updatedPrompt[panelState.nodeId].inputs[
+                    panelState.fieldName
+                  ] = processedValue;
                   hasUpdated = true;
                 }
               }
@@ -370,9 +383,9 @@ export const ControlPanel = ({
       return (!!input.value).toString();
     }
     if (input.widget === "combo") {
-      const options = Array.isArray(input.value) 
-        ? input.value as string[] 
-        : typeof input.value === 'string'
+      const options = Array.isArray(input.value)
+        ? (input.value as string[])
+        : typeof input.value === "string"
           ? [input.value as string]
           : [];
       return options[0] || "";
@@ -457,16 +470,16 @@ export const ControlPanel = ({
                 typeof info.type === "string"
                   ? info.type.toLowerCase()
                   : String(info.type).toLowerCase();
-              return [
-                "boolean",
-                "number",
-                "float",
-                "int",
-                "string",
-                "combo",
-              ].includes(
-                type,
-              ) || info.widget === "combo";
+              return (
+                [
+                  "boolean",
+                  "number",
+                  "float",
+                  "int",
+                  "string",
+                  "combo",
+                ].includes(type) || info.widget === "combo"
+              );
             })
             .map(([field, info]) => (
               <option key={field} value={field}>
