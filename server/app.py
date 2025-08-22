@@ -4,11 +4,8 @@ import json
 import logging
 import os
 import sys
-import traceback
 
-import numpy as np
 import torch
-
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
@@ -419,106 +416,8 @@ async def set_prompt(request):
 def health(_):
     return web.Response(content_type="application/json", text="OK")
 
-# Global variables for pytrickle integration
-global_pipeline = None
-global_frame_processor = None
-
 # pytrickle model loader and parameter updater functions
-async def load_model(**kwargs):
-    """Initialize ComfyStream frame processor and run async warmup."""
-    global global_pipeline, global_frame_processor
-    
-    logger.info(f"🔧 load_model called with kwargs: {kwargs}")
-    logger.info(f"🔧 global_pipeline status: {global_pipeline is not None}")
-    logger.info(f"🔧 global_frame_processor status: {global_frame_processor is not None}")
-    
-    # Pipeline should already be initialized
-    if global_pipeline is None:
-        logger.error("❌ Pipeline not initialized! This should have been done in startup handler.")
-        return
-    
-    # Run async warmup if configured
-    if hasattr(global_pipeline, '_warmup_workflow_path'):
-        logger.info("🔥 Running async warmup in load_model...")
-        try:
-            await async_warmup(global_pipeline)
-        except Exception as e:
-            logger.error(f"❌ Async warmup failed: {e}")
-            logger.error(traceback.format_exc())
-        
-    # Create frame processor if not already created
-    if global_frame_processor is None:
-        try:
-            logger.info("🔧 Creating ComfyStreamFrameProcessor...")
-            global_frame_processor = ComfyStreamFrameProcessor(global_pipeline)
-            logger.info("✅ Created ComfyStreamFrameProcessor")
-        except Exception as e:
-            logger.error(f"❌ Failed to create ComfyStreamFrameProcessor: {e}")
-            logger.error(traceback.format_exc())
-            return
-    else:
-        logger.info("🔧 ComfyStreamFrameProcessor already exists")
-    
-    # Initialize the frame processor with any provided parameters
-    try:
-        logger.info("🔧 Initializing frame processor...")
-        global_frame_processor.load_model(**kwargs)
-        logger.info("✅ ComfyStream processor ready and initialized!")
-            
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize frame processor: {e}")
-        logger.error(traceback.format_exc())
 
-async def process_video(frame: VideoFrame) -> VideoFrame:
-    """Process video frame through ComfyStream Pipeline."""
-    global global_frame_processor
-    
-    if global_frame_processor is None:
-        logger.warning("Frame processor not initialized, returning original frame")
-        return frame
-    
-    try:
-        return await global_frame_processor.process_video_async(frame)
-    except Exception as e:
-        logger.error(f"Video processing failed: {e}")
-        return frame
-
-async def process_audio(frame):
-    """Process audio frame through ComfyStream Pipeline."""
-    global global_frame_processor
-    
-    if global_frame_processor is None:
-        logger.warning("Frame processor not initialized, returning original frame")
-        return [frame]
-    
-    try:
-        return await global_frame_processor.process_audio_async(frame)
-    except Exception as e:
-        logger.error(f"Audio processing failed: {e}")
-        return [frame]
-
-def update_params(params: dict):
-    """Update processing parameters using ComfyStream-specific Pydantic validation."""
-    global global_frame_processor
-    
-    if global_frame_processor is None:
-        logger.warning("Frame processor not initialized")
-        return
-    
-    try:
-        logger.debug(f"Raw parameters received: {params}")
-        
-        # Use ComfyStreamParamsUpdateRequest for comprehensive validation
-        validated_request = ComfyStreamParamsUpdateRequest.model_validate(params)
-        final_params = validated_request.model_dump()
-        
-        # Update frame processor with validated parameters
-        global_frame_processor.update_params(final_params)
-        logger.info(f"✅ Parameters updated successfully: {list(final_params.keys())}")
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to update parameters: {e}")
-        logger.error(traceback.format_exc())
 
 # pytrickle-specific route handlers
 async def handle_set_workflow(request):
@@ -807,64 +706,7 @@ if __name__ == "__main__":
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
 
-    # Async warmup function for load_model
-    async def async_warmup(pipeline):
-        """Async warmup that runs in the proper event loop context."""
-        import torch
-        import av
-        
-        logger.info("🔥 Starting async warmup in proper event loop context")
-        
-        try:
-            # Load the warmup workflow
-            raw_prompt = load_prompt_from_file(pipeline._warmup_workflow_path)
-            
-            # Detect modalities
-            from comfystream.utils import detect_prompt_modalities
-            modalities = detect_prompt_modalities([raw_prompt])
-            logger.info(f"Detected modalities: {modalities}")
-            
-            if modalities.get("video", {}).get("input") or modalities.get("video", {}).get("output"):
-                logger.info("Running async video warmup")
-                
-                # Create dummy frame and put directly into tensor_cache
-                dummy_frame = av.VideoFrame()
-                dummy_frame.side_data.input = torch.randn(1, pipeline.height, pipeline.width, 3)
-                
-                # Put directly into tensor cache (sync operation)
-                if not tensor_cache.image_inputs.full():
-                    tensor_cache.image_inputs.put(dummy_frame)
-                    logger.info("✅ Put dummy video frame into tensor_cache")
-                else:
-                    logger.warning("⚠️ tensor_cache.image_inputs is full, clearing first")
-                    while not tensor_cache.image_inputs.empty():
-                        tensor_cache.image_inputs.get()
-                    tensor_cache.image_inputs.put(dummy_frame)
-                    logger.info("✅ Put dummy video frame into tensor_cache after clearing")
-                
-                # Set prompts and execute ComfyUI workflow
-                logger.info("🔥 Setting prompts and executing ComfyUI workflow")
-                pipeline.client.current_prompts = [raw_prompt]
-                
-                # Manually execute the prompt once (like run_prompt does)
-                try:
-                    await pipeline.client.comfy_client.queue_prompt(raw_prompt)
-                    logger.info("✅ ComfyUI warmup execution queued")
-                    
-                    # Wait for processing and try to get output
-                    await asyncio.sleep(10.0)  # Give time for processing
-                    
-                    output = await pipeline.client.get_video_output()
-                    logger.info(f"✅ Got warmup video output: {type(output)}")
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Warmup execution failed: {e}")
-            
-            logger.info("✅ Async warmup completed successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ Async warmup failed: {e}")
-            logger.error(traceback.format_exc())
+
 
     # Create a simplified orchestrator registration handler
     def create_orchestrator_registration_handler():
@@ -915,42 +757,77 @@ if __name__ == "__main__":
 
     # Create and run StreamProcessor - initialize pipeline BEFORE starting server
     try:
-        # Initialize pipeline synchronously before creating StreamProcessor
-        logger.info("🔧 Initializing ComfyStream pipeline before server startup...")
+        # Initialize context for passing references
+        logger.info("🔧 Preparing StreamProcessor with closure-based context...")
+        context = {
+            'pipeline': None,
+            'frame_processor': None,
+            'workspace': args.workspace,
+            'warmup_workflow': args.warmup_workflow,
+            'comfyui_inference_log_level': getattr(logging, args.comfyui_inference_log_level) if args.comfyui_inference_log_level else None
+        }
         
-        pipeline = Pipeline(
-            width=512,
-            height=512,
-            cwd=args.workspace,
-            disable_cuda_malloc=True,
-            gpu_only=True,
-            preview_method='none',
-            comfyui_inference_log_level=getattr(logging, args.comfyui_inference_log_level) if args.comfyui_inference_log_level else None,
-        )
+        # Create functions that use closure context
+        async def process_video(frame: VideoFrame) -> VideoFrame:
+            """Process video frame through ComfyStream FrameProcessor."""
+            frame_processor = context['frame_processor']
+            if frame_processor is None:
+                logger.warning("Frame processor not initialized, returning original frame")
+                return frame
+            try:
+                return await frame_processor.process_video_async(frame)
+            except Exception as e:
+                logger.error(f"Video processing failed: {e}")
+                return frame
+
+        async def process_audio(frame):
+            """Process audio frame through ComfyStream FrameProcessor."""
+            frame_processor = context['frame_processor']
+            if frame_processor is None:
+                logger.warning("Frame processor not initialized, returning original frame")
+                return [frame]
+            try:
+                return await frame_processor.process_audio_async(frame)
+            except Exception as e:
+                logger.error(f"Audio processing failed: {e}")
+                return [frame]
+
+        def update_params(params: dict):
+            """Update processing parameters."""
+            frame_processor = context['frame_processor']
+            if frame_processor is None:
+                logger.warning("Frame processor not initialized")
+                return
+            try:
+                frame_processor.update_params(params)
+            except Exception as e:
+                logger.error(f"Parameter update failed: {e}")
         
-        global_pipeline = pipeline
-        logger.info("✅ Pipeline initialized successfully")
+        # Prepare parameters for frame processor load_model
+        load_params = {
+            'width': 512,
+            'height': 512,
+            'workspace': args.workspace,
+            'disable_cuda_malloc': True,
+            'gpu_only': True,
+            'preview_method': 'none',
+            'comfyui_inference_log_level': args.comfyui_inference_log_level,
+            'warmup_workflow': args.warmup_workflow,
+        }
         
-        # Store warmup workflow path for load_model to handle
-        if args.warmup_workflow:
-            pipeline._warmup_workflow_path = args.warmup_workflow
-            logger.info(f"🔧 Stored warmup workflow path for load_model: {args.warmup_workflow}")
-        else:
-            logger.info("ℹ️  No warmup workflow configured")
-        
-        # StreamProcessor will call load_model automatically with async support
-        logger.info("🔧 Pipeline ready, StreamProcessor will handle load_model...")
+        # Create frame processor with load parameters
+        frame_processor = ComfyStreamFrameProcessor(**load_params)
         
         processor = StreamProcessor(
-            video_processor=process_video,
-            audio_processor=process_audio,
-            model_loader=load_model,
-            param_updater=update_params,
+            video_processor=frame_processor.process_video_async,
+            audio_processor=frame_processor.process_audio_async,
+            model_loader=frame_processor.load_model,  # Will use stored load_params
+            param_updater=frame_processor.update_params,
             name="comfystream-processor",
             port=int(args.port),
             host=args.host,
             
-            # Only orchestrator registration needed - warmup happens in load_model
+            # Only orchestrator registration needed
             on_startup=[create_orchestrator_registration_handler()],
         )
         

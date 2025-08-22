@@ -1,12 +1,17 @@
 import asyncio
+import json
 import logging
+import os
 from typing import List
+
+import torch
+import av
 
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
+from comfystream import tensor_cache
 from comfystream.pipeline import Pipeline
-from comfystream.utils import detect_prompt_modalities
-
+from comfystream.utils import load_prompt_from_file, detect_prompt_modalities, get_default_workflow
 logger = logging.getLogger(__name__)
 
 
@@ -17,90 +22,71 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     This class wraps the ComfyStream Pipeline to work with pytrickle's streaming architecture.
     """
 
-    def __init__(self, pipeline: Pipeline):
-        """Initialize with an existing Pipeline instance."""
-        self.pipeline = pipeline
+    def __init__(self, **load_params):
+        """Initialize with load parameters that will be used when load_model is called.
+        
+        Args:
+            **load_params: Parameters to use when load_model is called, including:
+                - width: Video frame width (default: 512)
+                - height: Video frame height (default: 512)
+                - workspace: ComfyUI workspace path
+                - warmup_workflow: Path to warmup workflow file
+                - etc.
+        """
+        self.pipeline = None
         self._cached_modalities = None
-        self._workflow_loading_lock = asyncio.Lock()
+        self._load_params = load_params  # Store parameters for later use
+        self._warmup_completed = False  # Track if warmup has been completed
         super().__init__()
 
-    def load_model(self, **kwargs):
+    async def load_model(self, **kwargs):
         """Load model and initialize the pipeline with workflows/prompts."""
-        import os
-        import json
-        from comfystream.utils import load_prompt_from_file, detect_prompt_modalities
         
+        # Merge stored load_params with any additional kwargs
+        merged_kwargs = {**self._load_params, **kwargs}
         logger.info(f"🔧 ComfyStreamFrameProcessor load_model called with kwargs: {kwargs}")
+        logger.info(f"🔧 Using merged parameters: {merged_kwargs}")
         
-        # Store parameters for deferred loading
-        self._deferred_workflow_params = kwargs.copy()
+        # Use merged_kwargs for all parameter access
+        kwargs = merged_kwargs
         
-        # Handle non-async operations immediately
+        # Create pipeline if not provided in constructor
+        if self.pipeline is None:
+            logger.info("🔧 Creating pipeline in load_model...")
+            
+            # Extract pipeline parameters from kwargs with defaults
+            width = int(kwargs.get('width', 512))
+            height = int(kwargs.get('height', 512))
+            cwd = kwargs.get('workspace', kwargs.get('cwd', os.getcwd()))
+            disable_cuda_malloc = kwargs.get('disable_cuda_malloc', True)
+            gpu_only = kwargs.get('gpu_only', True)
+            preview_method = kwargs.get('preview_method', 'none')
+            comfyui_inference_log_level = kwargs.get('comfyui_inference_log_level', None)
+            warmup_workflow = kwargs.get('warmup_workflow', None)
+            
+            self.pipeline = Pipeline(
+                width=width,
+                height=height,
+                cwd=cwd,
+                disable_cuda_malloc=disable_cuda_malloc,
+                gpu_only=gpu_only,
+                preview_method=preview_method,
+                comfyui_inference_log_level=comfyui_inference_log_level,
+            )
+            logger.info(f"✅ Pipeline created with dimensions {width}x{height}")
+        
+        # Load workflow from file if provided, otherwise use default workflow
         workflow_data = None
-        workflow_source = None
-        
-        # 1. Try to load from workflow_path parameter
-        if "workflow_path" in kwargs and kwargs["workflow_path"]:
-            workflow_path = kwargs["workflow_path"]
-            logger.info(f"🔧 Preparing workflow from path: {workflow_path}")
-            try:
-                workflow_data = load_prompt_from_file(workflow_path)
-                workflow_source = f"workflow_path: {workflow_path}"
-                logger.info("✅ Workflow data loaded from file")
-            except Exception as e:
-                logger.error(f"❌ Failed to load workflow from {workflow_path}: {e}")
-        
-        # 2. Try to load from workflow parameter (direct JSON)
-        elif "workflow" in kwargs and kwargs["workflow"]:
-            workflow = kwargs["workflow"]
-            logger.info("🔧 Preparing workflow from direct workflow parameter")
-            try:
-                if isinstance(workflow, str):
-                    workflow_data = json.loads(workflow)
-                elif isinstance(workflow, dict):
-                    workflow_data = workflow
-                else:
-                    raise ValueError(f"Workflow must be dict or JSON string, got {type(workflow)}")
-                workflow_source = "workflow parameter"
-                logger.info("✅ Workflow data prepared from parameter")
-            except Exception as e:
-                logger.error(f"❌ Failed to prepare workflow from parameter: {e}")
-        
-        # 3. Try to load from prompts parameter
-        elif "prompts" in kwargs and kwargs["prompts"]:
-            prompts = kwargs["prompts"]
-            logger.info("🔧 Preparing prompts from prompts parameter")
-            try:
-                if isinstance(prompts, list):
-                    workflow_data = prompts
-                else:
-                    workflow_data = [prompts]
-                workflow_source = "prompts parameter"
-                logger.info("✅ Prompts data prepared from parameter")
-            except Exception as e:
-                logger.error(f"❌ Failed to prepare prompts: {e}")
-        
-        # 4. Try to load from stored warmup workflow path (if pipeline has it)
-        elif hasattr(self.pipeline, '_warmup_workflow_path') and self.pipeline._warmup_workflow_path:
-            workflow_path = self.pipeline._warmup_workflow_path
-            logger.info(f"🔧 Preparing stored warmup workflow from: {workflow_path}")
-            try:
-                workflow_data = load_prompt_from_file(workflow_path)
-                workflow_source = f"stored warmup path: {workflow_path}"
-                logger.info("✅ Workflow data loaded from stored warmup path")
-            except Exception as e:
-                logger.error(f"❌ Failed to load stored warmup workflow: {e}")
-        
-        # Store the workflow data for deferred async loading
-        if workflow_data:
-            self._deferred_workflow_data = workflow_data if isinstance(workflow_data, list) else [workflow_data]
-            self._deferred_workflow_source = workflow_source
-            logger.info(f"🔧 Workflow prepared for deferred loading from {workflow_source}")
+        if not warmup_workflow:
+            logger.info("ℹ️  No workflow data provided, using default workflow")
+            warmup_workflow = get_default_workflow()
         else:
-            self._deferred_workflow_data = None
-            self._deferred_workflow_source = None
-            logger.info("ℹ️  No workflow data to load")
-        
+            try:
+                workflow_data = [load_prompt_from_file(warmup_workflow)]
+                logger.info("✅ Workflow loaded from file")
+            except Exception as e:
+                logger.error(f"❌ Failed to load workflow from {warmup_workflow}: {e}")
+         
         # Handle resolution updates immediately (these are sync)
         if "width" in kwargs:
             self.pipeline.width = int(kwargs["width"])
@@ -109,52 +95,97 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             self.pipeline.height = int(kwargs["height"])
             logger.info(f"🔧 Updated height to {self.pipeline.height}")
         
-        logger.info("✅ ComfyStreamFrameProcessor load_model completed (async operations deferred)")
+        # Load workflow into pipeline if we have one
+        if workflow_data:
+            logger.info("🔧 Setting workflow prompts in pipeline")
+            try:
+                await self.pipeline.set_prompts(workflow_data)
+                logger.info("✅ Workflow prompts set in pipeline")
+                total_nodes = sum(len(prompt) if isinstance(prompt, dict) else 0 for prompt in workflow_data)
+                logger.info(f"📋 Prompts details: {len(workflow_data)} workflow(s) with {total_nodes} total nodes")
+                
+                # Log first few node types for debugging
+                if workflow_data and isinstance(workflow_data[0], dict):
+                    first_workflow = workflow_data[0]
+                    node_types = [node.get('class_type', 'Unknown') for node in first_workflow.values() if isinstance(node, dict)]
+                    sample_types = node_types[:5]  # First 5 node types
+                    logger.info(f"📋 Sample node types: {sample_types}{'...' if len(node_types) > 5 else ''}")
+                
+                # Cache modalities after loading
+                self._cached_modalities = detect_prompt_modalities(workflow_data)
+                logger.info(f"🔧 Cached modalities: {self._cached_modalities}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to set workflow prompts: {e}")
+        
+        # Store warmup workflow for later execution (when ComfyUI is ready)
+        warmup_workflow = kwargs.get('warmup_workflow')
+        if warmup_workflow:
+            logger.info(f"🔧 Warmup workflow configured: {warmup_workflow}")
+            logger.info("⏳ Warmup will be executed on first frame processing (when ComfyUI is ready)")
+        else:
+            logger.info("ℹ️  No warmup workflow configured")
+        
+        logger.info("✅ ComfyStreamFrameProcessor load_model completed")
     
-    # async def _ensure_workflow_loaded(self):
-    #     """Ensure workflow is loaded asynchronously (called when needed)."""
-    #     async with self._workflow_loading_lock:
-    #         # Check if we have deferred workflow data to load (either initial or update)
-    #         if hasattr(self, '_deferred_workflow_data') and self._deferred_workflow_data:
-    #             logger.info(f"🔄 Loading deferred workflow from {self._deferred_workflow_source}")
-    #             try:
-    #                 await self.pipeline.set_prompts(self._deferred_workflow_data)
-    #                 logger.info("✅ Deferred workflow loaded successfully")
-                    
-    #                 # Clear the deferred data since we've loaded it
-    #                 self._deferred_workflow_data = None
-    #                 self._deferred_workflow_source = None
-                    
-    #                 # Cache modalities after loading
-    #                 if self.pipeline.client and self.pipeline.client.current_prompts:
-    #                     self._cached_modalities = detect_prompt_modalities(self.pipeline.client.current_prompts)
-    #                     logger.info(f"🔧 Cached modalities: {self._cached_modalities}")
-                    
-    #                 # Handle warmup if requested (only for initial loading)
-    #                 if hasattr(self, '_deferred_workflow_params') and self._deferred_workflow_params.get("warmup", False):
-    #                     logger.info("🔥 Starting deferred warmup...")
-    #                     modalities = self._cached_modalities or {}
-    #                     if modalities.get("video", {}).get("output", False):
-    #                         logger.info("🔥 Running video warmup...")
-    #                         await self.pipeline.warm_video()
-    #                     if modalities.get("audio", {}).get("output", False):
-    #                         logger.info("🔥 Running audio warmup...")
-    #                         await self.pipeline.warm_audio()
-    #                     logger.info("✅ Deferred warmup completed")
-                        
-    #             except Exception as e:
-    #                 logger.error(f"❌ Failed to load deferred workflow: {e}")
-    #         elif self.pipeline.client.current_prompts:
-    #             # Workflow already loaded, just ensure modalities are cached
-    #             if not hasattr(self, '_cached_modalities') or not self._cached_modalities:
-    #                 self._cached_modalities = detect_prompt_modalities(self.pipeline.client.current_prompts)
-    #                 logger.info(f"🔧 Cached modalities for existing workflow: {self._cached_modalities}")
+    async def _run_deferred_warmup(self):
+        """Run warmup when ComfyUI is ready (on first frame processing)."""
+        if self._warmup_completed:
+            return
+            
+        warmup_workflow = self._load_params.get('warmup_workflow')
+        if not warmup_workflow:
+            self._warmup_completed = True
+            return
+            
+        logger.info("🔥 Running deferred warmup now that ComfyUI is ready...")
+        
+        try:
+            # Load warmup workflow if we don't have a main workflow
+            if not self._cached_modalities:
+                logger.info(f"🔧 Loading warmup workflow for warmup: {warmup_workflow}")
+                warmup_prompt = load_prompt_from_file(warmup_workflow)
+                await self.pipeline.set_prompts([warmup_prompt])
+                self._cached_modalities = detect_prompt_modalities([warmup_prompt])
+                logger.info("✅ Warmup workflow loaded for warmup")
+                node_count = len(warmup_prompt) if isinstance(warmup_prompt, dict) else 0
+                logger.info(f"📋 Warmup prompts details: 1 workflow with {node_count} nodes")
+                
+                # Log first few node types for debugging
+                if isinstance(warmup_prompt, dict):
+                    node_types = [node.get('class_type', 'Unknown') for node in warmup_prompt.values() if isinstance(node, dict)]
+                    sample_types = node_types[:5]  # First 5 node types
+                    logger.info(f"📋 Warmup node types: {sample_types}{'...' if len(node_types) > 5 else ''}")
+            
+            # Run warmup based on modalities
+            modalities = self._cached_modalities or {}
+            if modalities.get("video", {}).get("input") or modalities.get("video", {}).get("output"):
+                logger.info("Running video warmup")
+                await self.pipeline.warm_video()
+            
+            if modalities.get("audio", {}).get("input") or modalities.get("audio", {}).get("output"):
+                logger.info("Running audio warmup")
+                await self.pipeline.warm_audio()
+            
+            logger.info("🔥 Deferred warmup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Deferred warmup failed: {e}")
+            # Don't raise - continue with processing even if warmup fails
+        
+        finally:
+            self._warmup_completed = True
 
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline."""
         try:
-            ## Ensure workflow is loaded before processing
-            # await self._ensure_workflow_loaded()
+            # Ensure pipeline is available
+            if self.pipeline is None:
+                logger.error("Pipeline is not initialized. Cannot process video frame.")
+                return frame
+            if not self._warmup_completed:
+                # Run deferred warmup on first frame (when ComfyUI is ready)
+                await self._run_deferred_warmup()
             
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
@@ -176,8 +207,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def process_audio_async(self, frame: AudioFrame) -> List[AudioFrame]:
         """Process audio frame through ComfyStream Pipeline."""
         try:
-            # # Ensure workflow is loaded before processing
-            # await self._ensure_workflow_loaded()
+            # Ensure pipeline is available
+            if self.pipeline is None:
+                logger.error("Pipeline is not initialized. Cannot process audio frame.")
+                return [frame]
+            
+            # Run deferred warmup on first frame (when ComfyUI is ready)
+            await self._run_deferred_warmup()
             
             # Convert pytrickle AudioFrame to av.AudioFrame
             av_frame = frame.to_av_frame()
@@ -194,20 +230,19 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             logger.error(f"Audio processing failed: {e}")
             return [frame]
 
-    def update_params(self, params: dict):
+    async def update_params(self, params: dict):
         """Update processing parameters."""
         try:
             logger.info(f"Updating parameters: {params}")
             
-            # Handle prompt updates - store for deferred loading
+            # Ensure pipeline is available
+            if self.pipeline is None:
+                logger.error("Pipeline is not initialized. Cannot update parameters.")
+                return
+            
+            # Handle prompt updates - these require async call so we log a warning
             if "prompts" in params:
-                logger.info("🔄 Storing prompts for immediate deferred loading")
-                # Store the new prompts for immediate loading on next frame
-                self._deferred_workflow_data = [params["prompts"]]
-                self._deferred_workflow_source = "parameter update"
-                # Clear cached modalities so they get recomputed
-                self._cached_modalities = None
-                logger.info("✅ Prompts stored for immediate loading on next frame")
+                logger.warning("Prompt updates via update_params not supported in simplified version. Use load_model instead.")
                     
             # Handle resolution updates
             if "width" in params or "height" in params:

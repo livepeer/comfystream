@@ -446,3 +446,33 @@ class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest if StreamParamsUp
         else:
             # Fallback - return all attributes
             return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+
+
+def get_default_workflow() -> dict:
+    """Return the default workflow as a dictionary for warmup.
+    
+    Returns:
+        dict: Default workflow dictionary
+    """
+    return {
+        "1": {
+            "inputs": {
+                "images": [
+                    "2",
+                    0
+                ]
+            },
+            "class_type": "SaveTensor",
+            "_meta": {
+                "title": "SaveTensor"
+            }
+        },
+        "2": {
+            "inputs": {},
+            "class_type": "LoadTensor",
+            "_meta": {
+                "title": "LoadTensor"
+            }
+        }
+    }
+

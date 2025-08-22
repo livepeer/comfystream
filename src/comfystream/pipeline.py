@@ -9,7 +9,7 @@ from comfystream.client import ComfyStreamClient
 from comfystream.utils import detect_prompt_modalities
 from comfystream.server.utils import temporary_log_level
 
-WARMUP_RUNS = 5
+WARMUP_RUNS = 7
 
 logger = logging.getLogger(__name__)
 
