@@ -8,6 +8,7 @@ from comfystream.utils import convert_prompt
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+from comfy.nodes.package import import_all_nodes_in_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,10 @@ class ComfyStreamClient:
         self._prompt_update_lock = asyncio.Lock()
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
-        await self.cancel_running_prompts()
+        async with self._cleanup_lock:
+            # Clear queues first, then cancel prompts to minimize race window
+            await self.cleanup_queues()  # Clear stale frames first
+            await self.cancel_running_prompts()  # Then cancel processing
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
@@ -57,8 +61,8 @@ class ComfyStreamClient:
                     raise
 
     async def cleanup(self):
-        await self.cancel_running_prompts()
         async with self._cleanup_lock:
+            await self.cancel_running_prompts()
             if self.comfy_client.is_running:
                 try:
                     await self.comfy_client.__aexit__()
@@ -69,15 +73,14 @@ class ComfyStreamClient:
             logger.info("Client cleanup complete")
 
     async def cancel_running_prompts(self):
-        async with self._cleanup_lock:
-            tasks_to_cancel = list(self.running_prompts.values())
-            for task in tasks_to_cancel:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            self.running_prompts.clear()
+        tasks_to_cancel = list(self.running_prompts.values())
+        for task in tasks_to_cancel:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self.running_prompts.clear()
 
         
     async def cleanup_queues(self):
@@ -94,15 +97,43 @@ class ComfyStreamClient:
             await tensor_cache.audio_outputs.get()
 
     def put_video_input(self, frame):
+        # Check if cleanup is in progress to avoid race conditions
+        if self._cleanup_lock.locked():
+            # Skip frame input during cleanup/prompt switching
+            return
+            
         if tensor_cache.image_inputs.full():
-            tensor_cache.image_inputs.get(block=True)
+            # Non-blocking drain to prevent pipeline stalls
+            try:
+                while not tensor_cache.image_inputs.empty():
+                    tensor_cache.image_inputs.get_nowait()
+            except:
+                pass
         tensor_cache.image_inputs.put(frame)
     
     def put_audio_input(self, frame):
+        # Check if cleanup is in progress to avoid race conditions
+        if self._cleanup_lock.locked():
+            # Skip frame input during cleanup/prompt switching
+            return
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
-        return await tensor_cache.image_outputs.get()
+        # Drain any backed up frames to prevent queue overflow
+        try:
+            # Get the latest frame, discarding any older ones
+            while not tensor_cache.image_outputs.empty():
+                frame = await tensor_cache.image_outputs.get()
+                # If there are more frames, discard this one and get the next
+                if not tensor_cache.image_outputs.empty():
+                    continue
+                # This is the latest frame, return it
+                return frame
+            # If queue was empty, wait for next frame
+            return await tensor_cache.image_outputs.get()
+        except Exception as e:
+            logger.error(f"Error getting video output: {e}")
+            raise
     
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
@@ -114,7 +145,6 @@ class ComfyStreamClient:
             return {}
 
         try:
-            from comfy.nodes.package import import_all_nodes_in_workspace
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
