@@ -7,6 +7,7 @@ import sys
 import time
 import secrets
 import torch
+import numpy as np
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
@@ -28,8 +29,9 @@ from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
+from comfystream.utils import load_prompt_from_file
 from twilio.rest import Client
-from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+from comfystream.server.utils import FPSMeter, patch_loop_datagram, add_prefix_to_app_routes
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
 import time
 
@@ -110,7 +112,7 @@ class VideoStreamTrack(MediaStreamTrack):
         """
         processed_frame = await self.pipeline.get_processed_video_frame()
 
-                # Update the frame buffer with the processed frame
+        # Update the frame buffer with the processed frame
         try:
             from frame_buffer import FrameBuffer
             frame_buffer = FrameBuffer.get_instance()
@@ -172,7 +174,6 @@ class AudioStreamTrack(MediaStreamTrack):
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
-
 
 def force_codec(pc, sender, forced_codec):
     kind = forced_codec.split("/")[0]
@@ -279,21 +280,22 @@ async def offer(request):
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
-                        if "width" not in params or "height" not in params:
-                            logger.warning("[Control] Missing width or height in update_resolution message")
-                            return
-                        # Update pipeline resolution for future frames
-                        pipeline.width = params["width"]
-                        pipeline.height = params["height"]
-                        logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
+                    #     if "width" not in params or "height" not in params:
+                    #         logger.warning("[Control] Missing width or height in update_resolution message")
+                    #         return
+                    #     # Update pipeline resolution for future frames
+                    #     pipeline.width = params["width"]
+                    #     pipeline.height = params["height"]
+                    #     logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
                         
-                        # Mark that we've received resolution
+                    #     # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Warm the video pipeline with the new resolution
-                        if "m=video" in pc.remoteDescription.sdp:
-                            await pipeline.warm_video()
-                            
+                        # Warm the video pipeline with the new resolution if workflow has video
+                        # modalities = pipeline.get_prompt_modalities()
+                        # if "m=video" in pc.remoteDescription.sdp:
+                        #     if (modalities.get("video", {}).get("input")):
+                        #         await pipeline.warm_video()                            
                         response = {
                             "type": "resolution_updated",
                             "success": True
@@ -315,6 +317,9 @@ async def offer(request):
             videoTrack = VideoStreamTrack(track, pipeline)
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
+            
+            logger.info(f"Added video track to WebRTC, sender: {sender}")
+            logger.info(f"Video track state - readyState: {track.readyState}, kind: {track.kind}")
 
             # Store video track in app for stats.
             stream_id = track.id
@@ -322,10 +327,31 @@ async def offer(request):
 
             codec = "video/H264"
             force_codec(pc, sender, codec)
+            logger.info(f"Set video codec to {codec}")
+            
+            # # Check transceiver state
+            # transceivers = pc.getTransceivers()
+            # for i, t in enumerate(transceivers):
+            #     if t.sender == sender:
+            #         logger.info(f"Video transceiver {i}: direction={t.direction}, currentDirection={t.currentDirection}")
+            #         break
+            
+            # # Test if recv works by calling it manually after a delay
+            # async def test_recv():
+            #     await asyncio.sleep(2)
+            #     try:
+            #         logger.info("Testing manual recv() call...")
+            #         test_frame = await videoTrack.recv()
+            #         logger.info(f"Manual recv() successful: {test_frame.width}x{test_frame.height}")
+            #     except Exception as e:
+            #         logger.error(f"Manual recv() failed: {e}")
+            
+            # asyncio.create_task(test_recv())
         elif track.kind == "audio":
             audioTrack = AudioStreamTrack(track, pipeline)
             tracks["audio"] = audioTrack
-            pc.addTrack(audioTrack)
+            sender = pc.addTrack(audioTrack)
+            logger.info(f"Added audio track to WebRTC, sender: {sender}")
 
         @track.on("ended")
         async def on_ended():
@@ -336,20 +362,17 @@ async def offer(request):
     async def on_connectionstatechange():
         logger.info(f"Connection state is: {pc.connectionState}")
         if pc.connectionState == "failed":
+            logger.error("WebRTC connection failed!")
             await pc.close()
             pcs.discard(pc)
         elif pc.connectionState == "closed":
+            logger.info("WebRTC connection closed")
             await pc.close()
             pcs.discard(pc)
+        elif pc.connectionState == "connected":
+            logger.info("WebRTC connection fully established")
 
     await pc.setRemoteDescription(offer)
-
-    # Only warm audio here, video warming happens after resolution update
-    if "m=audio" in pc.remoteDescription.sdp:
-        await pipeline.warm_audio()
-    
-    # We no longer warm video here - it will be warmed after receiving resolution
-
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
@@ -371,16 +394,12 @@ async def cancel_collect_frames(track):
 
 async def set_prompt(request):
     pipeline = request.app["pipeline"]
-
     prompt = await request.json()
     await pipeline.set_prompts(prompt)
-
     return web.Response(content_type="application/json", text="OK")
-    
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
-
 
 async def on_startup(app: web.Application):
     if app["media_ports"]:
@@ -394,9 +413,47 @@ async def on_startup(app: web.Application):
         gpu_only=True, 
         preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
+
+    return web.Response(content_type="application/json", text="OK")
+
+async def warm_pipeline(app: web.Application, prompt: dict):
+    await app["pipeline"].set_prompts([prompt])
+    modalities = app["pipeline"].get_prompt_modalities()
+    logger.info(f"Startup warmup - detected modalities: {modalities}")
+    if modalities.get("video", {}).get("input") or modalities.get("video", {}).get("output"):
+        logger.info("Running startup video warmup")
+        await app["pipeline"].warm_video()
+    if modalities.get("audio", {}).get("input") or modalities.get("audio", {}).get("output"):
+        logger.info("Running startup audio warmup")
+        await app["pipeline"].warm_audio()
+
+async def warmup_on_startup(app: web.Application):
+    warmup_path = app.get("warmup_workflow")
+    if not warmup_path:
+        return
+    try:
+        raw_prompt = load_prompt_from_file(warmup_path)
+        await warm_pipeline(app, raw_prompt)
+    except Exception as e:
+        # Log full traceback and brief diagnostics about the loaded prompt
+        try:
+            if 'raw_prompt' in locals() and isinstance(raw_prompt, dict):
+                total_nodes = len(raw_prompt)
+                sample_keys = list(raw_prompt.keys())[:5]
+                missing = [
+                    node_id for node_id, node in raw_prompt.items()
+                    if not isinstance(node, dict) or 'class_type' not in node or 'inputs' not in node
+                ][:5]
+                logger.debug(
+                    f"Warmup prompt diagnostics: total_nodes={total_nodes}, sample_keys={sample_keys}, missing_fields_nodes={missing}"
+                )
+        except Exception:
+            pass
+        logger.exception("Warmup workflow failed")
 
 
 async def on_shutdown(app: web.Application):
@@ -415,6 +472,11 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
     parser.add_argument(
         "--workspace", default=None, required=True, help="Set Comfy workspace"
+    )
+    parser.add_argument(
+        "--warmup-workflow",
+        default=None,
+        help="Path to a JSON workflow file to warm up at startup (RTC only)",
     )
     parser.add_argument(
         "--log-level",
@@ -469,6 +531,7 @@ if __name__ == "__main__":
     })
 
     app.on_startup.append(on_startup)
+    app.on_startup.append(warmup_on_startup)
     app.on_shutdown.append(on_shutdown)
 
     app.router.add_get("/", health)
@@ -517,5 +580,8 @@ if __name__ == "__main__":
         logging.getLogger("comfy").setLevel(log_level)
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+
+    # Store warmup workflow path for startup hook
+    app["warmup_workflow"] = args.warmup_workflow
 
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)
