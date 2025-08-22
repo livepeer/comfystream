@@ -411,7 +411,7 @@ async def set_prompt(request):
             return web.Response(content_type="application/json", text="No valid prompts", status=400)
     except Exception as e:
         logger.error(f"❌ HTTP prompt validation failed: {e}")
-        return web.Response(content_type="application/json", text=f"Validation failed: {str(e)}", status=400)
+        return web.Response(content_type="application/json", text="Validation failed: Invalid input.", status=400)
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
