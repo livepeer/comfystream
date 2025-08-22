@@ -11,7 +11,7 @@ from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
 from comfystream import tensor_cache
 from comfystream.pipeline import Pipeline
-from comfystream.utils import load_prompt_from_file, detect_prompt_modalities, get_default_workflow
+from comfystream.utils import load_prompt_from_file, detect_prompt_modalities, get_default_workflow, ComfyStreamParamsUpdateRequest
 logger = logging.getLogger(__name__)
 
 
@@ -99,21 +99,15 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if workflow_data:
             logger.info("🔧 Setting workflow prompts in pipeline")
             try:
-                await self.pipeline.set_prompts(workflow_data)
-                logger.info("✅ Workflow prompts set in pipeline")
-                total_nodes = sum(len(prompt) if isinstance(prompt, dict) else 0 for prompt in workflow_data)
-                logger.info(f"📋 Prompts details: {len(workflow_data)} workflow(s) with {total_nodes} total nodes")
+                # await self.pipeline.set_prompts(workflow_data)
+                # logger.info("✅ Workflow prompts set in pipeline")
+                logger.info(f"🔧 Queuing params update with workflow: {workflow_data}")
                 
-                # Log first few node types for debugging
-                if workflow_data and isinstance(workflow_data[0], dict):
-                    first_workflow = workflow_data[0]
-                    node_types = [node.get('class_type', 'Unknown') for node in first_workflow.values() if isinstance(node, dict)]
-                    sample_types = node_types[:5]  # First 5 node types
-                    logger.info(f"📋 Sample node types: {sample_types}{'...' if len(node_types) > 5 else ''}")
+                # send params update to pipeline instead of warming directly here
+                await self.update_params(workflow_data)
                 
                 # Cache modalities after loading
                 self._cached_modalities = detect_prompt_modalities(workflow_data)
-                logger.info(f"🔧 Cached modalities: {self._cached_modalities}")
                 
             except Exception as e:
                 logger.error(f"❌ Failed to set workflow prompts: {e}")
@@ -179,13 +173,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline."""
         try:
-            # Ensure pipeline is available
-            if self.pipeline is None:
-                logger.error("Pipeline is not initialized. Cannot process video frame.")
-                return frame
-            if not self._warmup_completed:
-                # Run deferred warmup on first frame (when ComfyUI is ready)
-                await self._run_deferred_warmup()
             
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
@@ -207,14 +194,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def process_audio_async(self, frame: AudioFrame) -> List[AudioFrame]:
         """Process audio frame through ComfyStream Pipeline."""
         try:
-            # Ensure pipeline is available
-            if self.pipeline is None:
-                logger.error("Pipeline is not initialized. Cannot process audio frame.")
-                return [frame]
-            
-            # Run deferred warmup on first frame (when ComfyUI is ready)
-            await self._run_deferred_warmup()
-            
             # Convert pytrickle AudioFrame to av.AudioFrame
             av_frame = frame.to_av_frame()
             
@@ -233,23 +212,80 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def update_params(self, params: dict):
         """Update processing parameters."""
         try:
-            logger.info(f"Updating parameters: {params}")
+            logger.info(f"Updating parameters: type={type(params)}, value={params}")
             
             # Ensure pipeline is available
             if self.pipeline is None:
                 logger.error("Pipeline is not initialized. Cannot update parameters.")
                 return
             
-            # Handle prompt updates - these require async call so we log a warning
-            if "prompts" in params:
-                logger.warning("Prompt updates via update_params not supported in simplified version. Use load_model instead.")
+            if not self._warmup_completed:
+                # Run deferred warmup from params update
+                await self._run_deferred_warmup()
+            
+            # Use ComfyStreamParamsUpdateRequest for validation and parsing
+            try:
+                # Handle case where params might be a list - take first element if available
+                if isinstance(params, list):
+                    if len(params) > 0:
+                        params = params[0]
+                        logger.info(f"📋 Received list params, using first element: {type(params)}")
+                    else:
+                        logger.warning("⚠️ Received empty list for params, skipping update")
+                        return
+                
+                # Ensure params is now a dictionary
+                if not isinstance(params, dict):
+                    logger.error(f"❌ Expected dict for params, got {type(params)}: {params}")
+                    return
+                
+                logger.debug(f"About to create ComfyStreamParamsUpdateRequest with: {params}")
+                validated_params = ComfyStreamParamsUpdateRequest(**params)
+                validated_dict = validated_params.model_dump()
+                logger.info(f"✅ Parameters validated successfully")
+            except Exception as e:
+                logger.error(f"❌ Parameter validation failed: {e}")
+                logger.error(f"❌ Params type: {type(params)}, params: {params}")
+                return
+            
+            # True logic here is to not send update_params immediately after warmup, but maybe this needs to be in a different order/flow
+            # Handle prompts updates - forward to pipeline
+            if "prompts" in validated_dict:
+                try:
+                    prompts = validated_dict["prompts"]
+                    logger.info(f"🔧 Forwarding validated prompts to pipeline: {type(prompts)}")
+                    logger.debug(f"🔍 Prompts content: {prompts}")
+                    
+                    if prompts:
+                        logger.debug(f"🔍 Current pipeline prompts count: {len(self.pipeline.client.current_prompts)}")
+                        
+                        if len(self.pipeline.client.current_prompts) > 0:
+                            logger.info("🧹 Cleaning up existing prompts before setting new ones")
+                            await self.pipeline.cleanup()
+                            await self.pipeline.set_prompts([prompts])
+                        else:
+                            logger.info("📝 Setting prompts (no existing prompts)")
+                            await self.pipeline.set_prompts([prompts])
+                        
+                        logger.info("🎯 Detecting prompt modalities")
+                        self.pipeline._cached_modalities = detect_prompt_modalities([prompts])
+                        
+                        # Update cached modalities after setting new prompts
+                        self._cached_modalities = self.pipeline._cached_modalities
+                        
+                        logger.info("✅ Prompts forwarded to pipeline and modalities updated")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to forward prompts to pipeline: {e}")
+                    import traceback
+                    logger.error(f"❌ Full traceback: {traceback.format_exc()}")
                     
             # Handle resolution updates
-            if "width" in params or "height" in params:
-                if "width" in params:
-                    self.pipeline.width = int(params["width"])
-                if "height" in params:
-                    self.pipeline.height = int(params["height"])
+            if "width" in validated_dict or "height" in validated_dict:
+                if "width" in validated_dict:
+                    self.pipeline.width = int(validated_dict["width"])
+                if "height" in validated_dict:
+                    self.pipeline.height = int(validated_dict["height"])
                 logger.info(f"Updated resolution to {self.pipeline.width}x{self.pipeline.height}")
                     
         except Exception as e:

@@ -24,7 +24,7 @@ class Pipeline:
     
     def __init__(self, width: int = 512, height: int = 512, 
                  comfyui_inference_log_level: Optional[int] = None,
-                 video_processing_timeout: float = 5.0,
+                 video_processing_timeout: float = 20.0, # Functionally a pipeline warmup timeout
                  **kwargs):
         """Initialize the pipeline with the given configuration.
         

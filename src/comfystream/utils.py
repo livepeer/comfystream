@@ -119,14 +119,10 @@ def detect_prompt_modalities(prompts: List[Union[PromptDictInput, Prompt]]) -> D
 
 
 def load_prompt_from_file(path: str) -> PromptDictInput:
-    """Load prompts from a JSON file for warmup.
+    """Load a prompt from a JSON file for warmup.
 
-    Accepts files that are:
-      - a single prompt dict
-      - a list of prompt dicts
-      - an object with a top-level 'prompts' list
-
-    Returns a single prompt dictionary suitable for convert_prompt.
+    Expects a single prompt dictionary mapping node IDs to node definitions.
+    Each node must have 'class_type' and 'inputs' fields.
     """
     # Resolve under repository root workflows/comfystream by default
     provided = path.lstrip("./")
@@ -158,72 +154,27 @@ def load_prompt_from_file(path: str) -> PromptDictInput:
     with open(resolved, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    def is_prompt_mapping(obj: Any) -> bool:
-        if not isinstance(obj, dict):
-            return False
-        # Heuristic: keys look like node ids and values look like node dicts
-        for key, val in obj.items():
-            if not isinstance(key, str) or not isinstance(val, dict):
-                return False
-            if "class_type" not in val or "inputs" not in val:
-                return False
-        return True
-
-    def list_nodes_to_mapping(nodes_list: List[Dict[str, Any]]) -> Dict[str, Any]:
-        mapping: Dict[str, Any] = {}
-        for node in nodes_list:
-            if not isinstance(node, dict):
-                continue
-            node_id = node.get("id")
-            if node_id is None:
-                # Skip nodes without id
-                continue
-            class_type = node.get("class_type") or node.get("type")
-            inputs = node.get("inputs", {})
-            if class_type is None:
-                continue
-            mapping[str(node_id)] = {
-                "class_type": class_type,
-                "inputs": inputs,
-                "_meta": node.get("_meta", {}),
-            }
-        return mapping
-
-    # Normalize common wrapper formats
-    prompt_candidate: Any = data
-    if isinstance(data, dict):
-        if "prompts" in data and isinstance(data["prompts"], list) and data["prompts"]:
-            prompt_candidate = data["prompts"][0]
-        elif "prompt" in data and isinstance(data["prompt"], dict):
-            prompt_candidate = data["prompt"]
-        elif "workflow" in data and isinstance(data["workflow"], dict):
-            prompt_candidate = data["workflow"]
-        elif "nodes" in data:
-            if isinstance(data["nodes"], dict):
-                prompt_candidate = data["nodes"]
-            elif isinstance(data["nodes"], list):
-                prompt_candidate = list_nodes_to_mapping(data["nodes"])
-    elif isinstance(data, list):
-        if len(data) == 1 and isinstance(data[0], dict):
-            # Recurse into the single dict
-            inner = data[0]
-            if "nodes" in inner and isinstance(inner["nodes"], list):
-                prompt_candidate = list_nodes_to_mapping(inner["nodes"]) 
-            else:
-                prompt_candidate = inner
-        else:
-            # Attempt to coerce list of nodes to mapping
-            prompt_candidate = list_nodes_to_mapping([n for n in data if isinstance(n, dict)])
-
-    if not is_prompt_mapping(prompt_candidate):
-        raise ValueError("Unsupported warmup workflow format; expected mapping of node_id to node with class_type and inputs")
+    # Validate that data is a prompt mapping
+    if not isinstance(data, dict):
+        raise ValueError("Expected JSON file to contain a dictionary mapping node IDs to node definitions")
+    
+    # Validate each node has required structure
+    for node_id, node in data.items():
+        if not isinstance(node_id, str):
+            raise ValueError(f"Node ID must be a string, got {type(node_id)}")
+        if not isinstance(node, dict):
+            raise ValueError(f"Node {node_id} must be a dictionary, got {type(node)}")
+        if "class_type" not in node:
+            raise ValueError(f"Node {node_id} missing required 'class_type' field")
+        if "inputs" not in node:
+            raise ValueError(f"Node {node_id} missing required 'inputs' field")
 
     # Convert the prompt to ensure PreviewImage nodes become SaveTensor nodes for warmup
-    logger.info(f"Original prompt nodes: {list(prompt_candidate.keys())}")
-    logger.info(f"LoadImage nodes: {[k for k, v in prompt_candidate.items() if v.get('class_type') == 'LoadImage']}")
-    logger.info(f"PreviewImage nodes: {[k for k, v in prompt_candidate.items() if v.get('class_type') == 'PreviewImage']}")
+    logger.info(f"Original prompt nodes: {list(data.keys())}")
+    logger.info(f"LoadImage nodes: {[k for k, v in data.items() if v.get('class_type') == 'LoadImage']}")
+    logger.info(f"PreviewImage nodes: {[k for k, v in data.items() if v.get('class_type') == 'PreviewImage']}")
     
-    converted_prompt = convert_prompt(prompt_candidate, return_dict=True)
+    converted_prompt = convert_prompt(data, return_dict=True)
     logger.info(f"Converted warmup prompt: {len(converted_prompt)} nodes")
     logger.info(f"LoadTensor nodes: {[k for k, v in converted_prompt.items() if v.get('class_type') == 'LoadTensor']}")
     logger.info(f"SaveTensor nodes: {[k for k, v in converted_prompt.items() if v.get('class_type') == 'SaveTensor']}")

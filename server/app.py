@@ -706,8 +706,6 @@ if __name__ == "__main__":
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
 
-
-
     # Create a simplified orchestrator registration handler
     def create_orchestrator_registration_handler():
         """Create startup handler that only handles orchestrator registration."""
@@ -757,52 +755,6 @@ if __name__ == "__main__":
 
     # Create and run StreamProcessor - initialize pipeline BEFORE starting server
     try:
-        # Initialize context for passing references
-        logger.info("🔧 Preparing StreamProcessor with closure-based context...")
-        context = {
-            'pipeline': None,
-            'frame_processor': None,
-            'workspace': args.workspace,
-            'warmup_workflow': args.warmup_workflow,
-            'comfyui_inference_log_level': getattr(logging, args.comfyui_inference_log_level) if args.comfyui_inference_log_level else None
-        }
-        
-        # Create functions that use closure context
-        async def process_video(frame: VideoFrame) -> VideoFrame:
-            """Process video frame through ComfyStream FrameProcessor."""
-            frame_processor = context['frame_processor']
-            if frame_processor is None:
-                logger.warning("Frame processor not initialized, returning original frame")
-                return frame
-            try:
-                return await frame_processor.process_video_async(frame)
-            except Exception as e:
-                logger.error(f"Video processing failed: {e}")
-                return frame
-
-        async def process_audio(frame):
-            """Process audio frame through ComfyStream FrameProcessor."""
-            frame_processor = context['frame_processor']
-            if frame_processor is None:
-                logger.warning("Frame processor not initialized, returning original frame")
-                return [frame]
-            try:
-                return await frame_processor.process_audio_async(frame)
-            except Exception as e:
-                logger.error(f"Audio processing failed: {e}")
-                return [frame]
-
-        def update_params(params: dict):
-            """Update processing parameters."""
-            frame_processor = context['frame_processor']
-            if frame_processor is None:
-                logger.warning("Frame processor not initialized")
-                return
-            try:
-                frame_processor.update_params(params)
-            except Exception as e:
-                logger.error(f"Parameter update failed: {e}")
-        
         # Prepare parameters for frame processor load_model
         load_params = {
             'width': 512,
