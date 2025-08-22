@@ -4,19 +4,17 @@ import json
 import logging
 import os
 import sys
-import time
-import secrets
-import torch
+import traceback
+
 import numpy as np
+import torch
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
 
-
-from aiohttp import web, MultipartWriter
-from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiohttp import web
+from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiortc import (
     MediaStreamTrack,
     RTCConfiguration,
@@ -24,21 +22,26 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
-# Import HTTP streaming modules
-from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
-from comfystream.pipeline import Pipeline
-from comfystream.utils import load_prompt_from_file
 from twilio.rest import Client
+
+from pytrickle.stream_processor import StreamProcessor
+from pytrickle.frames import VideoFrame, AudioFrame
+from pytrickle.utils.register import RegisterCapability
+
+from comfystream.pipeline import Pipeline
+from comfystream.utils import load_prompt_from_file, convert_prompt, ComfyStreamParamsUpdateRequest
+from comfystream import tensor_cache
 from comfystream.server.utils import FPSMeter, patch_loop_datagram, add_prefix_to_app_routes
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
-import time
+from frame_processor import ComfyStreamFrameProcessor
+from http_streaming.routes import setup_routes
+from frame_buffer import FrameBuffer
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
-
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
@@ -113,13 +116,8 @@ class VideoStreamTrack(MediaStreamTrack):
         processed_frame = await self.pipeline.get_processed_video_frame()
 
         # Update the frame buffer with the processed frame
-        try:
-            from frame_buffer import FrameBuffer
-            frame_buffer = FrameBuffer.get_instance()
-            frame_buffer.update_frame(processed_frame)
-        except Exception as e:
-            # Don't let frame buffer errors affect the main pipeline
-            print(f"Error updating frame buffer: {e}")
+        frame_buffer = FrameBuffer.get_instance()
+        frame_buffer.update_frame(processed_frame)
 
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
@@ -196,7 +194,6 @@ def get_twilio_token():
 
     return token
 
-
 def get_ice_servers():
     ice_servers = []
 
@@ -221,7 +218,23 @@ async def offer(request):
 
     params = await request.json()
 
-    await pipeline.set_prompts(params["prompts"])
+    # Validate prompts using the same Pydantic validation as pytrickle
+    try:
+        if "prompts" in params:
+            # Use ComfyStreamParamsUpdateRequest to validate prompts consistently
+            validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": params["prompts"]})
+            validated_params = validated_request.model_dump()
+            
+            if "prompts" in validated_params:
+                await pipeline.set_prompts([validated_params["prompts"]])
+                logger.info("✅ WebRTC prompts validated and set successfully")
+            else:
+                logger.warning("⚠️ No valid prompts provided in WebRTC offer")
+        else:
+            logger.warning("⚠️ No prompts provided in WebRTC offer")
+    except Exception as e:
+        logger.error(f"❌ WebRTC prompt validation failed: {e}")
+        # Continue without prompts rather than failing the entire connection
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -274,9 +287,17 @@ async def offer(request):
                             )
                             return
                         try:
-                            await pipeline.update_prompts(params["prompts"])
+                            # Validate prompts using the same Pydantic validation
+                            validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": params["prompts"]})
+                            validated_params = validated_request.model_dump()
+                            
+                            if "prompts" in validated_params:
+                                await pipeline.update_prompts([validated_params["prompts"]])
+                                logger.info("✅ Control channel prompts validated and updated successfully")
+                            else:
+                                logger.warning("⚠️ No valid prompts in control channel message")
                         except Exception as e:
-                            logger.error(f"Error updating prompt: {str(e)}")
+                            logger.error(f"❌ Control channel prompt validation failed: {str(e)}")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
@@ -329,24 +350,6 @@ async def offer(request):
             force_codec(pc, sender, codec)
             logger.info(f"Set video codec to {codec}")
             
-            # # Check transceiver state
-            # transceivers = pc.getTransceivers()
-            # for i, t in enumerate(transceivers):
-            #     if t.sender == sender:
-            #         logger.info(f"Video transceiver {i}: direction={t.direction}, currentDirection={t.currentDirection}")
-            #         break
-            
-            # # Test if recv works by calling it manually after a delay
-            # async def test_recv():
-            #     await asyncio.sleep(2)
-            #     try:
-            #         logger.info("Testing manual recv() call...")
-            #         test_frame = await videoTrack.recv()
-            #         logger.info(f"Manual recv() successful: {test_frame.width}x{test_frame.height}")
-            #     except Exception as e:
-            #         logger.error(f"Manual recv() failed: {e}")
-            
-            # asyncio.create_task(test_recv())
         elif track.kind == "audio":
             audioTrack = AudioStreamTrack(track, pipeline)
             tracks["audio"] = audioTrack
@@ -395,32 +398,289 @@ async def cancel_collect_frames(track):
 async def set_prompt(request):
     pipeline = request.app["pipeline"]
     prompt = await request.json()
-    await pipeline.set_prompts(prompt)
-    return web.Response(content_type="application/json", text="OK")
+    
+    # Validate prompts using the same Pydantic validation as pytrickle
+    try:
+        # Use ComfyStreamParamsUpdateRequest to validate prompts consistently
+        validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": prompt})
+        validated_params = validated_request.model_dump()
+        
+        if "prompts" in validated_params:
+            await pipeline.set_prompts([validated_params["prompts"]])
+            logger.info("✅ HTTP prompts validated and set successfully")
+            return web.Response(content_type="application/json", text="OK")
+        else:
+            logger.warning("⚠️ No valid prompts provided in HTTP request")
+            return web.Response(content_type="application/json", text="No valid prompts", status=400)
+    except Exception as e:
+        logger.error(f"❌ HTTP prompt validation failed: {e}")
+        return web.Response(content_type="application/json", text=f"Validation failed: {str(e)}", status=400)
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
+
+# Global variables for pytrickle integration
+global_pipeline = None
+global_frame_processor = None
+
+# pytrickle model loader and parameter updater functions
+async def load_model(**kwargs):
+    """Initialize ComfyStream frame processor and run async warmup."""
+    global global_pipeline, global_frame_processor
+    
+    logger.info(f"🔧 load_model called with kwargs: {kwargs}")
+    logger.info(f"🔧 global_pipeline status: {global_pipeline is not None}")
+    logger.info(f"🔧 global_frame_processor status: {global_frame_processor is not None}")
+    
+    # Pipeline should already be initialized
+    if global_pipeline is None:
+        logger.error("❌ Pipeline not initialized! This should have been done in startup handler.")
+        return
+    
+    # Run async warmup if configured
+    if hasattr(global_pipeline, '_warmup_workflow_path'):
+        logger.info("🔥 Running async warmup in load_model...")
+        try:
+            await async_warmup(global_pipeline)
+        except Exception as e:
+            logger.error(f"❌ Async warmup failed: {e}")
+            logger.error(traceback.format_exc())
+        
+    # Create frame processor if not already created
+    if global_frame_processor is None:
+        try:
+            logger.info("🔧 Creating ComfyStreamFrameProcessor...")
+            global_frame_processor = ComfyStreamFrameProcessor(global_pipeline)
+            logger.info("✅ Created ComfyStreamFrameProcessor")
+        except Exception as e:
+            logger.error(f"❌ Failed to create ComfyStreamFrameProcessor: {e}")
+            logger.error(traceback.format_exc())
+            return
+    else:
+        logger.info("🔧 ComfyStreamFrameProcessor already exists")
+    
+    # Initialize the frame processor with any provided parameters
+    try:
+        logger.info("🔧 Initializing frame processor...")
+        global_frame_processor.load_model(**kwargs)
+        logger.info("✅ ComfyStream processor ready and initialized!")
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize frame processor: {e}")
+        logger.error(traceback.format_exc())
+
+async def process_video(frame: VideoFrame) -> VideoFrame:
+    """Process video frame through ComfyStream Pipeline."""
+    global global_frame_processor
+    
+    if global_frame_processor is None:
+        logger.warning("Frame processor not initialized, returning original frame")
+        return frame
+    
+    try:
+        return await global_frame_processor.process_video_async(frame)
+    except Exception as e:
+        logger.error(f"Video processing failed: {e}")
+        return frame
+
+async def process_audio(frame):
+    """Process audio frame through ComfyStream Pipeline."""
+    global global_frame_processor
+    
+    if global_frame_processor is None:
+        logger.warning("Frame processor not initialized, returning original frame")
+        return [frame]
+    
+    try:
+        return await global_frame_processor.process_audio_async(frame)
+    except Exception as e:
+        logger.error(f"Audio processing failed: {e}")
+        return [frame]
+
+def update_params(params: dict):
+    """Update processing parameters using ComfyStream-specific Pydantic validation."""
+    global global_frame_processor
+    
+    if global_frame_processor is None:
+        logger.warning("Frame processor not initialized")
+        return
+    
+    try:
+        logger.debug(f"Raw parameters received: {params}")
+        
+        # Use ComfyStreamParamsUpdateRequest for comprehensive validation
+        validated_request = ComfyStreamParamsUpdateRequest.model_validate(params)
+        final_params = validated_request.model_dump()
+        
+        # Update frame processor with validated parameters
+        global_frame_processor.update_params(final_params)
+        logger.info(f"✅ Parameters updated successfully: {list(final_params.keys())}")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to update parameters: {e}")
+        logger.error(traceback.format_exc())
+
+# pytrickle-specific route handlers
+async def handle_set_workflow(request):
+    """Handle ComfyStream workflow setting requests."""
+    try:
+        data = await request.json()
+        pipeline = request.app["pipeline"]
+        
+        # Extract prompts/workflow from request
+        if "prompts" in data:
+            workflow = data["prompts"]
+        elif "workflow" in data:
+            workflow = data["workflow"]
+        else:
+            workflow = data  # Assume entire payload is the workflow
+        
+        await pipeline.set_prompts(workflow)
+        
+        return web.json_response({
+            "status": "success",
+            "message": "Workflow set successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to set workflow: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": f"Failed to set workflow: {str(e)}"
+        }, status=400)
+
+async def handle_update_workflow(request):
+    """Handle ComfyStream workflow update requests."""
+    try:
+        data = await request.json()
+        pipeline = request.app["pipeline"]
+        
+        # Extract prompts/workflow from request
+        if "prompts" in data:
+            workflow = data["prompts"]
+        elif "workflow" in data:
+            workflow = data["workflow"]
+        else:
+            workflow = data  # Assume entire payload is the workflow
+        
+        await pipeline.update_prompts(workflow)
+        
+        return web.json_response({
+            "status": "success",
+            "message": "Workflow updated successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to update workflow: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": f"Failed to update workflow: {str(e)}"
+        }, status=400)
+
+async def handle_get_workflow_info(request):
+    """Handle workflow info requests."""
+    try:
+        pipeline = request.app["pipeline"]
+        modalities = pipeline.get_prompt_modalities()
+        
+        info = {
+            "modalities": modalities,
+            "resolution": {
+                "width": pipeline.width,
+                "height": pipeline.height
+            },
+            "workspace": request.app.get("workspace", "")
+        }
+        
+        return web.json_response(info)
+        
+    except Exception as e:
+        logger.error(f"Failed to get workflow info: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": f"Failed to get workflow info: {str(e)}"
+        }, status=500)
+
+async def handle_get_nodes(request):
+    """Handle nodes info requests."""
+    try:
+        pipeline = request.app["pipeline"]
+        nodes_info = await pipeline.get_nodes_info()
+        return web.json_response(nodes_info)
+        
+    except Exception as e:
+        logger.error(f"Failed to get nodes info: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": f"Failed to get nodes info: {str(e)}"
+        }, status=500)
+
+async def handle_warmup(request):
+    """Handle manual warmup requests."""
+    try:
+        data = await request.json()
+        pipeline = request.app["pipeline"]
+        
+        # Use provided workflow or trigger warmup with current workflow
+        if "workflow" in data or "prompts" in data:
+            workflow = data.get("workflow") or data.get("prompts")
+            await pipeline.set_prompts(workflow)
+            # Warmup is triggered automatically by set_prompts
+        else:
+            # Trigger warmup with current workflow
+            modalities = pipeline.get_prompt_modalities()
+            if modalities.get("video", {}).get("output", False):
+                await pipeline.warm_video()
+            if modalities.get("audio", {}).get("output", False):
+                await pipeline.warm_audio()
+        
+        return web.json_response({
+            "status": "success",
+            "message": "Warmup completed successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Warmup failed: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": f"Warmup failed: {str(e)}"
+        }, status=500)
+
+async def handle_get_modalities(request):
+    """Handle modalities info requests."""
+    try:
+        pipeline = request.app["pipeline"]
+        modalities = pipeline.get_prompt_modalities()
+        return web.json_response(modalities)
+        
+    except Exception as e:
+        logger.error(f"Failed to get modalities: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": f"Failed to get modalities: {str(e)}"
+        }, status=500)
+
+# Note: setup_pytrickle_routes removed - StreamProcessor handles routing automatically
 
 async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
-    app["pipeline"] = Pipeline(
-        width=512,
-        height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
-        preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
-
-    )
+    # Note: Pipeline initialization is now handled in StreamProcessor mode
+    # This fallback only handles WebRTC-specific setup
+    
     app["pcs"] = set()
     app["video_tracks"] = {}
 
     return web.Response(content_type="application/json", text="OK")
 
 async def warm_pipeline(app: web.Application, prompt: dict):
+    # This function is only used in fallback aiohttp mode
+    # In StreamProcessor mode, warmup is handled separately
+    if "pipeline" not in app:
+        logger.warning("No pipeline available for warmup in fallback mode")
+        return
+        
     await app["pipeline"].set_prompts([prompt])
     modalities = app["pipeline"].get_prompt_modalities()
     logger.info(f"Startup warmup - detected modalities: {modalities}")
@@ -430,6 +690,7 @@ async def warm_pipeline(app: web.Application, prompt: dict):
     if modalities.get("audio", {}).get("input") or modalities.get("audio", {}).get("output"):
         logger.info("Running startup audio warmup")
         await app["pipeline"].warm_audio()
+
 
 async def warmup_on_startup(app: web.Application):
     warmup_path = app.get("warmup_workflow")
@@ -508,6 +769,27 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
+    parser.add_argument(
+        "--enable-pytrickle",
+        default=True,  # Enable by default now
+        action="store_true",
+        help="Enable pytrickle streaming endpoints (requires pytrickle to be installed)",
+    )
+    parser.add_argument(
+        "--orch-url",
+        default=None,
+        help="Orchestrator URL for capability registration",
+    )
+    parser.add_argument(
+        "--orch-secret",
+        default=None,
+        help="Orchestrator secret for capability registration",
+    )
+    parser.add_argument(
+        "--capability-name",
+        default=None,
+        help="Name for this capability (default: comfystream-processor)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -516,72 +798,215 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
-    app = web.Application()
-    app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
-    app["workspace"] = args.workspace
-    
-    # Setup CORS
-    cors = setup_cors(app, defaults={
-        "*": ResourceOptions(
-            allow_credentials=True,
-            expose_headers="*",
-            allow_headers="*",
-            allow_methods=["GET", "POST", "OPTIONS"]
-        )
-    })
-
-    app.on_startup.append(on_startup)
-    app.on_startup.append(warmup_on_startup)
-    app.on_shutdown.append(on_shutdown)
-
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
-
-    # WebRTC signalling and control routes.
-    app.router.add_post("/offer", offer)
-    app.router.add_post("/prompt", set_prompt)
-    
-    # Setup HTTP streaming routes
-    setup_routes(app, cors)
-    
-    # Serve static files from the public directory
-    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
-
-    # Add routes for getting stream statistics.
-    stream_stats_manager = StreamStatsManager(app)
-    app.router.add_get(
-        "/streams/stats", stream_stats_manager.collect_all_stream_metrics
-    )
-    app.router.add_get(
-        "/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id
-    )
-
-    # Add Prometheus metrics endpoint.
-    app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
-    if args.monitor:
-        app["metrics_manager"].enable()
-        logger.info(
-            f"Monitoring enabled - Prometheus metrics available at: "
-            f"http://{args.host}:{args.port}/metrics"
-        )
-        app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
-
-    # Add hosted platform route prefix.
-    # NOTE: This ensures that the local and hosted experiences have consistent routes.
-    add_prefix_to_app_routes(app, "/live")
+    # Allow overriding of ComfyUI log levels.
+    if args.comfyui_log_level:
+        log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
+        logging.getLogger("comfy").setLevel(log_level)
 
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
 
-    # Allow overriding of ComyfUI log levels.
-    if args.comfyui_log_level:
-        log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
-        logging.getLogger("comfy").setLevel(log_level)
-    if args.comfyui_inference_log_level:
-        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+    # Async warmup function for load_model
+    async def async_warmup(pipeline):
+        """Async warmup that runs in the proper event loop context."""
+        import torch
+        import av
+        
+        logger.info("🔥 Starting async warmup in proper event loop context")
+        
+        try:
+            # Load the warmup workflow
+            raw_prompt = load_prompt_from_file(pipeline._warmup_workflow_path)
+            
+            # Detect modalities
+            from comfystream.utils import detect_prompt_modalities
+            modalities = detect_prompt_modalities([raw_prompt])
+            logger.info(f"Detected modalities: {modalities}")
+            
+            if modalities.get("video", {}).get("input") or modalities.get("video", {}).get("output"):
+                logger.info("Running async video warmup")
+                
+                # Create dummy frame and put directly into tensor_cache
+                dummy_frame = av.VideoFrame()
+                dummy_frame.side_data.input = torch.randn(1, pipeline.height, pipeline.width, 3)
+                
+                # Put directly into tensor cache (sync operation)
+                if not tensor_cache.image_inputs.full():
+                    tensor_cache.image_inputs.put(dummy_frame)
+                    logger.info("✅ Put dummy video frame into tensor_cache")
+                else:
+                    logger.warning("⚠️ tensor_cache.image_inputs is full, clearing first")
+                    while not tensor_cache.image_inputs.empty():
+                        tensor_cache.image_inputs.get()
+                    tensor_cache.image_inputs.put(dummy_frame)
+                    logger.info("✅ Put dummy video frame into tensor_cache after clearing")
+                
+                # Set prompts and execute ComfyUI workflow
+                logger.info("🔥 Setting prompts and executing ComfyUI workflow")
+                pipeline.client.current_prompts = [raw_prompt]
+                
+                # Manually execute the prompt once (like run_prompt does)
+                try:
+                    await pipeline.client.comfy_client.queue_prompt(raw_prompt)
+                    logger.info("✅ ComfyUI warmup execution queued")
+                    
+                    # Wait for processing and try to get output
+                    await asyncio.sleep(10.0)  # Give time for processing
+                    
+                    output = await pipeline.client.get_video_output()
+                    logger.info(f"✅ Got warmup video output: {type(output)}")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Warmup execution failed: {e}")
+            
+            logger.info("✅ Async warmup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Async warmup failed: {e}")
+            logger.error(traceback.format_exc())
 
-    # Store warmup workflow path for startup hook
-    app["warmup_workflow"] = args.warmup_workflow
+    # Create a simplified orchestrator registration handler
+    def create_orchestrator_registration_handler():
+        """Create startup handler that only handles orchestrator registration."""
+        async def orchestrator_handler(app_instance):
+            # Register capability with orchestrator if configured
+            try:
+                # Use command line args or environment variables
+                orch_url = args.orch_url or os.getenv("ORCH_URL")
+                orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
+                
+                if orch_url and orch_secret:
+                    logger.info("🔗 Registering ComfyStream capability with orchestrator...")
+                    
+                    # Set up capability environment if not already set
+                    capability_name = args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor"
+                    os.environ["CAPABILITY_NAME"] = capability_name
+                    
+                    if not os.getenv("CAPABILITY_DESCRIPTION"):
+                        os.environ["CAPABILITY_DESCRIPTION"] = "ComfyUI streaming processor with video/audio support"
+                    if not os.getenv("CAPABILITY_URL"):
+                        os.environ["CAPABILITY_URL"] = f"http://{args.host}:{args.port}"
+                    if not os.getenv("CAPABILITY_CAPACITY"):
+                        os.environ["CAPABILITY_CAPACITY"] = "1"
+                    
+                    # Set orchestrator config in environment for RegisterCapability
+                    os.environ["ORCH_URL"] = orch_url
+                    os.environ["ORCH_SECRET"] = orch_secret
+                    
+                    result = await RegisterCapability.register(logger=logger)
+                    if result:
+                        logger.info(f"✅ Successfully registered capability: {result.geturl()}")
+                    else:
+                        logger.warning("❌ Failed to register capability with orchestrator")
+                else:
+                    logger.info("ℹ️  No orchestrator configuration found, skipping capability registration")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error during capability registration: {e}")
+                
+        return orchestrator_handler
 
-    web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    logger.info("Starting ComfyStream server with pytrickle StreamProcessor...")
+    logger.info("Available protocols:")
+    logger.info("  - pytrickle: /api/stream/* endpoints (primary)")
+    logger.info("  - ComfyStream: Custom workflow endpoints")
+    logger.info("  - Health/Status: /health, /version, /hardware/*")
+
+    # Create and run StreamProcessor - initialize pipeline BEFORE starting server
+    try:
+        # Initialize pipeline synchronously before creating StreamProcessor
+        logger.info("🔧 Initializing ComfyStream pipeline before server startup...")
+        
+        pipeline = Pipeline(
+            width=512,
+            height=512,
+            cwd=args.workspace,
+            disable_cuda_malloc=True,
+            gpu_only=True,
+            preview_method='none',
+            comfyui_inference_log_level=getattr(logging, args.comfyui_inference_log_level) if args.comfyui_inference_log_level else None,
+        )
+        
+        global_pipeline = pipeline
+        logger.info("✅ Pipeline initialized successfully")
+        
+        # Store warmup workflow path for load_model to handle
+        if args.warmup_workflow:
+            pipeline._warmup_workflow_path = args.warmup_workflow
+            logger.info(f"🔧 Stored warmup workflow path for load_model: {args.warmup_workflow}")
+        else:
+            logger.info("ℹ️  No warmup workflow configured")
+        
+        # StreamProcessor will call load_model automatically with async support
+        logger.info("🔧 Pipeline ready, StreamProcessor will handle load_model...")
+        
+        processor = StreamProcessor(
+            video_processor=process_video,
+            audio_processor=process_audio,
+            model_loader=load_model,
+            param_updater=update_params,
+            name="comfystream-processor",
+            port=int(args.port),
+            host=args.host,
+            
+            # Only orchestrator registration needed - warmup happens in load_model
+            on_startup=[create_orchestrator_registration_handler()],
+        )
+        
+        # Run the processor
+        logger.info(f"🚀 Starting ComfyStream BYOC Processor on {args.host}:{args.port}")
+        processor.run()
+        
+    except ImportError as e:
+        logger.error(f"Failed to import pytrickle StreamProcessor: {e}")
+        logger.info("Falling back to traditional aiohttp server...")
+        
+        # Fallback to original aiohttp implementation
+        app = web.Application()
+        app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
+        app["workspace"] = args.workspace
+        
+        # Setup CORS
+        cors = setup_cors(app, defaults={
+            "*": ResourceOptions(
+                allow_credentials=True,
+                expose_headers="*",
+                allow_headers="*",
+                allow_methods=["GET", "POST", "OPTIONS"]
+            )
+        })
+
+        app.on_startup.append(on_startup)
+        app.on_startup.append(warmup_on_startup)
+        app.on_shutdown.append(on_shutdown)
+
+        app.router.add_get("/", health)
+        app.router.add_get("/health", health)
+        app.router.add_post("/offer", offer)
+        app.router.add_post("/prompt", set_prompt)
+        
+        # Setup HTTP streaming routes
+        setup_routes(app, cors)
+        # setup_pytrickle_routes(app, cors)
+        
+        # Serve static files
+        app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
+        
+        # Add stream statistics and metrics
+        stream_stats_manager = StreamStatsManager(app)
+        app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
+        app.router.add_get("/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id)
+        
+        app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
+        if args.monitor:
+            app["metrics_manager"].enable()
+            app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
+
+        # Add hosted platform route prefix
+        add_prefix_to_app_routes(app, "/live")
+        
+        # Store warmup workflow path
+        app["warmup_workflow"] = args.warmup_workflow
+        
+        web.run_app(app, host=args.host, port=int(args.port), print=force_print)

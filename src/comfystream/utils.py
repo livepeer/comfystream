@@ -5,6 +5,8 @@ import logging
 
 from typing import Dict, Any, List, Tuple, Optional, Union
 from comfy.api.components.schema.prompt import Prompt, PromptDictInput
+from pytrickle.api import StreamParamsUpdateRequest
+
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +218,17 @@ def load_prompt_from_file(path: str) -> PromptDictInput:
     if not is_prompt_mapping(prompt_candidate):
         raise ValueError("Unsupported warmup workflow format; expected mapping of node_id to node with class_type and inputs")
 
-    return prompt_candidate
+    # Convert the prompt to ensure PreviewImage nodes become SaveTensor nodes for warmup
+    logger.info(f"Original prompt nodes: {list(prompt_candidate.keys())}")
+    logger.info(f"LoadImage nodes: {[k for k, v in prompt_candidate.items() if v.get('class_type') == 'LoadImage']}")
+    logger.info(f"PreviewImage nodes: {[k for k, v in prompt_candidate.items() if v.get('class_type') == 'PreviewImage']}")
+    
+    converted_prompt = convert_prompt(prompt_candidate, return_dict=True)
+    logger.info(f"Converted warmup prompt: {len(converted_prompt)} nodes")
+    logger.info(f"LoadTensor nodes: {[k for k, v in converted_prompt.items() if v.get('class_type') == 'LoadTensor']}")
+    logger.info(f"SaveTensor nodes: {[k for k, v in converted_prompt.items() if v.get('class_type') == 'SaveTensor']}")
+    
+    return converted_prompt
 
 
 def create_load_tensor_node():
@@ -234,7 +246,17 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
         "_meta": {"title": "SaveTensor"},
     }
 
-def convert_prompt(prompt: PromptDictInput) -> Prompt:
+def convert_prompt(prompt: PromptDictInput, return_dict: bool = False) -> Union[Prompt, dict]:
+    """
+    Convert and validate a ComfyUI workflow prompt.
+    
+    Args:
+        prompt: The prompt dictionary to convert and validate
+        return_dict: If True, return a plain dictionary. If False, return a Pydantic Prompt object.
+        
+    Returns:
+        Either a Pydantic Prompt object (default) or a plain dictionary (if return_dict=True)
+    """
     # Validate the schema
     Prompt.validate(prompt)
 
@@ -322,6 +344,105 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
         prompt[key] = create_save_tensor_node(node["inputs"])
 
     # Validate the processed prompt input
-    prompt = Prompt.validate(prompt)
+    validated_prompt = Prompt.validate(prompt)
 
-    return prompt
+    # Return based on requested format
+    if return_dict:
+        # Skip final Pydantic validation and return the plain dict directly
+        # This avoids any Pydantic object creation that could cause issues
+        logger.debug(f"Returning plain dict directly: type={type(prompt)}, keys={list(prompt.keys())[:5]}")
+        return prompt
+    else:
+        # Return Pydantic object (original behavior)
+        logger.debug(f"Returning Pydantic object: type={type(validated_prompt)}")
+        return validated_prompt
+
+
+class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest if StreamParamsUpdateRequest else object):
+    """
+    ComfyStream-specific parameter validation that extends pytrickle's StreamParamsUpdateRequest.
+    
+    Adds validation for ComfyUI workflow prompts while preserving all pytrickle parameter validation
+    (width/height conversion, framerate limits, etc.).
+    """
+    
+    def __init__(self, **data):
+        """Initialize with prompt validation."""
+        # Handle prompts parameter if present
+        if "prompts" in data:
+            prompts = data["prompts"]
+            
+            # Parse JSON string if needed
+            if isinstance(prompts, str):
+                if not prompts or prompts.strip() == "":
+                    logger.info("Removing empty prompts string")
+                    data.pop("prompts")
+                else:
+                    try:
+                        parsed_prompts = json.loads(prompts)
+                        if isinstance(parsed_prompts, dict):
+                            data["prompts"] = parsed_prompts
+                            logger.info(f"✅ Parsed JSON prompts string: {len(parsed_prompts)} nodes")
+                        else:
+                            logger.warning(f"Parsed JSON is not a dict: type={type(parsed_prompts)}")
+                            data.pop("prompts")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse prompts JSON string: {e}")
+                        data.pop("prompts")
+            
+            # Validate prompts with ComfyStream if we have them
+            if "prompts" in data:
+                try:
+                    # Ensure we pass a plain dict to convert_prompt
+                    prompts_dict = data["prompts"]
+                    if not isinstance(prompts_dict, dict):
+                        logger.warning(f"Expected dict for prompts validation, got {type(prompts_dict)}")
+                        data.pop("prompts")
+                    else:
+                        # Use convert_prompt with return_dict=True for validation and node replacement
+                        validated_prompt_dict = convert_prompt(prompts_dict, return_dict=True)
+                        data["prompts"] = validated_prompt_dict
+                        logger.info(f"✅ ComfyUI workflow validated: {len(data['prompts'])} nodes")
+                        logger.debug(f"Final prompts type in Pydantic class: {type(data['prompts'])}")
+                        if data["prompts"]:
+                            first_node = next(iter(data["prompts"].values()))
+                            logger.debug(f"First node type: {type(first_node)}")
+                except Exception as e:
+                    logger.error(f"❌ ComfyUI workflow validation failed: {e}")
+                    # Remove invalid prompts rather than failing entire request
+                    data.pop("prompts")
+        
+        # Call parent constructor if available
+        if StreamParamsUpdateRequest:
+            super().__init__(**data)
+        else:
+            # Fallback if pytrickle not available
+            for key, value in data.items():
+                setattr(self, key, value)
+    
+    @classmethod
+    def model_validate(cls, obj):
+        """Custom validation that handles both pytrickle and ComfyStream parameters."""
+        if StreamParamsUpdateRequest:
+            # Create instance which will trigger validation
+            instance = cls(**obj)
+            return instance
+        else:
+            # Fallback validation
+            return cls(**obj)
+    
+    def model_dump(self):
+        """Return validated parameters as dictionary."""
+        if StreamParamsUpdateRequest:
+            result = super().model_dump()
+            logger.debug(f"Pydantic model_dump result: type={type(result)}")
+            if "prompts" in result:
+                logger.debug(f"Prompts in model_dump: type={type(result['prompts'])}")
+                if result["prompts"]:
+                    first_node = next(iter(result["prompts"].values())) if isinstance(result["prompts"], dict) else None
+                    if first_node:
+                        logger.debug(f"First node in model_dump: type={type(first_node)}")
+            return result
+        else:
+            # Fallback - return all attributes
+            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}

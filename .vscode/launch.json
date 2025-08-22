@@ -30,10 +30,24 @@
                 "--workspace=/workspace/ComfyUI",
                 "--media-ports=5678",
                 "--host=0.0.0.0",
-                "--port=8889",
+                "--port=8000",
                 "--log-level=DEBUG",
-            ],
-            "python": "/workspace/miniconda3/envs/comfystream/bin/python"
+                "--comfyui-inference-log-level=WARNING",
+                "--warmup-workflow=workflows/comfystream/tensor-utils-example-api.json",
+                // "--enable-pytrickle"
+            ],            
+            "env": {
+                "ORCH_URL": "https://172.17.0.1:9995",
+                "ORCH_SECRET": "orch-secret",
+                "CAPABILITY_NAME": "trickle-stream-example",
+                "CAPABILITY_DESCRIPTION": "Flip video upside down using pytrickle",
+                "CAPABILITY_URL": "http://172.17.0.1:8000",
+                "CAPABILITY_PRICE_PER_UNIT": "0",
+                "CAPABILITY_PRICE_SCALING": "1",
+                "CAPABILITY_CAPACITY": "1"
+            },
+            "justMyCode": true,
+            "python": "${command:python.interpreterPath}"
         },
         {
             "name": "Run ComfyStream UI (Node.js)",

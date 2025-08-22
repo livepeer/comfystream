@@ -66,10 +66,28 @@ class Pipeline:
         dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
         
         logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
+        successful_runs = 0
 
-        for _ in range(WARMUP_RUNS):
+        # Use longer timeout for warmup since first runs need to load models
+        warmup_timeout = max(self.video_processing_timeout * 5, 25.0)  # At least 25s, or 5x normal timeout
+        
+        for run_idx in range(WARMUP_RUNS):
+            logger.info(f"Starting video warmup run {run_idx + 1}/{WARMUP_RUNS}")
             self.client.put_video_input(dummy_frame)
-            await self.client.get_video_output()
+            try:
+                async with asyncio.timeout(warmup_timeout):
+                    output = await self.client.get_video_output()
+                    logger.info(f"✅ Video warmup run {run_idx + 1}/{WARMUP_RUNS} completed successfully, output type: {type(output)}")
+                    successful_runs += 1
+            except asyncio.TimeoutError:
+                logger.warning(f"❌ Video warmup run {run_idx + 1}/{WARMUP_RUNS} timed out after {warmup_timeout}s")
+            except Exception as e:
+                logger.error(f"❌ Video warmup run {run_idx + 1}/{WARMUP_RUNS} failed: {e}")
+        
+        if successful_runs > 0:
+            logger.info(f"🎉 Video warmup completed: {successful_runs}/{WARMUP_RUNS} runs successful")
+        else:
+            logger.error(f"💥 Video warmup failed: 0/{WARMUP_RUNS} runs successful")
 
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
@@ -83,9 +101,29 @@ class Pipeline:
         dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
         dummy_frame.sample_rate = 48000
 
-        for _ in range(WARMUP_RUNS):
+        logger.info(f"Warming audio pipeline")
+        successful_runs = 0
+
+        # Use longer timeout for warmup since first runs need to load models  
+        warmup_timeout = max(self.video_processing_timeout * 5, 25.0)  # At least 25s, or 5x normal timeout
+        
+        for run_idx in range(WARMUP_RUNS):
+            logger.info(f"Starting audio warmup run {run_idx + 1}/{WARMUP_RUNS}")
             self.client.put_audio_input(dummy_frame)
-            await self.client.get_audio_output()
+            try:
+                async with asyncio.timeout(warmup_timeout):
+                    output = await self.client.get_audio_output()
+                    logger.info(f"✅ Audio warmup run {run_idx + 1}/{WARMUP_RUNS} completed successfully, output type: {type(output)}")
+                    successful_runs += 1
+            except asyncio.TimeoutError:
+                logger.warning(f"❌ Audio warmup run {run_idx + 1}/{WARMUP_RUNS} timed out after {warmup_timeout}s")
+            except Exception as e:
+                logger.error(f"❌ Audio warmup run {run_idx + 1}/{WARMUP_RUNS} failed: {e}")
+        
+        if successful_runs > 0:
+            logger.info(f"🎉 Audio warmup completed: {successful_runs}/{WARMUP_RUNS} runs successful")
+        else:
+            logger.error(f"💥 Audio warmup failed: 0/{WARMUP_RUNS} runs successful")
 
     async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Set the processing prompts for the pipeline.
@@ -207,6 +245,9 @@ class Pipeline:
             async with asyncio.timeout(self.video_processing_timeout):
                 async with temporary_log_level("comfy", self._comfyui_inference_log_level):
                     out_tensor = await self.client.get_video_output()
+                    if out_tensor is None:
+                        logger.debug("No video output tensor, returning original frame")
+                        return frame
             logger.debug(f"Got video output tensor: {type(out_tensor)}")
 
             processed_frame = self.video_postprocess(out_tensor)
