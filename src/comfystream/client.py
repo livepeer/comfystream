@@ -8,7 +8,6 @@ from comfystream.utils import convert_prompt
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
-from comfy.nodes.package import import_all_nodes_in_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -19,65 +18,66 @@ class ComfyStreamClient:
         self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
         self.running_prompts = {} # To be used for cancelling tasks
         self.current_prompts = []
+        self._cleanup_lock = asyncio.Lock()
+        self._prompt_update_lock = asyncio.Lock()
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
-        # Cancel existing prompts before setting new ones
-        if self.running_prompts:
-            await self.cancel_running_prompts()
-            
-        # Store prompts directly - they should already be validated by our Pydantic validation
-        self.current_prompts = list(prompts)
-        logger.info(f"Set {len(self.current_prompts)} prompts in client")
+        await self.cancel_running_prompts()
+        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
 
     async def update_prompts(self, prompts: List[PromptDictInput]):
-        # TODO: currently under the assumption that only already running prompts are updated
-        if len(prompts) != len(self.current_prompts):
-            raise ValueError(
-                "Number of updated prompts must match the number of currently running prompts."
-            )
-        # Prompts should already be validated by our Pydantic validation
-        for idx, prompt in enumerate(prompts):
-            try:
-                await self.comfy_client.queue_prompt(prompt)
-                self.current_prompts[idx] = prompt
-                logger.info(f"Updated prompt {idx} in client")
-            except Exception as e:
-                raise Exception(f"Prompt update failed: {str(e)}") from e
+        async with self._prompt_update_lock:
+            # TODO: currently under the assumption that only already running prompts are updated
+            if len(prompts) != len(self.current_prompts):
+                raise ValueError(
+                    "Number of updated prompts must match the number of currently running prompts."
+                )
+            # Validation step before updating the prompt, only meant for a single prompt for now
+            for idx, prompt in enumerate(prompts):
+                converted_prompt = convert_prompt(prompt)
+                try:
+                    await self.comfy_client.queue_prompt(converted_prompt)
+                    self.current_prompts[idx] = converted_prompt
+                except Exception as e:
+                    raise Exception(f"Prompt update failed: {str(e)}") from e
 
     async def run_prompt(self, prompt_index: int):
         while True:
-            try:
-                await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                await self.cleanup()
-                logger.error(f"Error running prompt: {str(e)}")
-                raise
+            async with self._prompt_update_lock:
+                try:
+                    await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    await self.cleanup()
+                    logger.error(f"Error running prompt: {str(e)}")
+                    raise
 
     async def cleanup(self):
         await self.cancel_running_prompts()
-        if self.comfy_client.is_running:
-            try:
-                await self.comfy_client.__aexit__()
-            except Exception as e:
-                logger.error(f"Error during ComfyClient cleanup: {e}")
+        async with self._cleanup_lock:
+            if self.comfy_client.is_running:
+                try:
+                    await self.comfy_client.__aexit__()
+                except Exception as e:
+                    logger.error(f"Error during ComfyClient cleanup: {e}")
 
-        await self.cleanup_queues()
-        logger.info("Client cleanup complete")
+            await self.cleanup_queues()
+            logger.info("Client cleanup complete")
 
     async def cancel_running_prompts(self):
-        tasks_to_cancel = list(self.running_prompts.values())
-        for task in tasks_to_cancel:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        self.running_prompts.clear()
+        async with self._cleanup_lock:
+            tasks_to_cancel = list(self.running_prompts.values())
+            for task in tasks_to_cancel:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            self.running_prompts.clear()
 
         
     async def cleanup_queues(self):
@@ -87,45 +87,22 @@ class ComfyStreamClient:
         while not tensor_cache.audio_inputs.empty():
             tensor_cache.audio_inputs.get()
 
-        image_outputs = tensor_cache.image_outputs
-        audio_outputs = tensor_cache.audio_outputs
-        
-        if image_outputs:
-            while not image_outputs.empty():
-                await image_outputs.get()
+        while not tensor_cache.image_outputs.empty():
+            await tensor_cache.image_outputs.get()
 
-        if audio_outputs:
-            while not audio_outputs.empty():
-                await audio_outputs.get()
+        while not tensor_cache.audio_outputs.empty():
+            await tensor_cache.audio_outputs.get()
 
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():
-            # Non-blocking drain to prevent pipeline stalls
-            try:
-                while not tensor_cache.image_inputs.empty():
-                    tensor_cache.image_inputs.get_nowait()
-            except:
-                pass
+            tensor_cache.image_inputs.get(block=True)
         tensor_cache.image_inputs.put(frame)
     
     def put_audio_input(self, frame):
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
-        # Drain any backed up frames to prevent queue overflow
-        try:
-            while not tensor_cache.image_outputs.empty():
-                frame = await tensor_cache.image_outputs.get()
-                # If there are more frames, discard this one and get the next
-                if not tensor_cache.image_outputs.empty() or frame is None:
-                    continue
-                # This is the latest frame, return it
-                return frame
-            # If queue was empty, return None
-            return None
-        except Exception as e:
-            logger.error(f"Error getting video output: {e}")
-            raise
+        return await tensor_cache.image_outputs.get()
     
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
@@ -137,6 +114,7 @@ class ComfyStreamClient:
             return {}
 
         try:
+            from comfy.nodes.package import import_all_nodes_in_workspace
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
