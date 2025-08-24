@@ -4,6 +4,9 @@ aiortc
 aiohttp
 aiohttp_cors
 toml
+tomli
+websockets
 twilio
 prometheus_client
 librosa
+torchvision

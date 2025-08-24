@@ -3,6 +3,7 @@
 from .audio_utils import *
 from .tensor_utils import *
 from .video_stream_utils import *
+from .native_utils import *
 from .api import *
 from .web import *
 
@@ -11,7 +12,7 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Import and update mappings from submodules
-for module in [audio_utils, tensor_utils, video_stream_utils, api, web]:
+for module in [audio_utils, tensor_utils, video_stream_utils, api, web, native_utils]:
     if hasattr(module, 'NODE_CLASS_MAPPINGS'):
         NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
     if hasattr(module, 'NODE_DISPLAY_NAME_MAPPINGS'):
