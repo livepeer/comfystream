@@ -54,6 +54,7 @@ conda run -n comfystream --no-capture-output pip install wheel
 # Copy only files needed for setup
 COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
 COPY ./configs /workspace/comfystream/configs
+COPY ./src/comfystream/scripts/constraints.txt /workspace/comfystream/src/comfystream/scripts/constraints.txt
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
@@ -61,18 +62,18 @@ RUN git clone --branch v0.3.27 --depth 1 https://github.com/comfyanonymous/Comfy
 # Copy ComfyStream files into ComfyUI
 COPY . /workspace/comfystream
 
-RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pip install -r ./src/comfystream/scripts/constraints.txt
+RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pip install -r src/comfystream/scripts/constraints.txt
 
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 
 # Install ComfyUI requirements
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --constraint /workspace/comfystream/src/comfystream/scripts/constraints.txt --root-user-action=ignore
 
 # Install ComfyStream requirements
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --constraint src/comfystream/scripts/constraints.txt --root-user-action=ignore
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
 
 # Accept a build-arg that lets CI force-invalidate setup_nodes.py
@@ -84,10 +85,6 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream py
 
 # Setup opencv with CUDA support
 RUN conda run -n comfystream --no-capture-output bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda
-
-RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
-
-RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
 
 # Configure no environment activation by default
 RUN conda config --set auto_activate_base false && \
