@@ -34,7 +34,7 @@
                 "--log-level=DEBUG",
                 "--comfyui-inference-log-level=DEBUG",
                 "--warmup-workflow=workflows/comfystream/audio-transcription-srt-optimized.json",
-                // "--enable-pytrickle"
+                "--enable-trickle"
             ],            
             "env": {
                 "ORCH_URL": "https://172.17.0.1:9995",

@@ -23,10 +23,10 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from twilio.rest import Client
 
+
 from pytrickle.stream_processor import StreamProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
 from pytrickle.utils.register import RegisterCapability
-
 from comfystream.pipeline import Pipeline
 from comfystream.utils import load_prompt_from_file, convert_prompt, ComfyStreamParamsUpdateRequest
 from comfystream import tensor_cache
@@ -215,23 +215,12 @@ async def offer(request):
 
     params = await request.json()
 
-    # Validate prompts using the same Pydantic validation as pytrickle
-    try:
-        if "prompts" in params:
-            # Use ComfyStreamParamsUpdateRequest to validate prompts consistently
-            validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": params["prompts"]})
-            validated_params = validated_request.model_dump()
-            
-            if "prompts" in validated_params:
-                await pipeline.set_prompts([validated_params["prompts"]])
-                logger.info("WebRTC prompts validated and set successfully")
-            else:
-                logger.warning("No valid prompts provided in WebRTC offer")
-        else:
-            logger.warning("No prompts provided in WebRTC offer")
-    except Exception as e:
-        logger.error(f"WebRTC prompt validation failed: {e}")
-        # Continue without prompts rather than failing the entire connection
+    # Validate and set prompts
+    if "prompts" in params:
+        validated_prompts = validate_prompts(params["prompts"])
+        if validated_prompts:
+            await pipeline.set_prompts([validated_prompts])
+            logger.info("WebRTC prompts validated and set successfully")
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -283,37 +272,43 @@ async def offer(request):
                                 "[Control] Missing prompt in update_prompt message"
                             )
                             return
-                        try:
-                            # Validate prompts using the same Pydantic validation
-                            validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": params["prompts"]})
-                            validated_params = validated_request.model_dump()
-                            
-                            if "prompts" in validated_params:
-                                await pipeline.update_prompts([validated_params["prompts"]])
-                                logger.debug("Control channel prompts validated and updated successfully")
-                            else:
-                                logger.warning("No valid prompts in control channel message")
-                        except Exception as e:
-                            logger.error(f"Control channel prompt validation failed: {str(e)}")
+                        validated_prompts = validate_prompts(params["prompts"])
+                        if validated_prompts:
+                            await pipeline.update_prompts([validated_prompts])
+                            logger.debug("Control channel prompts updated successfully")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
-                    #     if "width" not in params or "height" not in params:
-                    #         logger.warning("[Control] Missing width or height in update_resolution message")
-                    #         return
-                    #     # Update pipeline resolution for future frames
-                    #     pipeline.width = params["width"]
-                    #     pipeline.height = params["height"]
-                    #     logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
+                        if "width" not in params or "height" not in params:
+                            logger.warning("[Control] Missing width or height in update_resolution message")
+                            return
                         
-                    #     # Mark that we've received resolution
+                        # Update pipeline resolution for future frames
+                        pipeline.width = params["width"]
+                        pipeline.height = params["height"]
+                        logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
+                        
+                        # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Warm the video pipeline with the new resolution if workflow has video
-                        # modalities = pipeline.get_prompt_modalities()
-                        # if "m=video" in pc.remoteDescription.sdp:
-                        #     if (modalities.get("video", {}).get("input")):
-                        #         await pipeline.warm_video()                            
+                        # Run warmup after resolution is set
+                        try:
+                            modalities = pipeline.get_prompt_modalities()
+                            logger.info(f"Running warmup with modalities: {modalities}")
+                            
+                            if modalities.get("video", {}).get("input") or modalities.get("video", {}).get("output"):
+                                logger.info("Running video warmup...")
+                                await pipeline.warm_video()
+                                logger.info("Video warmup completed")
+                            
+                            if modalities.get("audio", {}).get("input") or modalities.get("audio", {}).get("output"):
+                                logger.info("Running audio warmup...")
+                                await pipeline.warm_audio()
+                                logger.info("Audio warmup completed")
+                                
+                        except Exception as e:
+                            logger.error(f"Warmup failed: {e}")
+                            
                         response = {
                             "type": "resolution_updated",
                             "success": True
@@ -396,222 +391,46 @@ async def set_prompt(request):
     pipeline = request.app["pipeline"]
     prompt = await request.json()
     
-    # Validate prompts using the same Pydantic validation as pytrickle
-    try:
-        # Use ComfyStreamParamsUpdateRequest to validate prompts consistently
-        validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": prompt})
-        validated_params = validated_request.model_dump()
-        
-        if "prompts" in validated_params:
-            await pipeline.set_prompts([validated_params["prompts"]])
-            logger.info("HTTP prompts validated and set successfully")
-            return web.Response(content_type="application/json", text="OK")
-        else:
-            logger.warning("No valid prompts provided in HTTP request")
-            return web.Response(content_type="application/json", text="No valid prompts", status=400)
-    except Exception as e:
-        logger.error(f"HTTP prompt validation failed: {e}")
-        return web.Response(content_type="application/json", text="Validation failed: Invalid input.", status=400)
+    validated_prompts = validate_prompts(prompt)
+    if validated_prompts:
+        await pipeline.set_prompts([validated_prompts])
+        return web.Response(content_type="application/json", text="OK")
+    else:
+        return web.Response(content_type="application/json", text="Invalid prompts", status=400)
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
 
-# pytrickle model loader and parameter updater functions
-
-
-# pytrickle-specific route handlers
-async def handle_set_workflow(request):
-    """Handle ComfyStream workflow setting requests."""
+def validate_prompts(prompts_data):
+    """Validate and normalize prompts data."""
     try:
-        data = await request.json()
-        pipeline = request.app["pipeline"]
-        
-        # Extract prompts/workflow from request
-        if "prompts" in data:
-            workflow = data["prompts"]
-        elif "workflow" in data:
-            workflow = data["workflow"]
-        else:
-            workflow = data  # Assume entire payload is the workflow
-        
-        await pipeline.set_prompts(workflow)
-        
-        return web.json_response({
-            "status": "success",
-            "message": "Workflow set successfully"
-        })
-        
+        validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": prompts_data})
+        validated_params = validated_request.model_dump()
+        return validated_params.get("prompts")
     except Exception as e:
-        logger.error(f"Failed to set workflow: {e}")
-        return web.json_response({
-            "status": "error",
-            "message": f"Failed to set workflow: {str(e)}"
-        }, status=400)
-
-async def handle_update_workflow(request):
-    """Handle ComfyStream workflow update requests."""
-    try:
-        data = await request.json()
-        pipeline = request.app["pipeline"]
-        
-        # Extract prompts/workflow from request
-        if "prompts" in data:
-            workflow = data["prompts"]
-        elif "workflow" in data:
-            workflow = data["workflow"]
-        else:
-            workflow = data  # Assume entire payload is the workflow
-        
-        await pipeline.update_prompts(workflow)
-        
-        return web.json_response({
-            "status": "success",
-            "message": "Workflow updated successfully"
-        })
-        
-    except Exception as e:
-        logger.error(f"Failed to update workflow: {e}")
-        return web.json_response({
-            "status": "error",
-            "message": f"Failed to update workflow: {str(e)}"
-        }, status=400)
-
-async def handle_get_workflow_info(request):
-    """Handle workflow info requests."""
-    try:
-        pipeline = request.app["pipeline"]
-        modalities = pipeline.get_prompt_modalities()
-        
-        info = {
-            "modalities": modalities,
-            "resolution": {
-                "width": pipeline.width,
-                "height": pipeline.height
-            },
-            "workspace": request.app.get("workspace", "")
-        }
-        
-        return web.json_response(info)
-        
-    except Exception as e:
-        logger.error(f"Failed to get workflow info: {e}")
-        return web.json_response({
-            "status": "error",
-            "message": f"Failed to get workflow info: {str(e)}"
-        }, status=500)
-
-async def handle_get_nodes(request):
-    """Handle nodes info requests."""
-    try:
-        pipeline = request.app["pipeline"]
-        nodes_info = await pipeline.get_nodes_info()
-        return web.json_response(nodes_info)
-        
-    except Exception as e:
-        logger.error(f"Failed to get nodes info: {e}")
-        return web.json_response({
-            "status": "error",
-            "message": f"Failed to get nodes info: {str(e)}"
-        }, status=500)
-
-async def handle_warmup(request):
-    """Handle manual warmup requests."""
-    try:
-        data = await request.json()
-        pipeline = request.app["pipeline"]
-        
-        # Use provided workflow or trigger warmup with current workflow
-        if "workflow" in data or "prompts" in data:
-            workflow = data.get("workflow") or data.get("prompts")
-            await pipeline.set_prompts(workflow)
-            # Warmup is triggered automatically by set_prompts
-        else:
-            # Trigger warmup with current workflow
-            modalities = pipeline.get_prompt_modalities()
-            if modalities.get("video", {}).get("output", False):
-                await pipeline.warm_video()
-            if modalities.get("audio", {}).get("output", False):
-                await pipeline.warm_audio()
-        
-        return web.json_response({
-            "status": "success",
-            "message": "Warmup completed successfully"
-        })
-        
-    except Exception as e:
-        logger.error(f"Warmup failed: {e}")
-        return web.json_response({
-            "status": "error",
-            "message": f"Warmup failed: {str(e)}"
-        }, status=500)
-
-async def handle_get_modalities(request):
-    """Handle modalities info requests."""
-    try:
-        pipeline = request.app["pipeline"]
-        modalities = pipeline.get_prompt_modalities()
-        return web.json_response(modalities)
-        
-    except Exception as e:
-        logger.error(f"Failed to get modalities: {e}")
-        return web.json_response({
-            "status": "error",
-            "message": f"Failed to get modalities: {str(e)}"
-        }, status=500)
+        logger.error(f"Prompt validation failed: {e}")
+        return None
 
 
-# startup hook for WebRTC pipeline
+
+
 async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
-
-    
     app["pcs"] = set()
     app["video_tracks"] = {}
 
-    return web.Response(content_type="application/json", text="OK")
-
-# TODO: re-test with pipeline and consolidate if possible
-async def warm_pipeline(app: web.Application, prompt: dict):
-    # This function is only used in WebRTC mode
-    # In StreamProcessor mode, warmup is handled separately
-    if "pipeline" not in app:
-        logger.warning("No pipeline available for warmup in WebRTC mode")
-        return
-        
-    await app["pipeline"].set_prompts([prompt])
-    modalities = app["pipeline"].get_prompt_modalities()
-    logger.info(f"Startup warmup - detected modalities: {modalities}")
-    if modalities.get("video", {}).get("input") or modalities.get("video", {}).get("output"):
-        logger.info("Running startup video warmup")
-        await app["pipeline"].warm_video()
-    if modalities.get("audio", {}).get("input") or modalities.get("audio", {}).get("output"):
-        logger.info("Running startup audio warmup")
-        await app["pipeline"].warm_audio()
-
 async def warmup_on_startup(app: web.Application):
+    # In WebRTC mode, only set prompts during startup
+    # Actual warmup happens when resolution is received via control message
     warmup_path = app.get("warmup_workflow")
-    if not warmup_path:
-        return
-    try:
-        raw_prompt = load_prompt_from_file(warmup_path)
-        await warm_pipeline(app, raw_prompt)
-    except Exception as e:
-        # Log full traceback and brief diagnostics about the loaded prompt
+    if warmup_path and "pipeline" in app:
         try:
-            if 'raw_prompt' in locals() and isinstance(raw_prompt, dict):
-                total_nodes = len(raw_prompt)
-                sample_keys = list(raw_prompt.keys())[:5]
-                missing = [
-                    node_id for node_id, node in raw_prompt.items()
-                    if not isinstance(node, dict) or 'class_type' not in node or 'inputs' not in node
-                ][:5]
-                logger.debug(
-                    f"Warmup prompt diagnostics: total_nodes={total_nodes}, sample_keys={sample_keys}, missing_fields_nodes={missing}"
-                )
-        except Exception:
-            pass
-        logger.exception("Warmup workflow failed")
+            prompt = load_prompt_from_file(warmup_path)
+            await app["pipeline"].set_prompts([prompt])
+            logger.info("Warmup workflow loaded, warmup will run when resolution is received")
+        except Exception as e:
+            logger.error(f"Failed to load warmup workflow: {e}")
 
 
 async def on_shutdown(app: web.Application):
@@ -667,10 +486,9 @@ if __name__ == "__main__":
         help="Set the logging level for ComfyUI inference",
     )
     parser.add_argument(
-        "--enable-pytrickle",
-        default=True,
+        "--enable-trickle",
         action="store_true",
-        help="Enable pytrickle streaming endpoints (Livepeer BYOC)",
+        help="Enable pytrickle streaming mode (default: WebRTC mode)",
     )
     parser.add_argument(
         "--orch-url",
@@ -704,117 +522,82 @@ if __name__ == "__main__":
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
 
-    # Create a simplified orchestrator registration handler
-    def create_orchestrator_registration_handler():
-        """Create startup handler that only handles orchestrator registration."""
-        async def orchestrator_handler(app_instance):
-            # Register capability with orchestrator if configured
-            try:
-                # Use command line args or environment variables
-                orch_url = args.orch_url or os.getenv("ORCH_URL")
-                orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
+    async def register_orchestrator(app_instance=None):
+        """Register capability with orchestrator if configured."""
+        try:
+            orch_url = args.orch_url or os.getenv("ORCH_URL")
+            orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
+            
+            if orch_url and orch_secret:
+                os.environ.update({
+                    "CAPABILITY_NAME": args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor",
+                    "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
+                    "CAPABILITY_URL": f"http://{args.host}:{args.port}",
+                    "CAPABILITY_CAPACITY": "1",
+                    "ORCH_URL": orch_url,
+                    "ORCH_SECRET": orch_secret
+                })
                 
-                if orch_url and orch_secret:
-                    logger.info("Registering ComfyStream capability with orchestrator...")
-                    
-                    # Set up capability environment if not already set
-                    capability_name = args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor"
-                    os.environ["CAPABILITY_NAME"] = capability_name
-                    
-                    if not os.getenv("CAPABILITY_DESCRIPTION"):
-                        os.environ["CAPABILITY_DESCRIPTION"] = "ComfyUI streaming processor with video/audio support"
-                    if not os.getenv("CAPABILITY_URL"):
-                        os.environ["CAPABILITY_URL"] = f"http://{args.host}:{args.port}"
-                    if not os.getenv("CAPABILITY_CAPACITY"):
-                        os.environ["CAPABILITY_CAPACITY"] = "1"
-                    
-                    # Set orchestrator config in environment for RegisterCapability
-                    os.environ["ORCH_URL"] = orch_url
-                    os.environ["ORCH_SECRET"] = orch_secret
-                    
-                    result = await RegisterCapability.register(logger=logger)
-                    if result:
-                        logger.info(f"Successfully registered capability: {result.geturl()}")
-                    else:
-                        logger.warning("Failed to register capability with orchestrator")
-                else:
-                    logger.info("No orchestrator configuration found, skipping capability registration")
-                    
-            except Exception as e:
-                logger.error(f"Error during capability registration: {e}")
-                
-        return orchestrator_handler
+                result = await RegisterCapability.register(logger=logger)
+                if result:
+                    logger.info(f"Registered capability: {result.geturl()}")
+        except Exception as e:
+            logger.error(f"Orchestrator registration failed: {e}")
 
 
 
-    logger.info("Starting ComfyStream server with pytrickle StreamProcessor...")
-    logger.info("Available protocols:")
-    logger.info("  - pytrickle: /api/stream/* endpoints (primary)")
-    logger.info("  - ComfyStream: Custom workflow endpoints")
-    logger.info("  - Health/Status: /health, /version, /hardware/*")
-
-    # Create and run StreamProcessor - initialize pipeline BEFORE starting server
-    try:
-        # Prepare parameters for frame processor load_model
-        load_params = {
-            'width': 512,
-            'height': 512,
-            'workspace': args.workspace,
-            'disable_cuda_malloc': True,
-            'gpu_only': True,
-            'preview_method': 'none',
-            'comfyui_inference_log_level': args.comfyui_inference_log_level,
-            'warmup_workflow': args.warmup_workflow,
-        }
-        
-        # Create frame processor with load parameters
-        frame_processor = ComfyStreamFrameProcessor(**load_params)
+    # Choose between pytrickle and WebRTC based on flag
+    if args.enable_trickle and StreamProcessor is not None:
+        logger.info("Starting pytrickle StreamProcessor mode...")
+        frame_processor = ComfyStreamFrameProcessor(
+            width=512,
+            height=512,
+            workspace=args.workspace,
+            disable_cuda_malloc=True,
+            gpu_only=True,
+            preview_method='none',
+            comfyui_inference_log_level=args.comfyui_inference_log_level,
+            warmup_workflow=args.warmup_workflow
+        )
         
         processor = StreamProcessor(
             video_processor=frame_processor.process_video_async,
             audio_processor=frame_processor.process_audio_async,
-            model_loader=frame_processor.load_model,  # Will use stored load_params
+            model_loader=frame_processor.load_model,
             param_updater=frame_processor.update_params,
-            publisher_timeout=10,
             name="comfystream-processor",
             port=int(args.port),
             host=args.host,
-            enable_frame_skipping=False,
-            # Include both orchestrator registration and warmup handler
-            on_startup=[
-                create_orchestrator_registration_handler()
-            ],
+            on_startup=[register_orchestrator]
         )
         
-        # Set StreamProcessor reference for text data publishing
         frame_processor.set_stream_processor(processor)
-        
-        # Run the processor
-        logger.info(f"Starting ComfyStream BYOC Processor on {args.host}:{args.port}")
-        logger.info("Text data publishing enabled - SaveTextTensor outputs will be published via data channel")
         processor.run()
         
-    except ImportError as e:
-        logger.error(f"Failed to import pytrickle StreamProcessor: {e}")
-        logger.info("Falling back to traditional aiohttp server...")
-        
-        # Fallback to original aiohttp implementation
+    else:
+        # Use WebRTC server (default mode)
+        if args.enable_trickle and StreamProcessor is None:
+            logger.warning("Pytrickle requested but not available, falling back to WebRTC mode")
+        else:
+            logger.info("Starting WebRTC server mode...")
         app = web.Application()
         app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
         app["workspace"] = args.workspace
+        app["warmup_workflow"] = args.warmup_workflow
         
-        # Setup CORS
         cors = setup_cors(app, defaults={
-            "*": ResourceOptions(
-                allow_credentials=True,
-                expose_headers="*",
-                allow_headers="*",
-                allow_methods=["GET", "POST", "OPTIONS"]
-            )
+            "*": ResourceOptions(allow_credentials=True, expose_headers="*", 
+                               allow_headers="*", allow_methods=["GET", "POST", "OPTIONS"])
         })
 
-        app.on_startup.append(on_startup)
-        app.on_startup.append(warmup_on_startup)
+        # Create pipeline for WebRTC mode
+        app["pipeline"] = Pipeline(
+            width=512, height=512, cwd=args.workspace,
+            disable_cuda_malloc=True, gpu_only=True, preview_method='none',
+            comfyui_inference_log_level=args.comfyui_inference_log_level
+        )
+        
+        app.on_startup.extend([on_startup, warmup_on_startup])
         app.on_shutdown.append(on_shutdown)
 
         app.router.add_get("/", health)
@@ -822,26 +605,19 @@ if __name__ == "__main__":
         app.router.add_post("/offer", offer)
         app.router.add_post("/prompt", set_prompt)
         
-        # Setup HTTP streaming routes
         setup_routes(app, cors)
-
-        # Serve static files
         app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
         
-        # Add stream statistics and metrics
-        stream_stats_manager = StreamStatsManager(app)
-        app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
-        app.router.add_get("/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id)
-        
+        # Add metrics if enabled
         app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
         if args.monitor:
             app["metrics_manager"].enable()
             app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
+            
+        # Add stream stats
+        stream_stats_manager = StreamStatsManager(app)
+        app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
+        app.router.add_get("/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id)
 
-        # Add hosted platform route prefix
         add_prefix_to_app_routes(app, "/live")
-        
-        # Store warmup workflow path
-        app["warmup_workflow"] = args.warmup_workflow
-        
         web.run_app(app, host=args.host, port=int(args.port), print=force_print)
