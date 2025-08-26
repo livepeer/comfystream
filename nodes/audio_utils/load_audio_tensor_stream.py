@@ -28,10 +28,19 @@ class LoadAudioTensorStream:
     def __init__(self):
         self.leftover = np.empty(0, dtype=np.int16)
         self.sample_rate = None
-
+    def _convert_to_int16(self, audio: np.ndarray) -> np.ndarray:
+        """Convert audio data to int16 format with proper scaling."""
+        if audio.dtype in [np.float32, np.float64]:
+            # Float audio in range [-1, 1] needs to be scaled to int16 range [-32768, 32767]
+            audio = np.clip(audio, -1.0, 1.0)
+            return (audio * 32767).astype(np.int16)
+        else:
+            # Already integer format, just convert to int16
+            return audio.astype(np.int16)
+         
     def _resample_if_needed(self, audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
         if src_rate == dst_rate:
-            return audio
+            return self._convert_to_int16(audio)
         # Simple linear resample to avoid heavy deps in node; acceptable for warmup/streaming
         ratio = dst_rate / float(src_rate)
         new_len = int(round(audio.shape[0] * ratio))
