@@ -131,10 +131,14 @@ def convert_prompt(prompt: PromptDictInput, return_dict: bool = False) -> Union[
     outputs = sum(1 for node in prompt.values() if node.get("class_type") in ["PreviewImage", "SaveImage", "SaveTensor", "SaveAudioTensor", "SaveTextTensor"])
 
     # Validate counts
-    if primary_inputs > 1 or (primary_inputs == 0 and inputs > 1) or outputs > 1:
-        raise Exception("Invalid prompt structure")
-    if primary_inputs + inputs == 0 or outputs == 0:
-        raise Exception("Missing input or output")
+    if primary_inputs > 1 or (primary_inputs == 0 and inputs > 1):
+        raise Exception("too many inputs")
+    if outputs > 1:
+        raise Exception("too many outputs")
+    if primary_inputs + inputs == 0:
+        raise Exception("missing input")
+    if outputs == 0:
+        raise Exception("missing output")
 
     # Replace nodes
     for key, node in prompt.items():
