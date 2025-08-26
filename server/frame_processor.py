@@ -45,8 +45,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._audio_batch_task = None
         
         # Frame caching for fallback behavior
-        self._last_processed_video_frame = None
         self._last_processed_audio_frames = None
+
+        # Event-based cleanup system for background tasks
+        self._stop_event = asyncio.Event()
         
         super().__init__()
 
@@ -55,10 +57,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._stream_processor = stream_processor
         logger.info("StreamProcessor reference set for text data publishing")
     
-    def reset_frame_cache(self):
-        """Reset cached frames - useful when starting new streams or workflows."""
-        self._last_processed_video_frame = None
-        self._last_processed_audio_frames = None
 
     async def load_model(self, **kwargs):
         """Load model and initialize the pipeline with workflows/prompts."""
@@ -130,7 +128,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """Monitor text outputs from ComfyUI pipeline and publish them via pytrickle."""
         logger.info("Starting text output monitoring...")
         
-        while True:
+        while not self._stop_event.is_set():
             try:
                 # Check if pipeline has text outputs enabled
                 if not self.pipeline:
@@ -148,6 +146,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 try:
                     text_data = await self.pipeline.get_processed_text_output()
                 except asyncio.TimeoutError:
+                    # TODO: signal stop from internal stream processor
                     # No text data available, continue monitoring
                     continue
                 except Exception as e:
@@ -169,6 +168,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     else:
                         logger.warning("No StreamProcessor reference, cannot publish text data")
                 else:
+                    # TODO: signal stop from internal stream processor                     
                     await asyncio.sleep(0.1)  # Short pause when no data
                         
             except asyncio.CancelledError:
@@ -177,6 +177,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             except Exception as e:
                 logger.error(f"Error in text output monitoring: {e}")
                 await asyncio.sleep(1)  # Brief pause before retrying
+        logger.info("Text output monitoring stopped")
     
 
     def _start_text_monitoring_if_needed(self):
@@ -305,9 +306,9 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def _process_audio_batches(self):
         """Background task to process audio frames in batches for transcription workflows."""
         try:
-            while True:
+            while not self._stop_event.is_set():
                 # Wait for enough frames to accumulate
-                while self._audio_buffer.size() < self._audio_batch_size:
+                while self._audio_buffer.size() < self._audio_batch_size and not self._stop_event.is_set():
                     await asyncio.sleep(0.1)  # Check every 100ms
                 
                 # Get a batch of frames
@@ -319,6 +320,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 
                 if not batch_frames:
                     continue
+                
+                # Check stop event before processing
+                if self._stop_event.is_set():
+                    break
                 
                 # Combine frames into a single larger audio chunk
                 try:
@@ -334,9 +339,11 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     logger.error(f"Failed to process audio batch: {e}")
                     
         except asyncio.CancelledError:
-            pass
+            logger.info("Audio batch processing cancelled")
         except Exception as e:
             logger.error(f"Audio batch processing task failed: {e}")
+        finally:
+            logger.info("Audio batch processing stopped")
 
     def _combine_audio_frames(self, frames: List[AudioFrame]) -> AudioFrame:
         """Combine multiple audio frames into a single frame."""

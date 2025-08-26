@@ -775,6 +775,7 @@ if __name__ == "__main__":
             audio_processor=frame_processor.process_audio_async,
             model_loader=frame_processor.load_model,  # Will use stored load_params
             param_updater=frame_processor.update_params,
+            publisher_timeout=10,
             name="comfystream-processor",
             port=int(args.port),
             host=args.host,
