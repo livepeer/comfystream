@@ -472,8 +472,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--warmup-workflow",
-        default=None,
-        help="Path to a JSON workflow file to warm up at startup (RTC only)",
+        default=os.getenv("WARMUP_WORKFLOW"),
+        help="Path to a JSON workflow file to warm up at startup (RTC only). Can also be set via WARMUP_WORKFLOW env var",
     )
     parser.add_argument(
         "--log-level",
