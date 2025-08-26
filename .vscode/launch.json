@@ -33,8 +33,7 @@
                 "--port=8000",
                 "--log-level=DEBUG",
                 "--comfyui-inference-log-level=DEBUG",
-                // "--warmup-workflow=workflows/comfystream/tensor-utils-example-api.json",
-                "--warmup-workflow=workflows/comfystream/sd15-tensorrt-api.json",
+                "--warmup-workflow=workflows/comfystream/audio-transcription-srt-optimized.json",
                 // "--enable-pytrickle"
             ],            
             "env": {
