@@ -285,10 +285,7 @@ class Pipeline:
         
         # Log only if there are issues
         if processed_audio.size == 0:
-            logger.warning("Audio preprocessing produced empty output")
-        elif np.all(processed_audio == 0):
-            logger.warning("Audio preprocessing resulted in all zeros - check input format")
-            logger.debug(f"Input: shape={audio_data.shape}, dtype={audio_data.dtype}, range=[{np.min(audio_data):.3f}, {np.max(audio_data):.3f}]")
+            logger.warning("Audio preprocessing produced empty output, check input format")
         return processed_audio
     
     def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
