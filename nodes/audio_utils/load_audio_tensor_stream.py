@@ -16,8 +16,9 @@ class LoadAudioTensorStream:
             },
             "optional": {
                 # Accept both names for compatibility with different workflows
-                "frame_ms": ("FLOAT", {"default": 500.0, "min": 10.0, "max": 2000.0}),
-                "timeout_ms": ("FLOAT", {"default": 500.0, "min": 10.0, "max": 2000.0}),
+                # Increased max to 10s to support optimal Whisper transcription (2-10s chunks)
+                "frame_ms": ("FLOAT", {"default": 500.0, "min": 10.0, "max": 10000.0}),
+                "timeout_ms": ("FLOAT", {"default": 500.0, "min": 10.0, "max": 10000.0}),
             },
         }
 

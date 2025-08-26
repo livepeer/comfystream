@@ -2,11 +2,11 @@
   "1": {
     "inputs": {
       "target_sample_rate": 16000,
-      "frame_ms": 250.0
+      "frame_ms": 1000.0
     },
     "class_type": "LoadAudioTensorStream",
     "_meta": {
-      "title": "Streaming Audio Loader (16kHz Optimized)"
+      "title": "Streaming Audio Loader (1s Chunks, 16kHz Optimized)"
     }
   },
   "2": {
@@ -15,8 +15,8 @@
         "1",
         0
       ],
-      "transcription_interval": 3.0,
-      "buffer_duration": 4.0,
+      "transcription_interval": 1.0,
+      "accumulation_duration": 2.0,
       "whisper_model": "small",
       "language": "auto",
       "enable_vad": true,
@@ -24,7 +24,7 @@
     },
     "class_type": "AudioTranscriptionNode",
     "_meta": {
-      "title": "Real-time Transcription (4s Intervals, JSON Segments)"
+      "title": "Real-time Transcription (2s Accumulation, JSON Segments)"
     }
   },
   "3": {
