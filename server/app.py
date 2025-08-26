@@ -583,6 +583,7 @@ if __name__ == "__main__":
             audio_processor=frame_processor.process_audio_async,
             model_loader=frame_processor.load_model,
             param_updater=frame_processor.update_params,
+            on_stream_stop=frame_processor.on_stream_stop,
             name="comfystream-processor",
             port=int(parsed_capability_url.port),
             host=args.host,
