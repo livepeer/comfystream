@@ -257,6 +257,20 @@ async def offer(request):
     @pc.on("datachannel")
     def on_datachannel(channel):
         if channel.label == "control":
+            
+            # Set up text monitoring callback for this channel
+            async def text_callback(text_data: str) -> bool:
+                try:
+                    response = {"type": "text_output", "text": text_data}
+                    channel.send(json.dumps(response))
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to send text data via control channel: {e}")
+                    return False
+            
+            # Set up text monitoring
+            pipeline.set_text_callback(text_callback)
+            pipeline.start_text_monitoring()
 
             @channel.on("message")
             async def on_message(message):
@@ -359,10 +373,12 @@ async def offer(request):
         logger.info(f"Connection state is: {pc.connectionState}")
         if pc.connectionState == "failed":
             logger.error("WebRTC connection failed!")
+            pipeline.stop_text_monitoring()
             await pc.close()
             pcs.discard(pc)
         elif pc.connectionState == "closed":
             logger.info("WebRTC connection closed")
+            pipeline.stop_text_monitoring()
             await pc.close()
             pcs.discard(pc)
         elif pc.connectionState == "connected":

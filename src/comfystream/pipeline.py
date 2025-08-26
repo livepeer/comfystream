@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import asyncio
 import logging
-from typing import Any, Dict, Union, List, Optional
+from typing import Any, Dict, Union, List, Optional, Callable, Awaitable
 
 from comfystream.client import ComfyStreamClient
 from comfystream.utils import detect_prompt_modalities
@@ -52,6 +52,12 @@ class Pipeline:
         
         # Cache modalities to avoid recomputing on every frame
         self._cached_modalities: Optional[Dict[str, Dict[str, bool]]] = None
+        
+        # Text monitoring
+        self._text_callback: Optional[Callable[[str], Awaitable[bool]]] = None
+        self._text_monitor_task: Optional[asyncio.Task] = None
+        self._text_monitor_stop_event = asyncio.Event()
+        self._text_monitoring_active = False
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -437,6 +443,70 @@ class Pipeline:
             self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
         return self._cached_modalities
     
+    def set_text_callback(self, callback: Optional[Callable[[str], Awaitable[bool]]]):
+        """Set a callback function to be called when text output is available.
+        
+        Args:
+            callback: Async function that takes text output and returns success status.
+                     If None, text monitoring will be disabled.
+        """
+        self._text_callback = callback
+        logger.info(f"Text callback {'set' if callback else 'cleared'}")
+    
+    def start_text_monitoring(self):
+        """Start text monitoring if not already active and callback is set."""
+        if not self._text_monitoring_active and self._text_callback:
+            self._text_monitor_stop_event.clear()
+            self._text_monitor_task = asyncio.create_task(self._monitor_text_outputs())
+            self._text_monitoring_active = True
+            logger.info("Started text monitoring")
+    
+    def stop_text_monitoring(self):
+        """Stop text monitoring and cleanup task."""
+        if self._text_monitoring_active:
+            logger.info("Stopping text monitoring")
+            self._text_monitor_stop_event.set()
+            
+            if self._text_monitor_task and not self._text_monitor_task.done():
+                self._text_monitor_task.cancel()
+                logger.info("Cancelled text monitoring task")
+            
+            self._text_monitoring_active = False
+            logger.info("Text monitoring stopped")
+
+    async def _monitor_text_outputs(self):
+        """Monitor text outputs and call the callback when available."""
+        try:
+            while not self._text_monitor_stop_event.is_set():
+                try:
+                    modalities = self.get_prompt_modalities()
+                    if not modalities.get("text", {}).get("output", False):
+                        await asyncio.sleep(1)
+                        continue
+                    
+                    text_data = await self.get_processed_text_output()
+                    if text_data and "__WARMUP_SENTINEL__" not in text_data and self._text_callback:
+                        success = await self._text_callback(text_data)
+                        if not success:
+                            logger.warning("Text callback failed, stopping text monitoring")
+                            break  # Exit the loop if callback fails
+                    else:
+                        await asyncio.sleep(0.1)
+                
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Text monitoring error: {e}")
+                    await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            logger.info("Text monitoring task cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Error in text monitoring task: {e}")
+        finally:
+            self._text_monitoring_active = False
+    
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        self.stop_text_monitoring()
+        await self.client.cleanup()

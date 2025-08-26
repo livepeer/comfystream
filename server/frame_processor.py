@@ -24,30 +24,37 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self.pipeline = None
         self._load_params = load_params
         self._stream_processor = None
-        self._text_monitor_task = None
-        self._stop_event = asyncio.Event()
-        self.background_tasks = []
-        self.background_task_started = False
         super().__init__()
 
     def set_stream_processor(self, stream_processor):
         """Set reference to StreamProcessor for data publishing."""
         self._stream_processor = stream_processor
         logger.info("StreamProcessor reference set for text data publishing")
+        
+        # Set up text monitoring if pipeline is already loaded
+        if self.pipeline:
+            self._setup_text_monitoring()
+    
+    async def _text_callback(self, text_data: str) -> bool:
+        """Callback function for text output from pipeline."""
+        if self._stream_processor:
+            return await self._stream_processor.send_data(text_data)
+        return False
+    
+    def _setup_text_monitoring(self):
+        """Set up text monitoring with the pipeline."""
+        if self.pipeline and self._stream_processor:
+            self.pipeline.set_text_callback(self._text_callback)
+            self.pipeline.start_text_monitoring()
     
     def on_stream_stop(self):
         """Called when stream stops - cleanup background tasks."""
-        logger.info("Stream stopped, cleaning up background tasks")
+        logger.info("Stream stopped, cleaning up text monitoring")
         
-        for task in self.background_tasks:
-            if not task.done():
-                task.cancel()
-                logger.info("Cancelled background task")
+        if self.pipeline:
+            self.pipeline.stop_text_monitoring()
         
-        self.background_tasks.clear()
-        self.background_task_started = False  # Reset flag for next stream
-        self._stop_event.set()  # Signal monitoring tasks to stop
-        logger.info("All background tasks cleaned up")
+        logger.info("Text monitoring cleanup completed")
     
 
     async def load_model(self, **kwargs):
@@ -89,52 +96,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             except Exception as e:
                 logger.error(f"Failed to run default warmup: {e}")
         
-        self._start_text_monitoring()
-    
-    async def _monitor_text_outputs(self):
-        """Monitor text outputs and publish via pytrickle."""
-        try:
-            while not self._stop_event.is_set():
-                try:
-                    if not self.pipeline:
-                        await asyncio.sleep(1)
-                        continue
-                    
-                    modalities = self.pipeline.get_prompt_modalities()
-                    if not modalities.get("text", {}).get("output", False):
-                        await asyncio.sleep(1)
-                        continue
-                    
-                    text_data = await self.pipeline.get_processed_text_output()
-                    if text_data and "__WARMUP_SENTINEL__" not in text_data and self._stream_processor:
-                        success = await self._stream_processor.send_data(text_data)
-                        if not success:
-                            logger.warning("Failed to send text data, stopping text monitoring")
-                            break  # Exit the loop if sending fails
-                    else:
-                        await asyncio.sleep(0.1)
-                            
-                except asyncio.CancelledError:
-                    logger.info("Text monitoring task cancelled")
-                    raise
-                except Exception as e:
-                    logger.error(f"Text monitoring error: {e}")
-                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            logger.info("Text monitoring task cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Error in text monitoring task: {e}")
+        # Set up text monitoring after pipeline is ready
+        self._setup_text_monitoring()
     
 
-    def _start_text_monitoring(self):
-        """Start text monitoring task if not already started."""
-        if not self.background_task_started and self._stream_processor:
-            self._text_monitor_task = asyncio.create_task(self._monitor_text_outputs())
-            self.background_tasks.append(self._text_monitor_task)
-            self.background_task_started = True
-            logger.info("Started text monitoring task")
-    
     async def _run_warmup(self):
         """Run pipeline warmup."""
         try:
@@ -206,7 +171,8 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 logger.info(f"Setting prompts in pipeline: {list(validated['prompts'].keys()) if validated['prompts'] else 'None'}")
                 logger.info(f"Node types after validation: {[node.get('class_type') for node in validated['prompts'].values()] if validated['prompts'] else 'None'}")
                 await self.pipeline.set_prompts(validated["prompts"])
-                self._start_text_monitoring()
+                # Restart text monitoring with new prompts
+                self._setup_text_monitoring()
             
             if "width" in validated:
                 self.pipeline.width = int(validated["width"])
