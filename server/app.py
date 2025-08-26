@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from urllib.parse import urlparse
 
 import torch
 # Initialize CUDA before any other imports to prevent core dump.
@@ -549,7 +550,22 @@ if __name__ == "__main__":
     capability_url = os.getenv("CAPABILITY_URL")
     enable_trickle = capability_url is not None
     
-    if enable_trickle and StreamProcessor is not None:
+    if enable_trickle:
+        try:
+            parsed_capability_url = urlparse(capability_url)
+            
+            if not parsed_capability_url.port:
+                raise ValueError(f"Port not specified in URL: {capability_url}")
+            
+            if not parsed_capability_url.hostname:
+                raise ValueError(f"Hostname not specified in URL: {capability_url}")
+            
+        except Exception as e:
+            logger.error(f"Failed to parse or validate CAPABILITY_URL '{capability_url}': {e}")
+            logger.info("Falling back to WebRTC mode due to invalid CAPABILITY_URL")
+            enable_trickle = False
+    
+    if enable_trickle and StreamProcessor is not None and 'parsed_capability_url' in locals():
         logger.info(f"CAPABILITY_URL detected ({capability_url}), starting pytrickle StreamProcessor mode...")
         frame_processor = ComfyStreamFrameProcessor(
             width=512,
@@ -568,7 +584,7 @@ if __name__ == "__main__":
             model_loader=frame_processor.load_model,
             param_updater=frame_processor.update_params,
             name="comfystream-processor",
-            port=int(args.port),
+            port=int(parsed_capability_url.port),
             host=args.host,
             on_startup=[register_orchestrator]
         )
