@@ -441,7 +441,10 @@ async def on_shutdown(app: web.Application):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run comfystream server")
+    parser = argparse.ArgumentParser(
+        description="Run comfystream server. Mode is automatically detected: "
+                   "pytrickle mode if CAPABILITY_URL env var is set, WebRTC mode otherwise."
+    )
     parser.add_argument("--port", default=8889, help="Set the signaling port")
     parser.add_argument(
         "--media-ports", default=None, help="Set the UDP ports for WebRTC media"
@@ -485,11 +488,7 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
-    parser.add_argument(
-        "--enable-trickle",
-        action="store_true",
-        help="Enable pytrickle streaming mode (default: WebRTC mode)",
-    )
+
     parser.add_argument(
         "--orch-url",
         default=None,
@@ -546,9 +545,12 @@ if __name__ == "__main__":
 
 
 
-    # Choose between pytrickle and WebRTC based on flag
-    if args.enable_trickle and StreamProcessor is not None:
-        logger.info("Starting pytrickle StreamProcessor mode...")
+    # Choose between pytrickle and WebRTC based on CAPABILITY_URL environment variable
+    capability_url = os.getenv("CAPABILITY_URL")
+    enable_trickle = capability_url is not None
+    
+    if enable_trickle and StreamProcessor is not None:
+        logger.info(f"CAPABILITY_URL detected ({capability_url}), starting pytrickle StreamProcessor mode...")
         frame_processor = ComfyStreamFrameProcessor(
             width=512,
             height=512,
@@ -576,10 +578,12 @@ if __name__ == "__main__":
         
     else:
         # Use WebRTC server (default mode)
-        if args.enable_trickle and StreamProcessor is None:
-            logger.warning("Pytrickle requested but not available, falling back to WebRTC mode")
+        if enable_trickle and StreamProcessor is None:
+            logger.warning("CAPABILITY_URL detected but pytrickle not available, falling back to WebRTC mode")
+        elif enable_trickle:
+            logger.info("CAPABILITY_URL detected but pytrickle not imported, using WebRTC mode")
         else:
-            logger.info("Starting WebRTC server mode...")
+            logger.info("No CAPABILITY_URL detected, starting WebRTC server mode...")
         app = web.Application()
         app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
         app["workspace"] = args.workspace
