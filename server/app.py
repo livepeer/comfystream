@@ -224,13 +224,13 @@ async def offer(request):
             
             if "prompts" in validated_params:
                 await pipeline.set_prompts([validated_params["prompts"]])
-                logger.info("✅ WebRTC prompts validated and set successfully")
+                logger.info("WebRTC prompts validated and set successfully")
             else:
-                logger.warning("⚠️ No valid prompts provided in WebRTC offer")
+                logger.warning("No valid prompts provided in WebRTC offer")
         else:
-            logger.warning("⚠️ No prompts provided in WebRTC offer")
+            logger.warning("No prompts provided in WebRTC offer")
     except Exception as e:
-        logger.error(f"❌ WebRTC prompt validation failed: {e}")
+        logger.error(f"WebRTC prompt validation failed: {e}")
         # Continue without prompts rather than failing the entire connection
 
     offer_params = params["offer"]
@@ -290,11 +290,11 @@ async def offer(request):
                             
                             if "prompts" in validated_params:
                                 await pipeline.update_prompts([validated_params["prompts"]])
-                                logger.info("✅ Control channel prompts validated and updated successfully")
+                                logger.debug("Control channel prompts validated and updated successfully")
                             else:
-                                logger.warning("⚠️ No valid prompts in control channel message")
+                                logger.warning("No valid prompts in control channel message")
                         except Exception as e:
-                            logger.error(f"❌ Control channel prompt validation failed: {str(e)}")
+                            logger.error(f"Control channel prompt validation failed: {str(e)}")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
@@ -404,13 +404,13 @@ async def set_prompt(request):
         
         if "prompts" in validated_params:
             await pipeline.set_prompts([validated_params["prompts"]])
-            logger.info("✅ HTTP prompts validated and set successfully")
+            logger.info("HTTP prompts validated and set successfully")
             return web.Response(content_type="application/json", text="OK")
         else:
-            logger.warning("⚠️ No valid prompts provided in HTTP request")
+            logger.warning("No valid prompts provided in HTTP request")
             return web.Response(content_type="application/json", text="No valid prompts", status=400)
     except Exception as e:
-        logger.error(f"❌ HTTP prompt validation failed: {e}")
+        logger.error(f"HTTP prompt validation failed: {e}")
         return web.Response(content_type="application/json", text="Validation failed: Invalid input.", status=400)
 
 def health(_):
@@ -559,25 +559,24 @@ async def handle_get_modalities(request):
             "message": f"Failed to get modalities: {str(e)}"
         }, status=500)
 
-# Note: setup_pytrickle_routes removed - StreamProcessor handles routing automatically
 
+# startup hook for WebRTC pipeline
 async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
-    # Note: Pipeline initialization is now handled in StreamProcessor mode
-    # This fallback only handles WebRTC-specific setup
     
     app["pcs"] = set()
     app["video_tracks"] = {}
 
     return web.Response(content_type="application/json", text="OK")
 
+# TODO: re-test with pipeline and consolidate if possible
 async def warm_pipeline(app: web.Application, prompt: dict):
-    # This function is only used in fallback aiohttp mode
+    # This function is only used in WebRTC mode
     # In StreamProcessor mode, warmup is handled separately
     if "pipeline" not in app:
-        logger.warning("No pipeline available for warmup in fallback mode")
+        logger.warning("No pipeline available for warmup in WebRTC mode")
         return
         
     await app["pipeline"].set_prompts([prompt])
@@ -589,7 +588,6 @@ async def warm_pipeline(app: web.Application, prompt: dict):
     if modalities.get("audio", {}).get("input") or modalities.get("audio", {}).get("output"):
         logger.info("Running startup audio warmup")
         await app["pipeline"].warm_audio()
-
 
 async def warmup_on_startup(app: web.Application):
     warmup_path = app.get("warmup_workflow")
@@ -670,9 +668,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--enable-pytrickle",
-        default=True,  # Enable by default now
+        default=True,
         action="store_true",
-        help="Enable pytrickle streaming endpoints (requires pytrickle to be installed)",
+        help="Enable pytrickle streaming endpoints (Livepeer BYOC)",
     )
     parser.add_argument(
         "--orch-url",
@@ -717,7 +715,7 @@ if __name__ == "__main__":
                 orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
                 
                 if orch_url and orch_secret:
-                    logger.info("🔗 Registering ComfyStream capability with orchestrator...")
+                    logger.info("Registering ComfyStream capability with orchestrator...")
                     
                     # Set up capability environment if not already set
                     capability_name = args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor"
@@ -736,16 +734,18 @@ if __name__ == "__main__":
                     
                     result = await RegisterCapability.register(logger=logger)
                     if result:
-                        logger.info(f"✅ Successfully registered capability: {result.geturl()}")
+                        logger.info(f"Successfully registered capability: {result.geturl()}")
                     else:
-                        logger.warning("❌ Failed to register capability with orchestrator")
+                        logger.warning("Failed to register capability with orchestrator")
                 else:
-                    logger.info("ℹ️  No orchestrator configuration found, skipping capability registration")
+                    logger.info("No orchestrator configuration found, skipping capability registration")
                     
             except Exception as e:
-                logger.error(f"❌ Error during capability registration: {e}")
+                logger.error(f"Error during capability registration: {e}")
                 
         return orchestrator_handler
+
+
 
     logger.info("Starting ComfyStream server with pytrickle StreamProcessor...")
     logger.info("Available protocols:")
@@ -778,13 +778,19 @@ if __name__ == "__main__":
             name="comfystream-processor",
             port=int(args.port),
             host=args.host,
-            
-            # Only orchestrator registration needed
-            on_startup=[create_orchestrator_registration_handler()],
+            enable_frame_skipping=False,
+            # Include both orchestrator registration and warmup handler
+            on_startup=[
+                create_orchestrator_registration_handler()
+            ],
         )
         
+        # Set StreamProcessor reference for text data publishing
+        frame_processor.set_stream_processor(processor)
+        
         # Run the processor
-        logger.info(f"🚀 Starting ComfyStream BYOC Processor on {args.host}:{args.port}")
+        logger.info(f"Starting ComfyStream BYOC Processor on {args.host}:{args.port}")
+        logger.info("Text data publishing enabled - SaveTextTensor outputs will be published via data channel")
         processor.run()
         
     except ImportError as e:
@@ -817,8 +823,7 @@ if __name__ == "__main__":
         
         # Setup HTTP streaming routes
         setup_routes(app, cors)
-        # setup_pytrickle_routes(app, cors)
-        
+
         # Serve static files
         app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
         

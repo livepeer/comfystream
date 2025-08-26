@@ -2,7 +2,7 @@
   "1": {
     "inputs": {
       "target_sample_rate": 16000,
-      "timeout_ms": 50
+      "frame_ms": 250.0
     },
     "class_type": "LoadAudioTensorStream",
     "_meta": {
@@ -15,9 +15,9 @@
         "1",
         0
       ],
-      "transcription_interval": 4.0,
+      "transcription_interval": 3.0,
       "buffer_duration": 4.0,
-      "whisper_model": "tiny",
+      "whisper_model": "small",
       "language": "auto",
       "enable_vad": true,
       "output_format": "json_segments"

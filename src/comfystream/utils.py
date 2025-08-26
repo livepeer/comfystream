@@ -17,6 +17,7 @@ def analyze_prompt_io(prompt: Union[PromptDictInput, Prompt]) -> Dict[str, List[
     Classification rules:
       - If a node's class lives under audio_utils => audio node
       - If a node's class lives under tensor_utils => video node
+      - If a node's class lives under text_utils => text node
       - Nodes with OUTPUT_NODE=True => output nodes, others => input nodes
 
     Args:
@@ -24,7 +25,7 @@ def analyze_prompt_io(prompt: Union[PromptDictInput, Prompt]) -> Dict[str, List[
 
     Returns:
         Dict with keys "audio_inputs", "audio_outputs", "video_inputs", "video_outputs",
-        each a list of (node_id, class_type) tuples.
+        "text_inputs", "text_outputs", each a list of (node_id, class_type) tuples.
     """
     class_info = {} #_load_node_class_info()
 
@@ -32,6 +33,8 @@ def analyze_prompt_io(prompt: Union[PromptDictInput, Prompt]) -> Dict[str, List[
     audio_outputs: List[Tuple[str, str]] = []
     video_inputs: List[Tuple[str, str]] = []
     video_outputs: List[Tuple[str, str]] = []
+    text_inputs: List[Tuple[str, str]] = []
+    text_outputs: List[Tuple[str, str]] = []
 
     # Iterate without deepcopy to support Comfy Prompt model instances
     if hasattr(prompt, 'items'):
@@ -58,12 +61,15 @@ def analyze_prompt_io(prompt: Union[PromptDictInput, Prompt]) -> Dict[str, List[
         elif class_type in ["LoadAudioTensor", "LoadAudioTensorStream"]:
             audio_inputs.append((node_id, class_type))
             continue
-        elif class_type in ["SaveAudioTensor", "SaveTextTensor"]:
+        elif class_type in ["SaveAudioTensor"]:
             audio_outputs.append((node_id, class_type))
+            continue
+        elif class_type in ["SaveTextTensor"]:
+            text_outputs.append((node_id, class_type))
             continue
 
         # Then check node class metadata for custom nodes
-        if not info or info.get("domain") not in {"audio", "video"}:
+        if not info or info.get("domain") not in {"audio", "video", "text"}:
             continue
 
         is_output = bool(info.get("is_output", False))
@@ -79,12 +85,19 @@ def analyze_prompt_io(prompt: Union[PromptDictInput, Prompt]) -> Dict[str, List[
                 video_outputs.append((node_id, class_type))
             else:
                 video_inputs.append((node_id, class_type))
+        elif domain == "text":
+            if is_output:
+                text_outputs.append((node_id, class_type))
+            else:
+                text_inputs.append((node_id, class_type))
 
     return {
         "audio_inputs": audio_inputs,
         "audio_outputs": audio_outputs,
         "video_inputs": video_inputs,
         "video_outputs": video_outputs,
+        "text_inputs": text_inputs,
+        "text_outputs": text_outputs,
     }
 
 
@@ -97,11 +110,13 @@ def detect_prompt_modalities(prompts: List[Union[PromptDictInput, Prompt]]) -> D
         {
             "audio": {"input": True, "output": True},
             "video": {"input": True, "output": False},
+            "text": {"input": False, "output": True},
         }
     """
     modalities = {
         "audio": {"input": False, "output": False},
         "video": {"input": False, "output": False},
+        "text": {"input": False, "output": False},
     }
 
     for prompt in prompts:
@@ -114,6 +129,10 @@ def detect_prompt_modalities(prompts: List[Union[PromptDictInput, Prompt]]) -> D
             modalities["video"]["input"] = True
         if io["video_outputs"]:
             modalities["video"]["output"] = True
+        if io["text_inputs"]:
+            modalities["text"]["input"] = True
+        if io["text_outputs"]:
+            modalities["text"]["output"] = True
 
     return modalities
 
@@ -323,7 +342,7 @@ class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest if StreamParamsUp
         if "prompts" in data:
             prompts = data["prompts"]
             
-            # Parse JSON string if needed
+            # Parse JSON string or list of JSON strings if needed
             if isinstance(prompts, str):
                 if not prompts or prompts.strip() == "":
                     logger.info("Removing empty prompts string")
@@ -340,6 +359,31 @@ class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest if StreamParamsUp
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse prompts JSON string: {e}")
                         data.pop("prompts")
+            elif isinstance(prompts, list):
+                # Handle list of JSON strings - use the first valid one
+                logger.info(f"Processing list of {len(prompts)} prompt entries")
+                parsed_prompt = None
+                for i, prompt_item in enumerate(prompts):
+                    if isinstance(prompt_item, str) and prompt_item.strip():
+                        try:
+                            parsed_item = json.loads(prompt_item)
+                            if isinstance(parsed_item, dict):
+                                parsed_prompt = parsed_item
+                                logger.info(f"✅ Using prompt entry {i}: {len(parsed_item)} nodes")
+                                break
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse prompt entry {i}: {e}")
+                            continue
+                    elif isinstance(prompt_item, dict):
+                        parsed_prompt = prompt_item
+                        logger.info(f"✅ Using dict prompt entry {i}: {len(prompt_item)} nodes")
+                        break
+                
+                if parsed_prompt:
+                    data["prompts"] = parsed_prompt
+                else:
+                    logger.warning("No valid prompts found in list, removing prompts field")
+                    data.pop("prompts")
             
             # Validate prompts with ComfyStream if we have them
             if "prompts" in data:
