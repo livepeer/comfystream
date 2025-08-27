@@ -9,7 +9,7 @@ version = "0.1.4"
 license = { file = "LICENSE" }
 dependencies = [
     "asyncio",
-    "pytrickle @ git+https://github.com/livepeer/pytrickle.git@21220ccb570943f3ccf26f81e7c6a32d27b0ef17",
+    "pytrickle @ git+https://github.com/livepeer/pytrickle.git@bf5bdd2d5b7f239f479d8b5da4c7b0de4503bcf0",
     "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8",
     "aiortc",
     "aiohttp",

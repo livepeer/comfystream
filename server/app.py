@@ -601,12 +601,19 @@ if __name__ == "__main__":
             param_updater=frame_processor.update_params,
             on_stream_stop=frame_processor.on_stream_stop,
             name="comfystream-processor",
-            port=int(parsed_capability_url.port),
-            host=args.host,
-            on_startup=[register_orchestrator]
+            port=int(args.port),
+            host=args.host
         )
-        
+
         frame_processor.set_stream_processor(processor)
+        
+        # Create async startup function to load model
+        async def load_model_on_startup(app):
+            await processor._frame_processor.load_model()
+        
+        # Add model loading and registration to startup hooks
+        processor.server.app.on_startup.append(load_model_on_startup)
+        processor.server.app.on_startup.append(register_orchestrator)
         processor.run()
         
     else:

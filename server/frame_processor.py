@@ -47,7 +47,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             self.pipeline.set_text_callback(self._text_callback)
             self.pipeline.start_text_monitoring()
     
-    def on_stream_stop(self):
+    async def on_stream_stop(self):
         """Called when stream stops - cleanup background tasks."""
         logger.info("Stream stopped, cleaning up text monitoring")
         
@@ -86,15 +86,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             except Exception as e:
                 logger.error(f"Failed to load workflow: {e}")
         else:
-            # Use default workflow and run warmup
+            # Use default workflow to get ComfyUI started, but don't run warmup
             try:
                 default_workflow = get_default_workflow()
                 await self.update_params({"prompts": default_workflow})
-                logger.info("Running warmup with default workflow...")
-                await self._run_warmup()
-                logger.info("Default warmup completed successfully")
+                logger.info("Set default workflow to start ComfyUI (no warmup frames)")
             except Exception as e:
-                logger.error(f"Failed to run default warmup: {e}")
+                logger.error(f"Failed to set default workflow: {e}")
         
         # Set up text monitoring after pipeline is ready
         self._setup_text_monitoring()
