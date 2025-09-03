@@ -506,7 +506,6 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
-
     parser.add_argument(
         "--orch-url",
         default=None,
@@ -522,8 +521,6 @@ if __name__ == "__main__":
         default=None,
         help="Name for this capability (default: comfystream-processor)",
     )
-    
-    # Frame skipping arguments
     parser.add_argument(
         "--frame-skip-enabled",
         default=True,
@@ -606,16 +603,8 @@ if __name__ == "__main__":
         # Create frame skip configuration only if enabled
         frame_skip_config = None
         if args.frame_skip_enabled:
-            frame_skip_config = FrameSkipConfig(
-                target_fps=args.frame_skip_target_fps,
-                max_queue_size=args.frame_skip_max_queue_size,
-                max_cleanup_frames=args.frame_skip_max_cleanup_frames,
-                adaptation_cooldown=args.frame_skip_adaptation_cooldown
-            )
-            logger.info(f"Frame skipping enabled: target_fps={args.frame_skip_target_fps}, "
-                       f"max_queue_size={args.frame_skip_max_queue_size}, "
-                       f"max_cleanup_frames={args.frame_skip_max_cleanup_frames}, "
-                       f"adaptation_cooldown={args.frame_skip_adaptation_cooldown}")
+            frame_skip_config = FrameSkipConfig()
+            logger.info("Frame skipping enabled: adaptive skipping based on queue sizes")
         else:
             logger.info("Frame skipping disabled")
         
