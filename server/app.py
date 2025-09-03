@@ -28,6 +28,7 @@ from twilio.rest import Client
 from pytrickle.stream_processor import StreamProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
 from pytrickle.utils.register import RegisterCapability
+from pytrickle.frame_skipper import FrameSkipConfig
 from comfystream.pipeline import Pipeline
 from comfystream.utils import load_prompt_from_file, convert_prompt, ComfyStreamParamsUpdateRequest
 from comfystream import tensor_cache
@@ -602,7 +603,8 @@ if __name__ == "__main__":
             on_stream_stop=frame_processor.on_stream_stop,
             name="comfystream-processor",
             port=int(args.port),
-            host=args.host
+            host=args.host,
+            frame_skip_config=FrameSkipConfig()
         )
 
         frame_processor.set_stream_processor(processor)
