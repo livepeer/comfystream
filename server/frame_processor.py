@@ -141,13 +141,28 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             return frame
 
     async def process_audio_async(self, frame: AudioFrame) -> List[AudioFrame]:
-        """Process audio frame through ComfyStream Pipeline."""
+        """Process audio frame through ComfyStream Pipeline or passthrough."""
         try:
+            if not self.pipeline:
+                return [frame]
+                
+            # Check if audio processing is actually needed
+            modalities = self.pipeline.get_prompt_modalities()
+            has_audio_input = modalities.get("audio", {}).get("input", False)
+            has_audio_output = modalities.get("audio", {}).get("output", False)
+            
+            if not has_audio_input and not has_audio_output:
+                # Video-only workflow - immediate passthrough (no pipeline interaction)
+                logger.debug("Audio passthrough - video-only workflow")
+                return [frame]
+            
+            # Audio processing needed - use pipeline
             av_frame = frame.to_av_frame()
             await self.pipeline.put_audio_frame(av_frame)
             processed_av_frame = await self.pipeline.get_processed_audio_frame()
             processed_frame = AudioFrame.from_av_audio(processed_av_frame)
             return [processed_frame]
+        
         except Exception as e:
             logger.error(f"Audio processing failed: {e}")
             return [frame]

@@ -522,6 +522,14 @@ if __name__ == "__main__":
         default=None,
         help="Name for this capability (default: comfystream-processor)",
     )
+    
+    # Frame skipping arguments
+    parser.add_argument(
+        "--frame-skip-enabled",
+        default=True,
+        action="store_true",
+        help="Enable adaptive frame skipping based on queue sizes",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -595,6 +603,22 @@ if __name__ == "__main__":
             warmup_workflow=args.warmup_workflow
         )
         
+        # Create frame skip configuration only if enabled
+        frame_skip_config = None
+        if args.frame_skip_enabled:
+            frame_skip_config = FrameSkipConfig(
+                target_fps=args.frame_skip_target_fps,
+                max_queue_size=args.frame_skip_max_queue_size,
+                max_cleanup_frames=args.frame_skip_max_cleanup_frames,
+                adaptation_cooldown=args.frame_skip_adaptation_cooldown
+            )
+            logger.info(f"Frame skipping enabled: target_fps={args.frame_skip_target_fps}, "
+                       f"max_queue_size={args.frame_skip_max_queue_size}, "
+                       f"max_cleanup_frames={args.frame_skip_max_cleanup_frames}, "
+                       f"adaptation_cooldown={args.frame_skip_adaptation_cooldown}")
+        else:
+            logger.info("Frame skipping disabled")
+        
         processor = StreamProcessor(
             video_processor=frame_processor.process_video_async,
             audio_processor=frame_processor.process_audio_async,
@@ -604,7 +628,7 @@ if __name__ == "__main__":
             name="comfystream-processor",
             port=int(args.port),
             host=args.host,
-            frame_skip_config=FrameSkipConfig()
+            frame_skip_config=frame_skip_config
         )
 
         frame_processor.set_stream_processor(processor)
