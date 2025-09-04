@@ -1,5 +1,5 @@
 asyncio
-pytrickle @ git+https://github.com/livepeer/pytrickle.git@11ba311b7addcccb14d69f73dc88b498bef2745b
+pytrickle @ git+https://github.com/livepeer/pytrickle.git@5e4e011cfb5f10edbee20ddc27ada611455bfff3
 comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ce3583ad42c024b8f060d0002cbe20c265da6dc8
 aiortc
 aiohttp
