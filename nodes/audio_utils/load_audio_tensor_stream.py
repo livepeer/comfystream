@@ -77,7 +77,7 @@ class LoadAudioTensorStream:
             chunks.append(resampled)
             total += resampled.shape[0]
 
-        merged = np.concatenate(chunks, dtype=np.int16) if len(chunks) > 1 else chunks[0]
+        merged = (np.concatenate(chunks).astype(np.int16)) if len(chunks) > 1 else chunks[0]
         out = merged[:buffer_samples]
         self.leftover = merged[buffer_samples:]
 
