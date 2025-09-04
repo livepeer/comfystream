@@ -48,8 +48,7 @@
       "text": [
         "3",
         0
-      ],
-      "debug_info": true
+      ]
     },
     "class_type": "SaveTextTensor",
     "_meta": {
