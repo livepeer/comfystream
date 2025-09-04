@@ -115,8 +115,11 @@ class VideoStreamTrack(MediaStreamTrack):
         processed_frame = await self.pipeline.get_processed_video_frame()
 
         # Update the frame buffer with the processed frame
-        frame_buffer = FrameBuffer.get_instance()
-        frame_buffer.update_frame(processed_frame)
+        try:
+            frame_buffer = FrameBuffer.get_instance()
+            frame_buffer.update_frame(processed_frame)
+        except Exception as e:
+            logger.warning(f"Error updating frame buffer: {e}")
 
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
