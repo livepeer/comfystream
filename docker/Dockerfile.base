@@ -67,6 +67,9 @@ RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pi
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 
+# Install ComfyUI requirements
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
+
 # Install ComfyStream requirements
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --root-user-action=ignore
