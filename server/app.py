@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import sys
-from urllib.parse import urlparse
 
 import torch
 # Initialize CUDA before any other imports to prevent core dump.
@@ -463,8 +462,8 @@ async def on_shutdown(app: web.Application):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run comfystream server. Mode is automatically detected: "
-                   "pytrickle mode if CAPABILITY_URL env var is set, WebRTC mode otherwise."
+        description="Run comfystream server. Use --enable-trickle for pytrickle mode, "
+                   "otherwise runs in WebRTC mode."
     )
     parser.add_argument("--port", default=8889, help="Set the signaling port")
     parser.add_argument(
@@ -530,6 +529,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable adaptive frame skipping based on queue sizes",
     )
+    parser.add_argument(
+        "--enable-trickle",
+        default=False,
+        action="store_true",
+        help="Enable pytrickle mode instead of WebRTC mode",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -569,29 +574,11 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Orchestrator registration failed: {e}")
 
-
-
-    # Choose between pytrickle and WebRTC based on CAPABILITY_URL environment variable
-    capability_url = os.getenv("CAPABILITY_URL")
-    enable_trickle = capability_url is not None
+    # Choose between pytrickle and WebRTC based on --enable-trickle flag
+    enable_trickle = args.enable_trickle
     
-    if enable_trickle:
-        try:
-            parsed_capability_url = urlparse(capability_url)
-            
-            if not parsed_capability_url.port:
-                raise ValueError(f"Port not specified in URL: {capability_url}")
-            
-            if not parsed_capability_url.hostname:
-                raise ValueError(f"Hostname not specified in URL: {capability_url}")
-            
-        except Exception as e:
-            logger.error(f"Failed to parse or validate CAPABILITY_URL '{capability_url}': {e}")
-            logger.info("Falling back to WebRTC mode due to invalid CAPABILITY_URL")
-            enable_trickle = False
-    
-    if enable_trickle and StreamProcessor is not None and 'parsed_capability_url' in locals():
-        logger.info(f"CAPABILITY_URL detected ({capability_url}), starting pytrickle StreamProcessor mode...")
+    if enable_trickle and StreamProcessor is not None:
+        logger.info("--enable-trickle flag detected, starting pytrickle StreamProcessor...")
         frame_processor = ComfyStreamFrameProcessor(
             width=512,
             height=512,
@@ -636,12 +623,7 @@ if __name__ == "__main__":
         
     else:
         # Use WebRTC server (default mode)
-        if enable_trickle and StreamProcessor is None:
-            logger.warning("CAPABILITY_URL detected but pytrickle not available, falling back to WebRTC mode")
-        elif enable_trickle:
-            logger.info("CAPABILITY_URL detected but pytrickle not imported, using WebRTC mode")
-        else:
-            logger.info("No CAPABILITY_URL detected, starting WebRTC server mode...")
+        logger.info("Starting WebRTC server...")
         app = web.Application()
         app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
         app["workspace"] = args.workspace
