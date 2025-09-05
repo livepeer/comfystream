@@ -89,12 +89,13 @@ if __name__ == "__main__":
                 break
             current = os.path.dirname(current)
 
+    logger.info("Installing comfystream package...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
+
     if workspace is None:
         logger.warning("No ComfyUI workspace found. Please specify a valid workspace path to fully install")
     
     if workspace is not None:
-        logger.info("Installing comfystream package...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
         logger.info("Patching ComfyUI workspace...")
         auto_patch_workspace_and_restart(workspace)
     
