@@ -93,7 +93,9 @@ if __name__ == "__main__":
         logger.warning("No ComfyUI workspace found. Please specify a valid workspace path to fully install")
     
     if workspace is not None:
-        logger.info("Patching ComfyUI workspace...")        
+        logger.info("Installing comfystream package...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
+        logger.info("Patching ComfyUI workspace...")
         auto_patch_workspace_and_restart(workspace)
     
     logger.info("Downloading and extracting UI files...")
