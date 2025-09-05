@@ -9,6 +9,7 @@ import tempfile
 import urllib.request
 import toml
 import zipfile
+from comfy_compatibility.workspace import auto_patch_workspace_and_restart
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -92,8 +93,8 @@ if __name__ == "__main__":
         logger.warning("No ComfyUI workspace found. Please specify a valid workspace path to fully install")
     
     if workspace is not None:
-        logger.info("Installing custom node requirements...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
+        logger.info("Patching ComfyUI workspace...")        
+        auto_patch_workspace_and_restart(workspace)
     
     logger.info("Downloading and extracting UI files...")
     version = get_project_version(os.getcwd())
