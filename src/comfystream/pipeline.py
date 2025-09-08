@@ -33,14 +33,14 @@ class Pipeline:
             height: Height of the video frames (default: 512)
             comfyui_inference_log_level: The logging level for ComfyUI inference.
                 Defaults to None, using the global ComfyUI log level.
-            video_processing_timeout: Timeout in seconds for video processing operations (default: 5.0)
+            video_processing_timeout: Timeout in seconds for pipeline warmup operations (default: 20.0)
             **kwargs: Additional arguments to pass to the ComfyStreamClient
         """
         self.client = ComfyStreamClient(**kwargs)
         self.width = width
         self.height = height
         
-        # Cold warm-up timeout
+        # Pipeline warmup timeout
         self.video_processing_timeout = video_processing_timeout
 
         self.video_incoming_frames = asyncio.Queue()
@@ -340,12 +340,11 @@ class Pipeline:
 
         try:
             logger.debug(f"Processing video frame through ComfyUI pipeline") 
-            async with asyncio.timeout(self.video_processing_timeout):
-                async with temporary_log_level("comfy", self._comfyui_inference_log_level):
-                    out_tensor = await self.client.get_video_output()
-                    if out_tensor is None:
-                        logger.debug("No video output tensor, returning original frame")
-                        return frame
+            async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+                out_tensor = await self.client.get_video_output()
+                if out_tensor is None:
+                    logger.debug("No video output tensor, returning original frame")
+                    return frame
             logger.debug(f"Got video output tensor: {type(out_tensor)}")
 
             processed_frame = self.video_postprocess(out_tensor)
@@ -353,9 +352,6 @@ class Pipeline:
             processed_frame.time_base = frame.time_base
             
             return processed_frame
-        except asyncio.TimeoutError:
-            logger.warning("Video processing timeout, falling back to passthrough")
-            return frame
         except Exception as e:
             logger.error(f"Video processing failed, falling back to passthrough: {e}")
             # Fallback to passthrough if video processing fails
