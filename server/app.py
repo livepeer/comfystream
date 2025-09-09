@@ -501,7 +501,7 @@ async def warmup_pipeline(request):
         return web.Response(
             content_type="application/json", 
             status=500,
-            text=json.dumps({"error": f"Pipeline warmup failed: {str(e)}"})
+            text=json.dumps({"error": f"Pipeline warmup failed"})
         )
     
 
