@@ -5,11 +5,7 @@ import logging
 import threading
 from pathlib import Path
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='[ComfyStream Settings] %(message)s'
-)
+# Logging will be configured by the main application
 
 # Default settings
 DEFAULT_SETTINGS = {

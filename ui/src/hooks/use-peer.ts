@@ -36,6 +36,7 @@ export function usePeer(props: PeerProps): Peer {
             endpoint: url,
             prompts: prompts,
             offer,
+            resolution: props.resolution,
           }),
         });
 

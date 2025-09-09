@@ -220,6 +220,13 @@ async def offer(request):
     params = await request.json()
 
     await pipeline.set_prompts(params["prompts"])
+    
+    # Set resolution if provided in the offer
+    resolution = params.get("resolution")
+    if resolution:
+        pipeline.width = resolution["width"]
+        pipeline.height = resolution["height"]
+        logger.info(f"[Offer] Set pipeline resolution to {resolution['width']}x{resolution['height']}")
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
@@ -289,9 +296,8 @@ async def offer(request):
                         # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Warm the video pipeline with the new resolution
-                        if "m=video" in pc.remoteDescription.sdp:
-                            await pipeline.warm_video()
+                        # Note: Video warmup now happens during offer, not here
+                        logger.info("[Control] Resolution updated - warmup was already performed during offer")
                             
                         response = {
                             "type": "resolution_updated",
@@ -310,14 +316,30 @@ async def offer(request):
         elif channel.label == "data":
             async def forward_text():
                 try:
-                    while True:
-                        text = await pipeline.get_text_output()
-                        # Send as JSON string for extensibility.
-                        channel.send(json.dumps({"type": "text", "data": text}))
+                    while channel.readyState == "open":
+                        try:
+                            # Use timeout to prevent indefinite blocking
+                            text = await asyncio.wait_for(
+                                pipeline.get_text_output(), 
+                                timeout=1.0  # Check every second if channel is still open
+                            )
+                            if channel.readyState == "open":
+                                # Send as JSON string for extensibility
+                                channel.send(json.dumps({"type": "text", "data": text}))
+                        except asyncio.TimeoutError:
+                            # No text available, continue checking
+                            continue
+                        except asyncio.CancelledError:
+                            logger.info("[TextChannel] Forward text task cancelled")
+                            break
                 except Exception as e:
                     logger.error(f"[TextChannel] Error forwarding text: {e}")
 
-            asyncio.create_task(forward_text())
+            # Store task reference for cleanup in request context
+            forward_task = asyncio.create_task(forward_text())
+            if "data_channel_tasks" not in request.app:
+                request.app["data_channel_tasks"] = set()
+            request.app["data_channel_tasks"].add(forward_task)
     
 
     @pc.on("track")
@@ -350,17 +372,32 @@ async def offer(request):
         if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
+            # Cancel any running data channel tasks
+            if "data_channel_tasks" in request.app:
+                for task in request.app["data_channel_tasks"]:
+                    if not task.done():
+                        task.cancel()
+                request.app["data_channel_tasks"].clear()
         elif pc.connectionState == "closed":
             await pc.close()
             pcs.discard(pc)
+            # Cancel any running data channel tasks
+            if "data_channel_tasks" in request.app:
+                for task in request.app["data_channel_tasks"]:
+                    if not task.done():
+                        task.cancel()
+                request.app["data_channel_tasks"].clear()
 
     await pc.setRemoteDescription(offer)
 
-    # Only warm audio here, video warming happens after resolution update
-    if "m=audio" in pc.remoteDescription.sdp:
+    # Warm up the pipeline based on detected modalities and SDP content
+    if "m=video" in pc.remoteDescription.sdp and pipeline.requires_video():
+        logger.info("[Offer] Warming up video pipeline")
+        await pipeline.warm_video()
+        
+    if "m=audio" in pc.remoteDescription.sdp and pipeline.requires_audio():
+        logger.info("[Offer] Warming up audio pipeline")
         await pipeline.warm_audio()
-    
-    # We no longer warm video here - it will be warmed after receiving resolution
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -388,6 +425,84 @@ async def set_prompt(request):
     await pipeline.set_prompts(prompt)
 
     return web.Response(content_type="application/json", text="OK")
+
+async def warmup_pipeline(request):
+    """HTTP endpoint to warmup the pipeline with a specific workflow.
+    
+    This endpoint:
+    1. Cancels all running prompts
+    2. Clears all queues and performs cleanup
+    3. Sets the new prompt and warms up the pipeline
+    4. Only warms the modalities detected in the workflow
+    """
+    pipeline = request.app["pipeline"]
+    
+    try:
+        # Parse the request body
+        data = await request.json()
+        prompts = data.get("prompts")
+        
+        if not prompts:
+            return web.Response(
+                content_type="application/json",
+                status=400,
+                text=json.dumps({"error": "Missing 'prompts' field in request body"})
+            )
+        
+        logger.info("Starting pipeline warmup with new workflow")
+        
+        # Step 1: Cancel running prompts and cleanup - ensure complete cleanup
+        await pipeline.cleanup()
+        logger.info("Pipeline cleanup completed")
+        
+        # Step 2: Set new prompts (this will also detect modalities)
+        # The cleanup() method ensures all previous prompts are cancelled before proceeding
+        await pipeline.set_prompts(prompts)
+        logger.info("New prompts set successfully")
+        
+        # Step 3: Detect modalities and warm up accordingly
+        modalities = pipeline.get_modalities()
+        logger.info(f"Detected modalities: {modalities}")
+        
+        warmup_results = {}
+        
+        # Warm up video if video modality is detected
+        if "video" in modalities:
+            logger.info("Warming up video pipeline")
+            await pipeline.warm_video()
+            warmup_results["video"] = "warmed"
+            logger.info("Video pipeline warmup completed")
+        else:
+            warmup_results["video"] = "skipped"
+            
+        # Warm up audio if audio modality is detected  
+        if "audio" in modalities:
+            logger.info("Warming up audio pipeline")
+            await pipeline.warm_audio()
+            warmup_results["audio"] = "warmed"
+            logger.info("Audio pipeline warmup completed")
+        else:
+            warmup_results["audio"] = "skipped"
+            
+        logger.info("Pipeline warmup completed successfully")
+        
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({
+                "success": True,
+                "message": "Pipeline warmed up successfully",
+                "modalities": list(modalities),
+                "warmup_results": warmup_results
+            })
+        )
+        
+    except Exception as e:
+        logger.error(f"Error during pipeline warmup: {str(e)}")
+        return web.Response(
+            content_type="application/json", 
+            status=500,
+            text=json.dumps({"error": f"Pipeline warmup failed: {str(e)}"})
+        )
     
 
 def health(_):
@@ -489,6 +604,7 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
+    app.router.add_post("/warmup", warmup_pipeline)
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)

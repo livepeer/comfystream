@@ -3,10 +3,11 @@ import torch
 import numpy as np
 import asyncio
 import logging
-from typing import Any, Dict, Union, List, Optional
+from typing import Any, Dict, Union, List, Optional, Set
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
+from comfystream.utils import detect_prompt_modalities
 
 WARMUP_RUNS = 5
 
@@ -42,6 +43,7 @@ class Pipeline:
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
+        self._cached_modalities: Optional[Set[str]] = None
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -75,6 +77,9 @@ class Pipeline:
             await self.client.set_prompts(prompts)
         else:
             await self.client.set_prompts([prompts])
+        
+        # Clear cached modalities when prompts change
+        self._cached_modalities = None
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Update the existing processing prompts.
@@ -86,6 +91,9 @@ class Pipeline:
             await self.client.update_prompts(prompts)
         else:
             await self.client.update_prompts([prompts])
+        
+        # Clear cached modalities when prompts change
+        self._cached_modalities = None
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -215,6 +223,75 @@ class Pipeline:
         nodes_info = await self.client.get_available_nodes()
         return nodes_info
     
+    def get_workflow_modalities(self) -> Set[str]:
+        """Get the modalities required by the current workflow.
+        
+        Returns:
+            Set of modality strings: {'video', 'audio', 'text'}
+        """
+        if self._cached_modalities is None:
+            if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
+                return set()
+            
+            self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+        
+        return self._cached_modalities
+    
+    def get_modalities(self) -> Set[str]:
+        """Alias for get_workflow_modalities for compatibility."""
+        return self.get_workflow_modalities()
+    
+    def requires_video(self) -> bool:
+        """Check if the workflow requires video processing."""
+        return "video" in self.get_workflow_modalities()
+    
+    def requires_audio(self) -> bool:
+        """Check if the workflow requires audio processing."""
+        return "audio" in self.get_workflow_modalities()
+    
+    def requires_text(self) -> bool:
+        """Check if the workflow requires text processing."""
+        return "text" in self.get_workflow_modalities()
+    
     async def cleanup(self):
-        """Clean up resources used by the pipeline."""
-        await self.client.cleanup() 
+        """Clean up resources used by the pipeline.
+        
+        This includes:
+        - Canceling running prompts
+        - Clearing all queues (video, audio, tensor caches)
+        - Stopping the ComfyUI client
+        - Clearing cached modalities
+        """
+        logger.info("Starting pipeline cleanup")
+        
+        # Clear cached modalities since we're resetting
+        self._cached_modalities = None
+        
+        # Clear pipeline queues
+        await self._clear_pipeline_queues()
+        
+        # Cleanup client (this handles prompt cancellation and tensor cache cleanup)
+        await self.client.cleanup()
+        
+        logger.info("Pipeline cleanup completed")
+    
+    async def _clear_pipeline_queues(self):
+        """Clear the pipeline's internal frame queues."""
+        # Clear video frame queue
+        while not self.video_incoming_frames.empty():
+            try:
+                self.video_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+                
+        # Clear audio frame queue  
+        while not self.audio_incoming_frames.empty():
+            try:
+                self.audio_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+                
+        # Reset audio buffer
+        self.processed_audio_buffer = np.array([], dtype=np.int16)
+        
+        logger.debug("Pipeline queues cleared") 

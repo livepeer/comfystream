@@ -20,13 +20,24 @@ class ComfyStreamClient:
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
+        self._is_shutting_down = False
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
-        await self.cancel_running_prompts()
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-        for idx in range(len(self.current_prompts)):
-            task = asyncio.create_task(self.run_prompt(idx))
-            self.running_prompts[idx] = task
+        async with self._prompt_update_lock:
+            # Ensure we're not shutting down
+            if self._is_shutting_down:
+                raise RuntimeError("Cannot set prompts while client is shutting down")
+                
+            # Cancel any existing prompts first
+            await self.cancel_running_prompts()
+            
+            # Convert and validate prompts
+            self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+            
+            # Start new prompt tasks
+            for idx in range(len(self.current_prompts)):
+                task = asyncio.create_task(self.run_prompt(idx))
+                self.running_prompts[idx] = task
 
     async def update_prompts(self, prompts: List[PromptDictInput]):
         async with self._prompt_update_lock:
@@ -45,39 +56,74 @@ class ComfyStreamClient:
                     raise Exception(f"Prompt update failed: {str(e)}") from e
 
     async def run_prompt(self, prompt_index: int):
-        while True:
+        while not self._is_shutting_down:
             async with self._prompt_update_lock:
                 try:
+                    # Check if we're shutting down before queuing
+                    if self._is_shutting_down:
+                        break
                     await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
                 except asyncio.CancelledError:
-                    raise
+                    logger.debug(f"Prompt {prompt_index} cancelled")
+                    break
                 except Exception as e:
-                    await self.cleanup()
-                    logger.error(f"Error running prompt: {str(e)}")
-                    raise
+                    if not self._is_shutting_down:
+                        logger.error(f"Error running prompt: {str(e)}")
+                    break
 
     async def cleanup(self):
-        await self.cancel_running_prompts()
-        async with self._cleanup_lock:
-            if self.comfy_client.is_running:
-                try:
-                    await self.comfy_client.__aexit__()
-                except Exception as e:
-                    logger.error(f"Error during ComfyClient cleanup: {e}")
+        logger.info("Starting client cleanup")
+        
+        # Set shutdown flag first to prevent new operations
+        self._is_shutting_down = True
+        
+        try:
+            # Cancel running prompts first (this has its own locking)
+            await self.cancel_running_prompts()
+            
+            async with self._cleanup_lock:
+                # Stop the ComfyUI client properly
+                if hasattr(self.comfy_client, 'is_running') and self.comfy_client.is_running:
+                    try:
+                        # Try to stop the client gracefully
+                        if hasattr(self.comfy_client, 'stop'):
+                            await self.comfy_client.stop()
+                        elif hasattr(self.comfy_client, '__aexit__'):
+                            await self.comfy_client.__aexit__(None, None, None)
+                        logger.debug("ComfyUI client stopped")
+                    except Exception as e:
+                        logger.warning(f"Error during ComfyUI client cleanup (non-critical): {e}")
 
-            await self.cleanup_queues()
-            logger.info("Client cleanup complete")
+                # Clear all queues
+                await self.cleanup_queues()
+                
+                # Reset state
+                self.current_prompts = []
+                
+                logger.info("Client cleanup complete")
+        finally:
+            # Always reset the shutdown flag
+            self._is_shutting_down = False
 
     async def cancel_running_prompts(self):
-        async with self._cleanup_lock:
-            tasks_to_cancel = list(self.running_prompts.values())
-            for task in tasks_to_cancel:
+        logger.debug(f"Cancelling {len(self.running_prompts)} running prompts")
+        tasks_to_cancel = list(self.running_prompts.values())
+        
+        # Cancel all tasks
+        for task in tasks_to_cancel:
+            if not task.done():
                 task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            self.running_prompts.clear()
+        
+        # Wait for all tasks to complete cancellation
+        if tasks_to_cancel:
+            try:
+                await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+            except Exception as e:
+                logger.debug(f"Exception during prompt cancellation (expected): {e}")
+        
+        # Clear the running prompts dict
+        self.running_prompts.clear()
+        logger.debug("All running prompts cancelled")
 
         
     async def cleanup_queues(self):
