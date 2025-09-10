@@ -1,95 +1,100 @@
 import * as React from "react";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 
 interface StreamControlProps {
   className?: string;
-  backendUrl: string;
 }
 
-export function StreamControl({ className = "", backendUrl }: StreamControlProps) {
+export function StreamControl({ className = "" }: StreamControlProps) {
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Generate the stream URL with a unique streamID from the server
-  const getStreamUrl = async (): Promise<string | null> => {
-    try {
-      // Validate backendUrl
-      if (!backendUrl) {
-        console.error("Backend URL is not configured.");
-        throw new Error("Backend URL is not configured in settings.");
-      }
 
-      // Parse base URL from the provided backendUrl
-      let baseUrl: string;
-      try {
-        // The origin property gives us "http://hostname:port"
-        baseUrl = new URL(backendUrl).origin;
-      } catch (e) {
-        console.error("Invalid backend URL configured:", backendUrl, e);
-        throw new Error(`Invalid backend URL configured: ${backendUrl}`);
-      }
-      
-      // Check if we're in a hosted environment by looking at the current URL
-      // This might need adjustment depending on how hosted environments are detected
-      const isHosted = window.location.pathname.includes('/live');
-      const pathPrefix = isHosted ? '/live' : '';
-      
-      // Request a unique streamID from the server using the derived baseUrl
-      const response = await fetch(`${baseUrl}${pathPrefix}/api/stream-token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to get stream token: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      const streamId = data.stream_id;
-      
-      // Return the URL with the unique streamID, using the derived baseUrl
-      // Note: Token will be removed from URL in a later step
-      return `${baseUrl}${pathPrefix}/stream.html?token=${streamId}`;
-    } catch (error) {
-      console.error('Error getting stream URL:', error);
-      return null;
+  // Open popup which polls opener for stream and clones tracks locally (no postMessage MediaStream cloning)
+  const openWebRTCPopup = useCallback(() => {
+    // Must open first synchronous to user gesture to avoid blockers.
+    let popup: Window | null = window.open('about:blank', '_blank', 'width=1024,height=1024');
+    if (!popup) {
+      // Attempt simplified open.
+      popup = window.open('');
     }
-  };
-  
-  // Open the stream in a new window
-  const openStreamWindow = async () => {
-    try {
-      setIsLoading(true);
-      const streamUrl = await getStreamUrl();
-      
-      if (!streamUrl) {
-        throw new Error('Failed to get stream URL');
-      }
-      
-      const newWindow = window.open(streamUrl, 'ComfyStream OBS Capture', 'width=1024,height=1024');
-      
-      if (!newWindow) {
-        throw new Error('Failed to open stream window. Please check your popup blocker settings.');
-      }
-    } catch (error) {
-      console.error('Error opening stream window:', error);
-      alert(error instanceof Error ? error.message : 'Failed to open stream window. Please try again.');
-    } finally {
-      setIsLoading(false);
+    if (!popup) {
+      alert('Popup blocked. Please allow popups for this site.');
+      return;
     }
+    const html = `<!DOCTYPE html><html><head><title>ComfyStream Preview</title><meta charset='utf-8' />
+    <style>html,body{margin:0;background:#000;height:100%;display:flex;align-items:center;justify-content:center;font-family:sans-serif}video{max-width:100%;max-height:100%;background:#000}#status{color:#0f0;position:absolute;top:6px;left:8px;text-align:left;font:12px monospace;text-shadow:0 0 4px #000}</style>
+    </head><body>
+      <video id="webrtc_preview" autoplay playsinline muted></video>
+      <div id="status">Initializing…</div>
+      <script>
+        (function(){
+          const statusEl = document.getElementById('status');
+          const video = document.getElementById('webrtc_preview');
+          const openerRef = window.opener;
+          let attempts = 0;
+          const MAX_ATTEMPTS = 200; // ~60s at 300ms
+          let localStream = new MediaStream();
+          let clonedIds = new Set();
+          let lastParentStream = null;
+          function setStatus(msg){ if(statusEl) statusEl.textContent = msg; }
+          function validateOpener(){
+            try {
+              if(!window.opener || window.opener !== openerRef){ setStatus('Opener lost. Closing…'); setTimeout(()=>window.close(),800); return false; }
+              void window.opener.location.href; // access for same-origin check
+              return true;
+            } catch { setStatus('Cross-origin opener. Closing…'); setTimeout(()=>window.close(),800); return false; }
+          }
+          function attachVideo(){ if(video.srcObject !== localStream) video.srcObject = localStream; }
+          function cloneTracks(){
+            if(!validateOpener()) return;
+            const parentStream = window.opener.__comfystreamRemoteStream;
+            if(!parentStream){ setStatus('Waiting for stream…'); return; }
+            if(lastParentStream && lastParentStream !== parentStream){
+              localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} });
+              localStream = new MediaStream();
+              clonedIds = new Set();
+            }
+            lastParentStream = parentStream;
+            let added = false;
+            parentStream.getTracks().forEach(src => {
+              if(src.readyState === 'ended') return;
+              if(!clonedIds.has(src.id)){
+                try{ const c = src.clone(); localStream.addTrack(c); clonedIds.add(src.id); added = true; c.addEventListener('ended',()=>{ clonedIds.delete(src.id); }); }
+                catch{ /* fallback skip */ }
+              }
+            });
+            if(added){ attachVideo(); setStatus('Live'); if(video.play) video.play().catch(()=>{}); }
+          }
+          const interval = setInterval(()=>{
+            attempts++;
+            if(!validateOpener()){ clearInterval(interval); return; }
+            // Parent cleared global (disconnect)
+            if(!window.opener.__comfystreamRemoteStream){ setStatus('Parent stream ended'); clearInterval(interval); setTimeout(()=>window.close(),1200); return; }
+            cloneTracks();
+            // Remove ended local tracks (allow re-clone)
+            localStream.getTracks().forEach(t=>{ if(t.readyState==='ended'){ localStream.removeTrack(t); try{t.stop();}catch{}; clonedIds.delete(t.id); }});
+            if(attempts>=MAX_ATTEMPTS && localStream.getTracks().length===0){ setStatus('Timeout waiting for stream'); clearInterval(interval); setTimeout(()=>window.close(),1500); }
+          },300);
+          window.addEventListener('beforeunload', ()=>{ clearInterval(interval); localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} }); });
+          // Initial attempt
+          cloneTracks();
+        })();
+      </script>
+    </body></html>`;
+    popup.document.write(html);
+    popup.document.close();
+  }, []);
+
+  const openStreamWindow = () => {
+    openWebRTCPopup();
   };
 
   return (
     <button 
-      onClick={openStreamWindow}
-      // Disable only when loading
-      disabled={isLoading} 
-      className={`absolute bottom-4 right-4 z-10 p-2 bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors ${className} ${isLoading ? 'opacity-50 cursor-wait' : ''}`}
-      // Restore original title
-      title={"Open stream for OBS capture"} 
-      aria-label="Cast to external display"
+  onClick={openStreamWindow}
+  disabled={isLoading}
+  className={`absolute bottom-4 right-4 z-10 p-2 bg-black/50 hover:bg-black/70 text-white rounded-full transition-colors ${className}`}
+  title={"Open WebRTC preview (cloned tracks)"} 
+  aria-label="Open WebRTC preview"
     >
       <svg 
         xmlns="http://www.w3.org/2000/svg" 
