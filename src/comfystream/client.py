@@ -22,11 +22,32 @@ class ComfyStreamClient:
         self._prompt_update_lock = asyncio.Lock()
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
+        """Set new prompts, replacing any existing ones.
+        
+        Args:
+            prompts: List of prompt dictionaries to set
+            
+        Raises:
+            ValueError: If prompts list is empty
+            Exception: If prompt conversion or validation fails
+        """
+        if not prompts:
+            raise ValueError("Cannot set empty prompts list")
+            
+        # Cancel existing prompts first to avoid conflicts
         await self.cancel_running_prompts()
-        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-        for idx in range(len(self.current_prompts)):
-            task = asyncio.create_task(self.run_prompt(idx))
-            self.running_prompts[idx] = task
+        
+        # Convert and validate all prompts before starting any tasks
+        try:
+            self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        except Exception as e:
+            raise Exception(f"Prompt conversion failed: {str(e)}") from e
+        
+        # Start new prompt tasks
+        self.running_prompts = {
+            idx: asyncio.create_task(self.run_prompt(idx)) 
+            for idx in range(len(self.current_prompts))
+        }
 
     async def update_prompts(self, prompts: List[PromptDictInput]):
         async with self._prompt_update_lock:
@@ -106,6 +127,12 @@ class ComfyStreamClient:
     
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
+    
+    async def get_text_output(self):
+        try:
+            return tensor_cache.text_outputs.get_nowait()
+        except:
+            return None
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
