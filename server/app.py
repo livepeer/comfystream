@@ -417,7 +417,7 @@ async def on_shutdown(app: web.Application):
     try:
         await app["pipeline"].client.close()
     except Exception:
-        pass
+        logger.exception("Error while closing Comfy client during server shutdown")
 
 
 if __name__ == "__main__":

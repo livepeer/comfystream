@@ -93,12 +93,12 @@ class ComfyStreamClient:
             try:
                 await self.cleanup_queues()
             except Exception:
-                pass
+                logger.exception("Error during client queue cleanup")
             if self._client_cm is not None:
                 try:
                     await self._client_cm.__aexit__(None, None, None)
                 except Exception:
-                    pass
+                    logger.exception("Error while closing embedded Comfy client context")
             self._client = None
             self._client_cm = None
 
@@ -111,7 +111,7 @@ class ComfyStreamClient:
             # Then wait with a timeout so we can never hang here
             for task in tasks_to_cancel:
                 try:
-                    await asyncio.wait_for(task, timeout=5.0)
+                    await asyncio.wait_for(task, timeout=2.5)
                 except asyncio.CancelledError:
                     pass
                 except asyncio.TimeoutError:

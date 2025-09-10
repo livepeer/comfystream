@@ -66,6 +66,9 @@ class FPSMeter:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            finally:
+                # Make idempotent: allow repeated stop calls without double-await
+                self._task = None
 
     async def increment_frame_count(self):
         """Increment the frame count to calculate FPS."""

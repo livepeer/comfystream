@@ -27,7 +27,10 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
         importlib.import_module("comfy.api.components.schema.prompt_node")
     except Exception:
         pass
-
+    
+    # Validate the schema
+    Prompt.validate(prompt)
+    
     prompt = copy.deepcopy(prompt)
 
     num_primary_inputs = 0
