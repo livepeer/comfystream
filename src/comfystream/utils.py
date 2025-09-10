@@ -62,13 +62,13 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     if num_primary_inputs > 1:
         raise Exception("too many primary inputs in prompt")
 
-    # If there are no primary inputs, only handle single input
-    if num_primary_inputs == 0 and num_inputs > 1:
+    # Allow up to two inputs when there is no primary input
+    if num_primary_inputs == 0 and num_inputs > 2:
         raise Exception("too many inputs in prompt")
 
-    # # Only handle single output for now
-    # if num_outputs > 1:
-    #     raise Exception("too many outputs in prompt")
+    # Allow up to three outputs in total
+    if num_outputs > 3:
+        raise Exception("too many outputs in prompt")
     
     if num_outputs == 0:
         raise Exception("missing output")
