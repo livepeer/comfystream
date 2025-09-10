@@ -2,7 +2,7 @@ import copy
 import json
 import os
 import logging
-
+import importlib
 from typing import Dict, Any, List, Tuple, Optional, Union
 from comfy.api.components.schema.prompt import Prompt, PromptDictInput
 from pytrickle.api import StreamParamsUpdateRequest
@@ -121,6 +121,12 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
     }
 
 def convert_prompt(prompt: PromptDictInput, return_dict: bool = False) -> Union[Prompt, dict]:
+    try:
+        # Note: lazy import is neccessary to prevent KeyError during validation
+        importlib.import_module("comfy.api.components.schema.prompt_node")
+    except Exception:
+        pass
+    
     """Convert and validate a ComfyUI workflow prompt."""
     Prompt.validate(prompt)
     prompt = copy.deepcopy(prompt)
