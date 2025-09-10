@@ -17,6 +17,7 @@ export function usePeer(props: PeerProps): Peer {
     null,
   );
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
+  const [transcriptionData, setTranscriptionData] = useState<string | null>(null);
 
   const connectionStateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -150,6 +151,7 @@ export function usePeer(props: PeerProps): Peer {
           const message = JSON.parse(event.data);
           if (message.type === "text") {
             console.log("[usePeer] Received text data:", message.data);
+            setTranscriptionData(message.data);
           } else {
             console.warn("[usePeer] Unknown message type:", message.type);
           }
@@ -230,5 +232,6 @@ export function usePeer(props: PeerProps): Peer {
     remoteStream,
     controlChannel,
     dataChannel,
+    transcriptionData,
   };
 }

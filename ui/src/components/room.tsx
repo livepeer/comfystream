@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
 import { StreamControl } from "@/components/stream-control";
+import { TranscriptionViewer } from "@/components/transcription-viewer";
 import fixWebmDuration from 'webm-duration-fix';
 import { set, get, del, keys } from 'idb-keyval';
 import { Drawer, DrawerContent, DrawerTitle } from "./ui/drawer";
@@ -51,6 +52,18 @@ function useToast() {
   }, []);
   
   return { showToast, dismissToast, toastId: toastIdRef };
+}
+
+// Wrapper component to access peer context
+function TranscriptionViewerWrapper() {
+  const peer = usePeerContext();
+  
+  return (
+    <TranscriptionViewer 
+      isConnected={!!peer?.peerConnection && peer.peerConnection.connectionState === 'connected'}
+      transcriptionData={peer?.transcriptionData || undefined}
+    />
+  );
 }
 
 interface MediaStreamPlayerProps {
@@ -314,6 +327,9 @@ export const Room = () => {
   const inputChunksRef = useRef<Blob[]>([]);
   const outputChunksRef = useRef<Blob[]>([]);
   const [isRecordingsPanelOpen, setIsRecordingsPanelOpen] = useState(false);
+  
+  // Transcription state
+  const [isTranscriptionPanelOpen, setIsTranscriptionPanelOpen] = useState(true);
 
   // Helper to get timestamped filenames
   const getFilename = (type: 'input' | 'output') => {
@@ -611,6 +627,25 @@ export const Room = () => {
                   )}
                 </button>
               )}
+              {/* Transcription toggle button */}
+              {isConnected && (
+                <button
+                  onClick={() => setIsTranscriptionPanelOpen(!isTranscriptionPanelOpen)}
+                  className={`h-12 w-12 rounded-full shadow-lg flex items-center justify-center transition-colors ${
+                    isTranscriptionPanelOpen 
+                      ? 'bg-green-600 text-white hover:bg-green-700' 
+                      : 'bg-purple-600 text-white hover:bg-purple-700'
+                  }`}
+                  title={isTranscriptionPanelOpen ? 'Hide Transcription' : 'Show Transcription'}
+                >
+                  <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-mic">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                    <line x1="8" y1="23" x2="16" y2="23"></line>
+                  </svg>
+                </button>
+              )}
               {/* Show Recordings button (always rightmost) */}
               <button
                 onClick={() => setIsRecordingsPanelOpen(true)}
@@ -620,6 +655,23 @@ export const Room = () => {
                 <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-film"><rect x="2" y="7" width="20" height="10" rx="2" ry="2"></rect><path d="M6 7V5M6 19v-2M18 7V5M18 19v-2"></path></svg>
               </button>
             </div>
+            {/* Transcription Side Panel */}
+            {isConnected && isTranscriptionPanelOpen && (
+              <div className="fixed inset-0 z-40 flex justify-end">
+                <div className="fixed inset-0 bg-black/30" onClick={() => setIsTranscriptionPanelOpen(false)} />
+                <div className="relative w-full max-w-md shadow-xl overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 80px)', marginTop: '80px' }}>
+                  <button
+                    onClick={() => setIsTranscriptionPanelOpen(false)}
+                    className="absolute top-4 right-4 z-10 text-2xl text-gray-400 hover:text-white"
+                    title="Close"
+                  >×</button>
+                  <div className="flex-1 p-4 overflow-hidden">
+                    <TranscriptionViewerWrapper />
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {/* Recordings Side Panel */}
             {isRecordingsPanelOpen && (
               <div className="fixed inset-0 z-50 flex justify-end">
