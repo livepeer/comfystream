@@ -1,4 +1,6 @@
 import asyncio
+from asyncio import QueueEmpty as AsyncQueueEmpty
+from queue import Empty as SyncQueueEmpty
 from typing import List
 import logging
 
@@ -7,7 +9,7 @@ from comfystream.utils import convert_prompt
 
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
-from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+from comfy.client.embedded_comfy_client import Comfy
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +17,25 @@ logger = logging.getLogger(__name__)
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
         config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
-        self.running_prompts = {} # To be used for cancelling tasks
+        self.max_workers = max_workers
+        self.config = config
+        self.running_prompts = {}
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
+        self._client_cm = None
+        self._client = None
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         await self.cancel_running_prompts()
+        # Lazily start a single embedded client per session (no context manager usage)
+        if self._client is None:
+            try:
+                self._client_cm = Comfy(**vars(self.config))
+            except Exception:
+                self._client_cm = Comfy()
+            self._client = await self._client_cm.__aenter__()
+
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
@@ -35,63 +48,106 @@ class ComfyStreamClient:
                 raise ValueError(
                     "Number of updated prompts must match the number of currently running prompts."
                 )
-            # Validation step before updating the prompt, only meant for a single prompt for now
+            # Update in-place; active run loops will pick the new prompts on next iteration
             for idx, prompt in enumerate(prompts):
                 converted_prompt = convert_prompt(prompt)
-                try:
-                    await self.comfy_client.queue_prompt(converted_prompt)
-                    self.current_prompts[idx] = converted_prompt
-                except Exception as e:
-                    raise Exception(f"Prompt update failed: {str(e)}") from e
+                self.current_prompts[idx] = converted_prompt
+
+    async def _queue_with_client(self, comfy_client, prompt):
+        # Prefer progress API if available
+        if hasattr(comfy_client, "queue_with_progress"):
+            task = comfy_client.queue_with_progress(prompt)
+            async for _ in task.progress():
+                pass
+            return
+        if hasattr(comfy_client, "queue_prompt"):
+            return await comfy_client.queue_prompt(prompt)
+        if hasattr(comfy_client, "queue"):
+            return await comfy_client.queue(prompt)
+        raise AttributeError("Comfy client does not support known queue methods")
 
     async def run_prompt(self, prompt_index: int):
-        while True:
-            async with self._prompt_update_lock:
-                try:
-                    await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    await self.cleanup()
-                    logger.error(f"Error running prompt: {str(e)}")
-                    raise
+        # Reuse the single embedded client started in set_prompts
+        try:
+            while True:
+                async with self._prompt_update_lock:
+                    prompt = self.current_prompts[prompt_index]
+                await self._queue_with_client(self._client, prompt)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            await self.cleanup()
+            logger.error(f"Error running prompt: {str(e)}")
+            raise
 
     async def cleanup(self):
         await self.cancel_running_prompts()
         async with self._cleanup_lock:
-            if self.comfy_client.is_running:
-                try:
-                    await self.comfy_client.__aexit__()
-                except Exception as e:
-                    logger.error(f"Error during ComfyClient cleanup: {e}")
-
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
+
+    async def close(self):
+        # Full teardown of the embedded client (for process shutdown)
+        await self.cancel_running_prompts()
+        async with self._cleanup_lock:
+            try:
+                await self.cleanup_queues()
+            except Exception:
+                pass
+            if self._client_cm is not None:
+                try:
+                    await self._client_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            self._client = None
+            self._client_cm = None
 
     async def cancel_running_prompts(self):
         async with self._cleanup_lock:
             tasks_to_cancel = list(self.running_prompts.values())
+            # Request cancellation first for all tasks
             for task in tasks_to_cancel:
                 task.cancel()
+            # Then wait with a timeout so we can never hang here
+            for task in tasks_to_cancel:
                 try:
-                    await task
+                    await asyncio.wait_for(task, timeout=5.0)
                 except asyncio.CancelledError:
+                    pass
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout waiting for prompt task to cancel; continuing cleanup")
+                except Exception:
+                    # Do not block cleanup on task errors
                     pass
             self.running_prompts.clear()
 
         
     async def cleanup_queues(self):
-        while not tensor_cache.image_inputs.empty():
-            tensor_cache.image_inputs.get()
+        # Drain synchronous input queues without blocking
+        while True:
+            try:
+                tensor_cache.image_inputs.get_nowait()
+            except SyncQueueEmpty:
+                break
 
-        while not tensor_cache.audio_inputs.empty():
-            tensor_cache.audio_inputs.get()
+        while True:
+            try:
+                tensor_cache.audio_inputs.get_nowait()
+            except SyncQueueEmpty:
+                break
 
-        while not tensor_cache.image_outputs.empty():
-            await tensor_cache.image_outputs.get()
+        # Drain async output queues without awaiting indefinitely
+        while True:
+            try:
+                tensor_cache.image_outputs.get_nowait()
+            except AsyncQueueEmpty:
+                break
 
-        while not tensor_cache.audio_outputs.empty():
-            await tensor_cache.audio_outputs.get()
+        while True:
+            try:
+                tensor_cache.audio_outputs.get_nowait()
+            except AsyncQueueEmpty:
+                break
 
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():

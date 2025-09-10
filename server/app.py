@@ -102,7 +102,11 @@ class VideoStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            try:
+                await self.fps_meter.stop()
+            except Exception:
+                pass
+            logger.info("Video frame collection cleanup complete")
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
@@ -168,7 +172,7 @@ class AudioStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            logger.info("Audio frame collection cleanup complete")
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
@@ -335,18 +339,18 @@ async def offer(request):
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         logger.info(f"Connection state is: {pc.connectionState}")
-        if pc.connectionState == "failed":
+        if pc.connectionState in ("failed", "closed"):
             await pc.close()
             pcs.discard(pc)
-        elif pc.connectionState == "closed":
-            await pc.close()
-            pcs.discard(pc)
+            # Only clean up the shared pipeline when all connections are closed
+            if len(pcs) == 0:
+                await pipeline.cleanup()
 
     await pc.setRemoteDescription(offer)
 
-    # Only warm audio here, video warming happens after resolution update
+    # Warm audio async (don't block offer)
     if "m=audio" in pc.remoteDescription.sdp:
-        await pipeline.warm_audio()
+        asyncio.create_task(pipeline.warm_audio())
     
     # We no longer warm video here - it will be warmed after receiving resolution
 
@@ -362,11 +366,16 @@ async def offer(request):
 
 async def cancel_collect_frames(track):
     track.running = False
-    if hasattr(track, 'collect_task') is not None and not track.collect_task.done():
+    if hasattr(track, 'collect_task') and not track.collect_task.done():
         try:
             track.collect_task.cancel()
             await track.collect_task
         except (asyncio.CancelledError):
+            pass
+    if hasattr(track, 'fps_meter'):
+        try:
+            await track.fps_meter.stop()
+        except Exception:
             pass
 
 async def set_prompt(request):
@@ -404,6 +413,11 @@ async def on_shutdown(app: web.Application):
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
+    # Fully close the embedded Comfy client on server shutdown
+    try:
+        await app["pipeline"].client.close()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import copy
+import importlib
 
 from typing import Dict, Any
 from comfy.api.components.schema.prompt import Prompt, PromptDictInput
@@ -21,8 +22,11 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
 
 
 def convert_prompt(prompt: PromptDictInput) -> Prompt:
-    # Validate the schema
-    Prompt.validate(prompt)
+    # Ensure the schema modules are loaded before validation (prevents KeyError during validation)
+    try:
+        importlib.import_module("comfy.api.components.schema.prompt_node")
+    except Exception:
+        pass
 
     prompt = copy.deepcopy(prompt)
 

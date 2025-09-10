@@ -207,4 +207,6 @@ class Pipeline:
     
     async def cleanup(self):
         """Clean up resources used by the pipeline."""
+        logger.info("Pipeline starting client cleanup")
         await self.client.cleanup() 
+        logger.info("Pipeline client cleanup complete")
