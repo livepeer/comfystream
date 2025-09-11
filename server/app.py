@@ -463,12 +463,7 @@ async def offer(request):
                 videoTrack = NoopVideoStreamTrack(track)
                 logger.info("[Noop] Using noop video passthrough")
             else:
-                # Debug: Check modality detection
-                modalities = pipeline.get_workflow_modalities()
                 requires_video = pipeline.requires_video()
-                current_prompts = getattr(pipeline.client, 'current_prompts', [])
-                logger.debug(f"[Debug] Video track - modalities: {modalities}, requires_video: {requires_video}")
-                logger.debug(f"[Debug] Video track - current_prompts length: {len(current_prompts)}")
                 
                 if requires_video:
                     # Use full pipeline processing only if workflow requires video
@@ -499,12 +494,7 @@ async def offer(request):
                 audioTrack = NoopAudioStreamTrack(track)
                 logger.info("[Noop] Using noop audio passthrough")
             else:
-                # Debug: Check modality detection
-                modalities = pipeline.get_workflow_modalities()
                 requires_audio = pipeline.requires_audio()
-                current_prompts = getattr(pipeline.client, 'current_prompts', [])
-                logger.debug(f"[Debug] Audio track - modalities: {modalities}, requires_audio: {requires_audio}")
-                logger.debug(f"[Debug] Audio track - current_prompts length: {len(current_prompts)}")
                 
                 if requires_audio:
                     # Use full pipeline processing only if workflow requires audio
