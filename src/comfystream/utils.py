@@ -9,13 +9,11 @@ class ModalityIO(TypedDict):
     input: bool
     output: bool
 
-
 class WorkflowModality(TypedDict):
     """Workflow modality detection result mapping modalities to their I/O capabilities."""
     video: ModalityIO
     audio: ModalityIO
     text: ModalityIO
-
 
 # Centralized node type definitions
 NODE_TYPES = {
@@ -31,6 +29,10 @@ NODE_TYPES = {
     "text_input": set(),  # No text input nodes currently
     "text_output": {"SaveTextTensor"},
 }
+
+# Flatten all input and output node types for easier checking
+all_input_nodes = NODE_TYPES["video_input"] | NODE_TYPES["audio_input"] | NODE_TYPES["text_input"]
+all_output_nodes = NODE_TYPES["video_output"] | NODE_TYPES["audio_output"] | NODE_TYPES["text_output"]
 
 # Modality mappings derived from NODE_TYPES
 MODALITY_MAPPINGS = {
@@ -76,10 +78,6 @@ def create_save_tensor_node(inputs: Dict[Any, Any]):
 def _count_nodes_by_type(prompt: Dict[Any, Any]) -> Dict[str, int]:
     """Count nodes by their functional types (primary inputs, inputs, outputs)."""
     counts = {"primary_inputs": 0, "inputs": 0, "outputs": 0}
-    
-    # Flatten all input and output node types for easier checking
-    all_input_nodes = NODE_TYPES["video_input"] | NODE_TYPES["audio_input"] | NODE_TYPES["text_input"]
-    all_output_nodes = NODE_TYPES["video_output"] | NODE_TYPES["audio_output"] | NODE_TYPES["text_output"]
     
     for node in prompt.values():
         class_type = node.get("class_type")
