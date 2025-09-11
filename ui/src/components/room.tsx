@@ -4,6 +4,7 @@ import { PeerConnector } from "@/components/peer";
 import { StreamConfig, StreamSettings, DEFAULT_CONFIG } from "@/components/settings";
 import { Webcam } from "@/components/webcam";
 import { usePeerContext } from "@/context/peer-context";
+import { Prompt } from "@/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -179,15 +180,19 @@ interface StageProps {
   resolution: { width: number; height: number };
   backendUrl: string;
   onOutputStreamReady: (stream: MediaStream | null) => void;
+  prompts: Prompt[] | null;
 }
 
-function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUrl, onOutputStreamReady }: StageProps) {
+function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUrl, onOutputStreamReady, prompts }: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
   // Add state and refs for tracking frames
   const [isComfyUIReady, setIsComfyUIReady] = useState<boolean>(false);
   const frameCountRef = useRef<number>(0);
   const frameReadyReported = useRef<boolean>(false);
+  
+  // Check if we're in noop mode by looking at the prompts prop
+  const isNoopMode = !prompts || prompts.length === 0;
   
   // The number of frames to wait before considering ComfyUI ready
   // WARMUP_RUNS is 5, we add a small buffer
@@ -224,6 +229,13 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
       console.log('[Stage] Calling onOutputStreamReady with', remoteStream);
       onOutputStreamReady(remoteStream);
     }
+    
+    // In noop mode, immediately set ComfyUI as ready since there's no actual ComfyUI processing
+    if (isNoopMode && !isComfyUIReady) {
+      console.log('[Stage] Noop mode detected - setting ComfyUI ready immediately');
+      setIsComfyUIReady(true);
+      onComfyUIReady();
+    }
 
     // Track frame rate with getStats API
     const interval = setInterval(() => {
@@ -242,7 +254,7 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [connected, remoteStream, peerConnection, onStreamReady, onOutputStreamReady]);
+  }, [connected, remoteStream, peerConnection, onStreamReady, onOutputStreamReady, isNoopMode, isComfyUIReady, onComfyUIReady]);
 
   if (!connected || !remoteStream) {
     return (
@@ -278,7 +290,11 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
         <div className="absolute inset-0 flex items-center justify-center bg-black/30">
           <div className="flex flex-col items-center space-y-3 bg-black/50 p-4 rounded-lg">
             <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-white"></div>
-            <p className="text-white text-center">ComfyUI is warming up...<br/>This may take a few minutes</p>
+            <p className="text-white text-center">
+              {isNoopMode 
+                ? "Initializing noop stream..." 
+                : "ComfyUI is warming up...\nThis may take a few minutes"}
+            </p>
           </div>
         </div>
       )}
@@ -558,6 +574,7 @@ export const Room = () => {
                   onComfyUIReady={onComfyUIReady}
                   resolution={config.resolution}
                   onOutputStreamReady={setOutputStream}
+                  prompts={config.prompts || null}
                 />
                 {/* Thumbnail (mobile) */}
                 <div className="absolute bottom-[8px] right-[8px] w-[70px] h-[70px] sm:w-[90px] sm:h-[90px] bg-slate-800 block md:hidden overflow-hidden">

@@ -125,6 +125,44 @@ class VideoStreamTrack(MediaStreamTrack):
         return processed_frame
 
 
+class NoopVideoStreamTrack(MediaStreamTrack):
+    """Simple passthrough video track that bypasses pipeline processing."""
+    kind = "video"
+
+    def __init__(self, track: MediaStreamTrack):
+        super().__init__()
+        self.track = track
+        logger.debug(f"NoopVideoStreamTrack created for track {track.id}")
+
+    async def recv(self):
+        # Simple passthrough - return frames directly from source
+        try:
+            frame = await asyncio.wait_for(self.track.recv(), timeout=5.0)
+            return frame
+        except asyncio.TimeoutError:
+            logger.warning("Noop video track: No frames received from client for 5 seconds")
+            raise
+
+
+class NoopAudioStreamTrack(MediaStreamTrack):
+    """Simple passthrough audio track that bypasses pipeline processing."""
+    kind = "audio"
+
+    def __init__(self, track: MediaStreamTrack):
+        super().__init__()
+        self.track = track
+        logger.debug(f"NoopAudioStreamTrack created for track {track.id}")
+
+    async def recv(self):
+        # Simple passthrough - return frames directly from source
+        try:
+            frame = await asyncio.wait_for(self.track.recv(), timeout=5.0)
+            return frame
+        except asyncio.TimeoutError:
+            logger.warning("Noop audio track: No frames received from client for 5 seconds")
+            raise
+
+
 class AudioStreamTrack(MediaStreamTrack):
     kind = "audio"
 
@@ -133,6 +171,7 @@ class AudioStreamTrack(MediaStreamTrack):
         self.track = track
         self.pipeline = pipeline
         self.running = True
+        logger.info(f"AudioStreamTrack created for track {track.id}")
         self.collect_task = asyncio.create_task(self.collect_frames())
         
         # Add cleanup when track ends
@@ -218,8 +257,16 @@ async def offer(request):
     pcs = request.app["pcs"]
 
     params = await request.json()
-
-    await pipeline.set_prompts(params["prompts"])
+    
+    # Check if this is noop mode (no prompts provided)
+    prompts = params.get("prompts")
+    is_noop_mode = not prompts
+    
+    if is_noop_mode:
+        logger.info("[Offer] No prompts provided - entering noop passthrough mode")
+    else:
+        await pipeline.set_prompts(prompts)
+        logger.info("[Offer] Set workflow prompts")
     
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
@@ -230,6 +277,16 @@ async def offer(request):
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
+    
+    # Debug: Log what's in the client's SDP offer
+    logger.info(f"[Offer] Client SDP contains video: {'m=video' in offer.sdp}")
+    logger.info(f"[Offer] Client SDP contains audio: {'m=audio' in offer.sdp}")
+    if "m=audio" in offer.sdp:
+        # Extract audio line for debugging
+        for line in offer.sdp.split('\n'):
+            if line.startswith('m=audio'):
+                logger.info(f"[Offer] Audio media line: {line}")
+                break
 
     ice_servers = get_ice_servers()
     if len(ice_servers) > 0:
@@ -246,17 +303,27 @@ async def offer(request):
     # Flag to track if we've received resolution update
     resolution_received = {"value": False}
 
-    # Only add video transceiver if video is present in the offer
+    # Add transceivers for both audio and video if present in the offer
     if "m=video" in offer.sdp:
-        # Prefer h264
-        transceiver = pc.addTransceiver("video")
+        logger.info("[Offer] Adding video transceiver")
+        video_transceiver = pc.addTransceiver("video", direction="sendrecv")
         caps = RTCRtpSender.getCapabilities("video")
         prefs = list(filter(lambda x: x.name == "H264", caps.codecs))
-        transceiver.setCodecPreferences(prefs)
+        video_transceiver.setCodecPreferences(prefs)
 
         # Monkey patch max and min bitrate to ensure constant bitrate
         h264.MAX_BITRATE = MAX_BITRATE
         h264.MIN_BITRATE = MIN_BITRATE
+
+    if "m=audio" in offer.sdp:
+        logger.info("[Offer] Adding audio transceiver")
+        audio_transceiver = pc.addTransceiver("audio", direction="sendrecv")
+        audio_caps = RTCRtpSender.getCapabilities("audio")
+        # Prefer Opus for audio
+        audio_prefs = [codec for codec in audio_caps.codecs if codec.name == "opus"]
+        if audio_prefs:
+            audio_transceiver.setCodecPreferences(audio_prefs)
+            logger.info("[Offer] Set audio transceiver to prefer Opus")
 
     # Handle control channel from client
     @pc.on("datachannel")
@@ -288,16 +355,23 @@ async def offer(request):
                         if "width" not in params or "height" not in params:
                             logger.warning("[Control] Missing width or height in update_resolution message")
                             return
-                        # Update pipeline resolution for future frames
-                        pipeline.width = params["width"]
-                        pipeline.height = params["height"]
-                        logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
+                        
+                        if is_noop_mode:
+                            logger.info(f"[Control] Noop mode - resolution update to {params['width']}x{params['height']} (no pipeline involved)")
+                        else:
+                            # Update pipeline resolution for future frames
+                            pipeline.width = params["width"]
+                            pipeline.height = params["height"]
+                            logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
                         
                         # Mark that we've received resolution
                         resolution_received["value"] = True
                         
-                        # Note: Video warmup now happens during offer, not here
-                        logger.info("[Control] Resolution updated - warmup was already performed during offer")
+                        if is_noop_mode:
+                            logger.info("[Control] Noop mode - no warmup needed")
+                        else:
+                            # Note: Video warmup now happens during offer, not here
+                            logger.info("[Control] Resolution updated - warmup was already performed during offer")
                             
                         response = {
                             "type": "resolution_updated",
@@ -344,22 +418,41 @@ async def offer(request):
 
     @pc.on("track")
     def on_track(track):
-        logger.info(f"Track received: {track.kind}")
+        logger.info(f"Track received: {track.kind} (readyState: {track.readyState})")
         if track.kind == "video":
-            videoTrack = VideoStreamTrack(track, pipeline)
+            if is_noop_mode:
+                # Use simple passthrough track that bypasses pipeline
+                videoTrack = NoopVideoStreamTrack(track)
+                logger.info("[Noop] Using noop video passthrough")
+            else:
+                # Use full pipeline processing
+                videoTrack = VideoStreamTrack(track, pipeline)
+            
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
 
-            # Store video track in app for stats.
-            stream_id = track.id
-            request.app["video_tracks"][stream_id] = videoTrack
+            # Store video track in app for stats (only for pipeline mode)
+            if not is_noop_mode:
+                stream_id = track.id
+                request.app["video_tracks"][stream_id] = videoTrack
 
             codec = "video/H264"
             force_codec(pc, sender, codec)
+            
         elif track.kind == "audio":
-            audioTrack = AudioStreamTrack(track, pipeline)
+            logger.info(f"Creating audio track for track {track.id}")
+            
+            if is_noop_mode:
+                # Use simple passthrough track that bypasses pipeline
+                audioTrack = NoopAudioStreamTrack(track)
+                logger.info("[Noop] Using noop audio passthrough")
+            else:
+                # Use full pipeline processing
+                audioTrack = AudioStreamTrack(track, pipeline)
+            
             tracks["audio"] = audioTrack
-            pc.addTrack(audioTrack)
+            sender = pc.addTrack(audioTrack)
+            logger.info(f"Audio track added to peer connection")
 
         @track.on("ended")
         async def on_ended():
@@ -390,14 +483,23 @@ async def offer(request):
 
     await pc.setRemoteDescription(offer)
 
-    # Warm up the pipeline based on detected modalities and SDP content
-    if "m=video" in pc.remoteDescription.sdp and pipeline.requires_video():
-        logger.info("[Offer] Warming up video pipeline")
-        await pipeline.warm_video()
-        
-    if "m=audio" in pc.remoteDescription.sdp and pipeline.requires_audio():
-        logger.info("[Offer] Warming up audio pipeline")
-        await pipeline.warm_audio()
+    # Check transceiver states after negotiation
+    transceivers = pc.getTransceivers()
+    logger.debug(f"[Offer] After negotiation - Total transceivers: {len(transceivers)}")
+    for i, t in enumerate(transceivers):
+        logger.debug(f"[Offer] Transceiver {i}: {t.kind} - direction: {t.direction} - currentDirection: {t.currentDirection}")
+
+    # Warm up the pipeline based on detected modalities and SDP content (skip in noop mode)
+    if not is_noop_mode:
+        if "m=video" in pc.remoteDescription.sdp and pipeline.requires_video():
+            logger.info("[Offer] Warming up video pipeline")
+            await pipeline.warm_video()
+            
+        if "m=audio" in pc.remoteDescription.sdp and pipeline.requires_audio():
+            logger.info("[Offer] Warming up audio pipeline")
+            await pipeline.warm_audio()
+    else:
+        logger.info("[Offer] Skipping pipeline warmup in noop mode")
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)

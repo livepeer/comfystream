@@ -201,7 +201,10 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
    */
   const getVideoDevices = useCallback(async () => {
     try {
-      await navigator.mediaDevices.getUserMedia({ video: true });
+      // Request both video and audio permissions together to avoid conflicts
+      const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      // Stop the permission stream immediately since we only needed it for permissions
+      permissionStream.getTracks().forEach(track => track.stop());
 
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = [
@@ -229,7 +232,8 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
 
   const getAudioDevices = useCallback(async () => {
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Request both video and audio permissions together to avoid conflicts
+      await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       const devices = await navigator.mediaDevices.enumerateDevices();
       const audioDevices = [
         { deviceId: "none", label: "No Audio" },
@@ -243,9 +247,9 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
       ];
 
       setAudioDevices(audioDevices);
-      // Set first available microphone as default if no selection yet.
+      // Set first available microphone (not "No Audio") as default if no selection yet.
       if (selectedAudioDevice == "" && audioDevices.length > 1) {
-        setSelectedAudioDevice(audioDevices[0].deviceId); // Default to "No Audio" due to https://github.com/yondonfu/comfystream/issues/64
+        setSelectedAudioDevice(audioDevices[1].deviceId); // Index 1 because 0 is "No Audio"
       }
     } catch (error) {
       console.error("Failed to get audio devices: ", error);
@@ -486,12 +490,15 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
             accept=".json"
             multiple
             onChange={handlePromptsChange}
-            required={true}
+            required={false}
           />
+          <div className="text-sm text-gray-500">
+            Optional: Leave empty for noop passthrough mode (WebRTC validation)
+          </div>
         </div>
 
         <Button type="submit" className="w-full mt-4 mb-4">
-          Start Stream
+          {prompts.length > 0 ? "Start Stream with Workflow" : "Start Noop Stream (WebRTC Test)"}
         </Button>
       </form>
     </Form>

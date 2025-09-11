@@ -90,12 +90,21 @@ export function usePeer(props: PeerProps): Peer {
       const pc = new RTCPeerConnection(configuration);
       setPeerConnection(pc);
 
+      // Add transceivers for both audio and video if tracks exist
       if (localStream.getVideoTracks().length > 0) {
         pc.addTransceiver("video");
+      }
+      
+      if (localStream.getAudioTracks().length > 0) {
+        pc.addTransceiver("audio");
       }
 
       localStream.getTracks().forEach((track) => {
         pc.addTrack(track, localStream);
+        // Keep essential audio debugging
+        if (track.kind === 'audio') {
+          console.log(`[usePeer] Audio track - enabled: ${track.enabled}, readyState: ${track.readyState}, muted: ${track.muted}`);
+        }
       });
 
       // Create control channel for negotiation and control
