@@ -279,13 +279,13 @@ async def offer(request):
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
     
     # Debug: Log what's in the client's SDP offer
-    logger.info(f"[Offer] Client SDP contains video: {'m=video' in offer.sdp}")
-    logger.info(f"[Offer] Client SDP contains audio: {'m=audio' in offer.sdp}")
+    logger.debug(f"[Offer] Client SDP contains video: {'m=video' in offer.sdp}")
+    logger.debug(f"[Offer] Client SDP contains audio: {'m=audio' in offer.sdp}")
     if "m=audio" in offer.sdp:
         # Extract audio line for debugging
         for line in offer.sdp.split('\n'):
             if line.startswith('m=audio'):
-                logger.info(f"[Offer] Audio media line: {line}")
+                logger.debug(f"[Offer] Audio media line: {line}")
                 break
 
     ice_servers = get_ice_servers()
@@ -305,7 +305,7 @@ async def offer(request):
 
     # Add transceivers for both audio and video if present in the offer
     if "m=video" in offer.sdp:
-        logger.info("[Offer] Adding video transceiver")
+        logger.debug("[Offer] Adding video transceiver")
         video_transceiver = pc.addTransceiver("video", direction="sendrecv")
         caps = RTCRtpSender.getCapabilities("video")
         prefs = list(filter(lambda x: x.name == "H264", caps.codecs))
@@ -316,14 +316,14 @@ async def offer(request):
         h264.MIN_BITRATE = MIN_BITRATE
 
     if "m=audio" in offer.sdp:
-        logger.info("[Offer] Adding audio transceiver")
+        logger.debug("[Offer] Adding audio transceiver")
         audio_transceiver = pc.addTransceiver("audio", direction="sendrecv")
         audio_caps = RTCRtpSender.getCapabilities("audio")
         # Prefer Opus for audio
         audio_prefs = [codec for codec in audio_caps.codecs if codec.name == "opus"]
         if audio_prefs:
             audio_transceiver.setCodecPreferences(audio_prefs)
-            logger.info("[Offer] Set audio transceiver to prefer Opus")
+            logger.debug("[Offer] Set audio transceiver to prefer Opus")
 
     # Handle control channel from client
     @pc.on("datachannel")
@@ -388,45 +388,96 @@ async def offer(request):
                     logger.error(f"[Server] Error processing message: {str(e)}")
 
         elif channel.label == "data":
-            async def forward_text():
-                try:
-                    while channel.readyState == "open":
+            if is_noop_mode:
+                logger.debug("[TextChannel] Noop mode - skipping text output forwarding")
+                # In noop mode, just acknowledge the data channel but don't forward anything
+                @channel.on("open")
+                def on_data_channel_open():
+                    logger.debug("[TextChannel] Data channel opened in noop mode (no text forwarding)")
+            else:
+                if pipeline.produces_text_output():
+                    async def forward_text():
                         try:
-                            # Use timeout to prevent indefinite blocking
-                            text = await asyncio.wait_for(
-                                pipeline.get_text_output(), 
-                                timeout=1.0  # Check every second if channel is still open
-                            )
-                            if channel.readyState == "open":
-                                # Send as JSON string for extensibility
-                                channel.send(json.dumps({"type": "text", "data": text}))
-                        except asyncio.TimeoutError:
-                            # No text available, continue checking
-                            continue
-                        except asyncio.CancelledError:
-                            logger.info("[TextChannel] Forward text task cancelled")
-                            break
-                except Exception as e:
-                    logger.error(f"[TextChannel] Error forwarding text: {e}")
+                            while channel.readyState == "open":
+                                try:
+                                    # Use timeout to prevent indefinite blocking
+                                    text = await asyncio.wait_for(
+                                        pipeline.get_text_output(), 
+                                        timeout=1.0  # Check every second if channel is still open
+                                    )
+                                    if channel.readyState == "open":
+                                        # Send as JSON string for extensibility
+                                        try:
+                                            channel.send(json.dumps({"type": "text", "data": text}))
+                                        except Exception as e:
+                                            logger.debug(f"[TextChannel] Send failed, stopping forwarder: {e}")
+                                            break
+                                except asyncio.TimeoutError:
+                                    # No text available, continue checking
+                                    continue
+                                except asyncio.CancelledError:
+                                    logger.debug("[TextChannel] Forward text task cancelled")
+                                    break
+                        except Exception as e:
+                            logger.error(f"[TextChannel] Error forwarding text: {e}")
 
-            # Store task reference for cleanup in request context
-            forward_task = asyncio.create_task(forward_text())
-            if "data_channel_tasks" not in request.app:
-                request.app["data_channel_tasks"] = set()
-            request.app["data_channel_tasks"].add(forward_task)
-    
+                    # Store task reference for cleanup in request context
+                    forward_task = asyncio.create_task(forward_text())
+                    if "data_channel_tasks" not in request.app:
+                        request.app["data_channel_tasks"] = set()
+                    request.app["data_channel_tasks"].add(forward_task)
+
+                    # Remove task from the set when done
+                    def _remove_forward_task(t):
+                        tasks = request.app.get("data_channel_tasks")
+                        if tasks is not None:
+                            tasks.discard(t)
+                    forward_task.add_done_callback(_remove_forward_task)
+
+                    # Ensure cancellation on channel close event
+                    @channel.on("close")
+                    def on_data_channel_close():
+                        tasks = request.app.get("data_channel_tasks")
+                        if tasks:
+                            for t in list(tasks):
+                                if not t.done():
+                                    t.cancel()
+                else:
+                    logger.debug("[TextChannel] Workflow has no text outputs; not starting forward_text")
 
     @pc.on("track")
     def on_track(track):
         logger.info(f"Track received: {track.kind} (readyState: {track.readyState})")
+        
+        # Check if we already have a track of this type to avoid duplicate track errors
+        if track.kind == "video" and tracks["video"] is not None:
+            logger.debug(f"Video track already exists, ignoring duplicate track event")
+            return
+        elif track.kind == "audio" and tracks["audio"] is not None:
+            logger.debug(f"Audio track already exists, ignoring duplicate track event")
+            return
+            
         if track.kind == "video":
             if is_noop_mode:
                 # Use simple passthrough track that bypasses pipeline
                 videoTrack = NoopVideoStreamTrack(track)
                 logger.info("[Noop] Using noop video passthrough")
             else:
-                # Use full pipeline processing
-                videoTrack = VideoStreamTrack(track, pipeline)
+                # Debug: Check modality detection
+                modalities = pipeline.get_workflow_modalities()
+                requires_video = pipeline.requires_video()
+                current_prompts = getattr(pipeline.client, 'current_prompts', [])
+                logger.debug(f"[Debug] Video track - modalities: {modalities}, requires_video: {requires_video}")
+                logger.debug(f"[Debug] Video track - current_prompts length: {len(current_prompts)}")
+                
+                if requires_video:
+                    # Use full pipeline processing only if workflow requires video
+                    videoTrack = VideoStreamTrack(track, pipeline)
+                    logger.info("[Pipeline] Using video processing pipeline")
+                else:
+                    # Use passthrough for workflows that don't require video processing
+                    videoTrack = NoopVideoStreamTrack(track)
+                    logger.info("[Pipeline] Using video passthrough (workflow doesn't require video)")
             
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
@@ -439,6 +490,7 @@ async def offer(request):
             codec = "video/H264"
             force_codec(pc, sender, codec)
             
+            
         elif track.kind == "audio":
             logger.info(f"Creating audio track for track {track.id}")
             
@@ -447,12 +499,25 @@ async def offer(request):
                 audioTrack = NoopAudioStreamTrack(track)
                 logger.info("[Noop] Using noop audio passthrough")
             else:
-                # Use full pipeline processing
-                audioTrack = AudioStreamTrack(track, pipeline)
+                # Debug: Check modality detection
+                modalities = pipeline.get_workflow_modalities()
+                requires_audio = pipeline.requires_audio()
+                current_prompts = getattr(pipeline.client, 'current_prompts', [])
+                logger.debug(f"[Debug] Audio track - modalities: {modalities}, requires_audio: {requires_audio}")
+                logger.debug(f"[Debug] Audio track - current_prompts length: {len(current_prompts)}")
+                
+                if requires_audio:
+                    # Use full pipeline processing only if workflow requires audio
+                    audioTrack = AudioStreamTrack(track, pipeline)
+                    logger.info("[Pipeline] Using audio processing pipeline")
+                else:
+                    # Use passthrough for workflows that don't require audio processing
+                    audioTrack = NoopAudioStreamTrack(track)
+                    logger.info("[Pipeline] Using audio passthrough (workflow doesn't require audio)")
             
             tracks["audio"] = audioTrack
             sender = pc.addTrack(audioTrack)
-            logger.info(f"Audio track added to peer connection")
+            logger.debug(f"Audio track added to peer connection")
 
         @track.on("ended")
         async def on_ended():
@@ -491,15 +556,15 @@ async def offer(request):
 
     # Warm up the pipeline based on detected modalities and SDP content (skip in noop mode)
     if not is_noop_mode:
-        if "m=video" in pc.remoteDescription.sdp and pipeline.requires_video():
+        if "m=video" in pc.remoteDescription.sdp and pipeline.accepts_video_input():
             logger.info("[Offer] Warming up video pipeline")
             await pipeline.warm_video()
             
-        if "m=audio" in pc.remoteDescription.sdp and pipeline.requires_audio():
+        if "m=audio" in pc.remoteDescription.sdp and pipeline.accepts_audio_input():
             logger.info("[Offer] Warming up audio pipeline")
             await pipeline.warm_audio()
     else:
-        logger.info("[Offer] Skipping pipeline warmup in noop mode")
+        logger.debug("[Offer] Skipping pipeline warmup in noop mode")
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -527,85 +592,6 @@ async def set_prompt(request):
     await pipeline.set_prompts(prompt)
 
     return web.Response(content_type="application/json", text="OK")
-
-async def warmup_pipeline(request):
-    """HTTP endpoint to warmup the pipeline with a specific workflow.
-    
-    This endpoint:
-    1. Cancels all running prompts
-    2. Clears all queues and performs cleanup
-    3. Sets the new prompt and warms up the pipeline
-    4. Only warms the modalities detected in the workflow
-    """
-    pipeline = request.app["pipeline"]
-    
-    try:
-        # Parse the request body
-        data = await request.json()
-        prompts = data.get("prompts")
-        
-        if not prompts:
-            return web.Response(
-                content_type="application/json",
-                status=400,
-                text=json.dumps({"error": "Missing 'prompts' field in request body"})
-            )
-        
-        logger.info("Starting pipeline warmup with new workflow")
-        
-        # Step 1: Cancel running prompts and cleanup - ensure complete cleanup
-        await pipeline.cleanup()
-        logger.info("Pipeline cleanup completed")
-        
-        # Step 2: Set new prompts (this will also detect modalities)
-        # The cleanup() method ensures all previous prompts are cancelled before proceeding
-        await pipeline.set_prompts(prompts)
-        logger.info("New prompts set successfully")
-        
-        # Step 3: Detect modalities and warm up accordingly
-        modalities = pipeline.get_modalities()
-        logger.info(f"Detected modalities: {modalities}")
-        
-        warmup_results = {}
-        
-        # Warm up video if video modality is detected
-        if "video" in modalities:
-            logger.info("Warming up video pipeline")
-            await pipeline.warm_video()
-            warmup_results["video"] = "warmed"
-            logger.info("Video pipeline warmup completed")
-        else:
-            warmup_results["video"] = "skipped"
-            
-        # Warm up audio if audio modality is detected  
-        if "audio" in modalities:
-            logger.info("Warming up audio pipeline")
-            await pipeline.warm_audio()
-            warmup_results["audio"] = "warmed"
-            logger.info("Audio pipeline warmup completed")
-        else:
-            warmup_results["audio"] = "skipped"
-            
-        logger.info("Pipeline warmup completed successfully")
-        
-        return web.Response(
-            content_type="application/json",
-            text=json.dumps({
-                "success": True,
-                "message": "Pipeline warmed up successfully",
-                "modalities": list(modalities),
-                "warmup_results": warmup_results
-            })
-        )
-        
-    except Exception as e:
-        logger.error(f"Error during pipeline warmup: {str(e)}")
-        return web.Response(
-            content_type="application/json", 
-            status=500,
-            text=json.dumps({"error": f"Pipeline warmup failed"})
-        )
-    
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
@@ -706,7 +692,6 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
-    app.router.add_post("/warmup", warmup_pipeline)
     
     # Setup HTTP streaming routes
     setup_routes(app, cors)
