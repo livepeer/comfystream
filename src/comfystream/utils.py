@@ -69,9 +69,6 @@ def convert_prompt(prompt: PromptDictInput) -> Prompt:
     # Allow up to three outputs in total
     if num_outputs > 3:
         raise Exception("too many outputs in prompt")
-    
-    if num_outputs == 0:
-        raise Exception("missing output")
 
     if num_primary_inputs + num_inputs == 0:
         raise Exception("missing input")
@@ -146,7 +143,7 @@ def detect_prompt_modalities(prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]
         "LoadTensor", "PrimaryInputLoadImage", "LoadImage"
     }
     audio_input_nodes = {
-        "LoadAudioTensor", "LoadAudioTensorStream"
+        "LoadAudioTensor"
     }
     
     for node_id, node_data in prompt.items():
