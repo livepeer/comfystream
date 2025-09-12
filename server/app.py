@@ -453,16 +453,9 @@ async def offer(request):
                 videoTrack = NoopVideoStreamTrack(track)
                 logger.info("[Noop] Using noop video passthrough")
             else:
-                requires_video = pipeline.requires_video()
-                
-                if requires_video:
-                    # Use full pipeline processing only if workflow requires video
-                    videoTrack = VideoStreamTrack(track, pipeline)
-                    logger.info("[Pipeline] Using video processing pipeline")
-                else:
-                    # Use passthrough for workflows that don't require video processing
-                    videoTrack = NoopVideoStreamTrack(track)
-                    logger.info("[Pipeline] Using video passthrough (workflow doesn't require video)")
+                # Always use pipeline processing - it handles passthrough internally based on workflow
+                videoTrack = VideoStreamTrack(track, pipeline)
+                logger.info("[Pipeline] Using video processing pipeline")
             
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
@@ -484,16 +477,9 @@ async def offer(request):
                 audioTrack = NoopAudioStreamTrack(track)
                 logger.info("[Noop] Using noop audio passthrough")
             else:
-                requires_audio = pipeline.requires_audio()
-                
-                if requires_audio:
-                    # Use full pipeline processing only if workflow requires audio
-                    audioTrack = AudioStreamTrack(track, pipeline)
-                    logger.info("[Pipeline] Using audio processing pipeline")
-                else:
-                    # Use passthrough for workflows that don't require audio processing
-                    audioTrack = NoopAudioStreamTrack(track)
-                    logger.info("[Pipeline] Using audio passthrough (workflow doesn't require audio)")
+                # Always use pipeline processing - it handles passthrough internally based on workflow
+                audioTrack = AudioStreamTrack(track, pipeline)
+                logger.info("[Pipeline] Using audio processing pipeline")
             
             tracks["audio"] = audioTrack
             sender = pc.addTrack(audioTrack)
