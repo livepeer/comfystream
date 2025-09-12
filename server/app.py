@@ -278,16 +278,6 @@ async def offer(request):
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
     
-    # Debug: Log what's in the client's SDP offer
-    logger.debug(f"[Offer] Client SDP contains video: {'m=video' in offer.sdp}")
-    logger.debug(f"[Offer] Client SDP contains audio: {'m=audio' in offer.sdp}")
-    if "m=audio" in offer.sdp:
-        # Extract audio line for debugging
-        for line in offer.sdp.split('\n'):
-            if line.startswith('m=audio'):
-                logger.debug(f"[Offer] Audio media line: {line}")
-                break
-
     ice_servers = get_ice_servers()
     if len(ice_servers) > 0:
         pc = RTCPeerConnection(

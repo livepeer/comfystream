@@ -1,5 +1,3 @@
-import json
-
 from comfystream import tensor_cache
 
 class SaveTextTensor:
