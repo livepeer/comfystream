@@ -146,16 +146,14 @@ export const TextOutputViewer: React.FC<TextOutputViewerProps> = ({
                   key={segment.id}
                   className="group relative bg-slate-800/50 rounded-lg p-3 border border-slate-700/50 hover:bg-slate-800/70 transition-colors"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className="text-xs text-gray-400 font-mono mt-0.5 flex-shrink-0">
+                      {formatTime(segment.timestamp)}
+                    </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-white leading-relaxed break-words">
                         {segment.text}
                       </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-xs text-gray-400 font-mono">
-                        {formatTime(segment.timestamp)}
-                      </span>
                     </div>
                   </div>
                   
