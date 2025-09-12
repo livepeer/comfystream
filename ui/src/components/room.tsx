@@ -258,17 +258,15 @@ function Stage({ connected, onStreamReady, onComfyUIReady, resolution, backendUr
 
   if (!connected || !remoteStream) {
     return (
-      <>
-        <video 
-          className="w-full h-full object-cover" 
-          autoPlay 
-          loop 
-          playsInline
-          style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
-        >
-          <source src="/loading.mp4" type="video/mp4" />
-        </video>
-      </>
+      <div 
+        className="relative w-full h-full flex items-center justify-center bg-black"
+        style={{ aspectRatio: `${resolution.width}/${resolution.height}` }}
+      >
+        <div className="flex flex-col items-center space-y-3">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-white"></div>
+          <p className="text-white text-center opacity-80">Waiting for stream...</p>
+        </div>
+      </div>
     );
   }
 

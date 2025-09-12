@@ -34,6 +34,7 @@ import {
   useState,
   createContext,
   useContext,
+  useRef,
 } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -196,88 +197,76 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
     defaultValues: config,
   });
 
-  /**
-   * Retrieves the list of video devices available on the user's device.
-   */
-  const getVideoDevices = useCallback(async () => {
+  // Ensure we request permissions once and enumerate devices without racing
+  const isEnumeratingRef = useRef(false);
+  const hasRequestedPermissionRef = useRef(false);
+
+  const refreshDevices = useCallback(async () => {
+    if (isEnumeratingRef.current) return;
+    isEnumeratingRef.current = true;
     try {
-      // Request both video and audio permissions together to avoid conflicts
-      const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      // Stop the permission stream immediately since we only needed it for permissions
-      permissionStream.getTracks().forEach(track => track.stop());
+      // Request permissions once per session if needed
+      if (!hasRequestedPermissionRef.current) {
+        try {
+          const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          permissionStream.getTracks().forEach(track => track.stop());
+          hasRequestedPermissionRef.current = true;
+        } catch (err) {
+          // If permission denied or device busy, continue to enumerateDevices so we can still list placeholders
+          console.warn("Media permission request failed; proceeding to enumerate devices:", err);
+        }
+      }
 
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = [
+
+      const nextVideoDevices: AVDevice[] = [
         { deviceId: "none", label: "No Video" },
         ...devices
-          .filter((device) => device.kind === "videoinput")
-          .map((device) => ({
-            deviceId: device.deviceId,
-            label: device.label || `Camera ${device.deviceId.slice(0, 5)}...`,
+          .filter((d) => d.kind === "videoinput")
+          .map((d) => ({
+            deviceId: d.deviceId,
+            label: d.label || `Camera ${d.deviceId.slice(0, 5)}...`,
           })),
       ];
+      setVideoDevices(nextVideoDevices);
 
-      setVideoDevices(videoDevices);
-      // Set first available camera as default if no selection yet.
-      if (selectedVideoDevice == "" && videoDevices.length > 1) {
-        setSelectedVideoDevice(videoDevices[1].deviceId); // Index 1 because 0 is "No Video"
-      }
-    } catch (error) {
-      console.log(`Failed to get video devices: ${error}`);
-      toast.error("Failed to get video devices", {
-        description: "Please make sure your camera is connected and enabled.",
-      });
-    }
-  }, [selectedVideoDevice]);
-
-  const getAudioDevices = useCallback(async () => {
-    try {
-      // Request both video and audio permissions together to avoid conflicts
-      await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioDevices = [
+      const nextAudioDevices: AVDevice[] = [
         { deviceId: "none", label: "No Audio" },
         ...devices
-          .filter((device) => device.kind === "audioinput")
-          .map((device) => ({
-            deviceId: device.deviceId,
-            label:
-              device.label || `Microphone ${device.deviceId.slice(0, 5)}...`,
+          .filter((d) => d.kind === "audioinput")
+          .map((d) => ({
+            deviceId: d.deviceId,
+            label: d.label || `Microphone ${d.deviceId.slice(0, 5)}...`,
           })),
       ];
+      setAudioDevices(nextAudioDevices);
 
-      setAudioDevices(audioDevices);
-      // Set first available microphone (not "No Audio") as default if no selection yet.
-      if (selectedAudioDevice == "" && audioDevices.length > 1) {
-        setSelectedAudioDevice(audioDevices[1].deviceId); // Index 1 because 0 is "No Audio"
+      // Set defaults only if nothing selected yet
+      if (selectedVideoDevice === "" && nextVideoDevices.length > 1) {
+        setSelectedVideoDevice(nextVideoDevices[1].deviceId);
+      }
+      if (selectedAudioDevice === "" && nextAudioDevices.length > 1) {
+        setSelectedAudioDevice(nextAudioDevices[1].deviceId);
       }
     } catch (error) {
-      console.error("Failed to get audio devices: ", error);
-      toast.error("Failed to get audio devices", {
-        description:
-          "Please make sure your microphone is connected and enabled.",
+      console.error("Failed to enumerate devices:", error);
+      toast.error("Failed to list media devices", {
+        description: "Check camera/microphone permissions and connection.",
       });
+    } finally {
+      isEnumeratingRef.current = false;
     }
-  }, [selectedAudioDevice]);
+  }, [selectedVideoDevice, selectedAudioDevice]);
 
-  // Handle device change events.
+  // Handle device change events with a single enumerator.
   useEffect(() => {
-    getVideoDevices();
-    getAudioDevices();
-    navigator.mediaDevices.addEventListener("devicechange", getVideoDevices);
-    navigator.mediaDevices.addEventListener("devicechange", getAudioDevices);
-
+    refreshDevices();
+    const handler = () => refreshDevices();
+    navigator.mediaDevices.addEventListener("devicechange", handler);
     return () => {
-      navigator.mediaDevices.removeEventListener(
-        "devicechange",
-        getVideoDevices,
-      );
-      navigator.mediaDevices.removeEventListener(
-        "devicechange",
-        getAudioDevices,
-      );
+      navigator.mediaDevices.removeEventListener("devicechange", handler);
     };
-  }, [getVideoDevices, getAudioDevices]);
+  }, [refreshDevices]);
 
   const handleSubmit = (values: z.infer<typeof formSchema>) => {
     onSubmit({
