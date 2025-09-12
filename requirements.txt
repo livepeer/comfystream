@@ -7,3 +7,4 @@ toml
 twilio
 prometheus_client
 librosa
+pytrickle @ git+https://github.com/livepeer/pytrickle.git@e58a8b0b5ebf93a02a4866c448a993e77021fb54
