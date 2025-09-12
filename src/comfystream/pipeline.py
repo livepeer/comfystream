@@ -7,8 +7,8 @@ from typing import Any, Dict, Union, List, Optional, Set
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
-from comfystream.utils import detect_prompt_modalities, detect_io_points, WorkflowModality
-from comfystream.utils import _create_empty_workflow_modality
+from .modalities import detect_prompt_modalities, detect_io_points, WorkflowModality
+from .modalities import create_empty_workflow_modality
                 
 WARMUP_RUNS = 5
 
@@ -312,7 +312,7 @@ class Pipeline:
         if self._cached_io_capabilities is None:
             if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
                 # Return empty capabilities if no prompts
-                return _create_empty_workflow_modality()
+                return create_empty_workflow_modality()
             
             self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
         
