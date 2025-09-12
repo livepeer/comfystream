@@ -14,7 +14,12 @@ import asyncio
 from abc import ABC, abstractmethod
 import threading
 
-# Logging will be configured by the main application
+# Configure logging to output to console
+logging.basicConfig(
+    level=logging.INFO,
+    format='[ComfyStream] %(message)s',
+    stream=sys.stdout
+)
 
 # Set up Windows specific event loop policy
 if sys.platform == 'win32':
