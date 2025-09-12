@@ -348,11 +348,11 @@ export const Room = () => {
   const [isTranscriptionPanelOpen, setIsTranscriptionPanelOpen] = useState(true);
 
   // Helper to get timestamped filenames
-  const getFilename = (type: 'input' | 'output') => {
+  const getFilename = (type: 'input' | 'output', extension: string) => {
     const now = new Date();
     const pad = (n: number) => n.toString().padStart(2, '0');
     const ts = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    return `recording_${type}_${ts}.mp4`;
+    return `recording_${type}_${ts}.${extension}`;
   };
 
   const [config, setConfig] = useState<StreamConfig>({
@@ -422,16 +422,41 @@ export const Room = () => {
     showToast("Stream disconnected", "error");
   }, [showToast]);
 
-  // Helper to get a supported mimeType for MediaRecorder
-  function getSupportedMimeType() {
-    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      return 'video/webm;codecs=vp8';
-    } else if (MediaRecorder.isTypeSupported('video/webm')) {
-      return 'video/webm';
-    } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-      return 'video/mp4';
+  // Helper to choose a supported mimeType for a given stream
+  function chooseMimeForStream(stream: MediaStream): { mimeType: string | undefined; extension: string } {
+    const hasAudio = stream.getAudioTracks().length > 0;
+    const hasVideo = stream.getVideoTracks().length > 0;
+
+    // Try best combinations first
+    const candidates: { mimeType: string; extension: string }[] = [];
+
+    if (hasAudio && hasVideo) {
+      candidates.push(
+        { mimeType: 'video/webm;codecs=vp9,opus', extension: 'webm' },
+        { mimeType: 'video/webm;codecs=vp8,opus', extension: 'webm' },
+        { mimeType: 'video/webm', extension: 'webm' }
+      );
+    } else if (hasVideo) {
+      candidates.push(
+        { mimeType: 'video/webm;codecs=vp9', extension: 'webm' },
+        { mimeType: 'video/webm;codecs=vp8', extension: 'webm' },
+        { mimeType: 'video/webm', extension: 'webm' }
+      );
+    } else if (hasAudio) {
+      candidates.push(
+        { mimeType: 'audio/webm;codecs=opus', extension: 'webm' },
+        { mimeType: 'audio/webm', extension: 'webm' }
+      );
     }
-    return '';
+
+    for (const { mimeType, extension } of candidates) {
+      if ((window as any).MediaRecorder && MediaRecorder.isTypeSupported(mimeType)) {
+        return { mimeType, extension };
+      }
+    }
+
+    // Fallback: let browser choose default; pick a sensible extension
+    return { mimeType: undefined, extension: hasAudio && !hasVideo ? 'webm' : 'webm' };
   }
 
   // Helper to generate a unique ID
@@ -486,15 +511,17 @@ export const Room = () => {
   // Start recording both streams
   const startRecording = () => {
     if (isRecording) return;
-    const mimeType = getSupportedMimeType();
     if (localStream) {
+      const { mimeType, extension } = chooseMimeForStream(localStream);
       inputChunksRef.current = [];
       const inputRecorder = new MediaRecorder(localStream, mimeType ? { mimeType } : undefined);
       inputRecorder.ondataavailable = (e) => e.data.size && inputChunksRef.current.push(e.data);
       inputRecorder.onstop = () => {
-        const filename = getFilename('input');
-        const blob = new Blob(inputChunksRef.current, { type: mimeType });
-        fixWebmDuration(blob).then(fixedBlob => {
+        const filename = getFilename('input', extension);
+        const finalType = mimeType ?? (extension === 'webm' ? 'video/webm' : 'application/octet-stream');
+        const blob = new Blob(inputChunksRef.current, { type: finalType });
+        const maybeFix = extension === 'webm' ? fixWebmDuration(blob) : Promise.resolve(blob);
+        maybeFix.then(fixedBlob => {
           saveRecording('input', filename, fixedBlob);
         });
       };
@@ -502,13 +529,16 @@ export const Room = () => {
       inputRecorderRef.current = inputRecorder;
     }
     if (outputStream) {
+      const { mimeType, extension } = chooseMimeForStream(outputStream);
       outputChunksRef.current = [];
       const outputRecorder = new MediaRecorder(outputStream, mimeType ? { mimeType } : undefined);
       outputRecorder.ondataavailable = (e) => e.data.size && outputChunksRef.current.push(e.data);
       outputRecorder.onstop = () => {
-        const filename = getFilename('output');
-        const blob = new Blob(outputChunksRef.current, { type: mimeType });
-        fixWebmDuration(blob).then(fixedBlob => {
+        const filename = getFilename('output', extension);
+        const finalType = mimeType ?? (extension === 'webm' ? 'video/webm' : 'application/octet-stream');
+        const blob = new Blob(outputChunksRef.current, { type: finalType });
+        const maybeFix = extension === 'webm' ? fixWebmDuration(blob) : Promise.resolve(blob);
+        maybeFix.then(fixedBlob => {
           saveRecording('output', filename, fixedBlob);
         });
       };
