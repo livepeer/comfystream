@@ -604,6 +604,43 @@ export const Room = () => {
               </div>
             </div>
 
+            {/* Text Output toggle under videos */}
+            {isConnected && (
+              <div className="w-full flex justify-center mt-4">
+                <button
+                  onClick={() => setIsTranscriptionPanelOpen(!isTranscriptionPanelOpen)}
+                  className={`h-10 px-4 rounded-full shadow-lg flex items-center justify-center transition-colors ${
+                    isTranscriptionPanelOpen 
+                      ? 'bg-green-600 text-white hover:bg-green-700' 
+                      : 'bg-purple-600 text-white hover:bg-purple-700'
+                  }`}
+                  title={isTranscriptionPanelOpen ? 'Hide Text Output' : 'Show Text Output'}
+                >
+                  {isTranscriptionPanelOpen ? (
+                    // eye-off icon
+                    <span className="flex items-center gap-2">
+                      <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-eye-off">
+                        <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.86-1.99 2.28-3.73 4-5.05"></path>
+                        <path d="M10.58 10.58a2 2 0 0 0 2.84 2.84"></path>
+                        <path d="M16 12a4 4 0 0 0-4-4"></path>
+                        <path d="M1 1l22 22"></path>
+                      </svg>
+                      <span>Hide Text Output</span>
+                    </span>
+                  ) : (
+                    // eye icon
+                    <span className="flex items-center gap-2">
+                      <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-eye">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                      <span>Show Text Output</span>
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Button group: Record, Show Recordings, Gear */}
             <div className="fixed top-4 right-4 flex flex-row items-end space-x-4 z-50">
               {/* Stream Settings button (shown when not streaming) */}
@@ -644,25 +681,7 @@ export const Room = () => {
                   )}
                 </button>
               )}
-              {/* Transcription toggle button */}
-              {isConnected && (
-                <button
-                  onClick={() => setIsTranscriptionPanelOpen(!isTranscriptionPanelOpen)}
-                  className={`h-12 w-12 rounded-full shadow-lg flex items-center justify-center transition-colors ${
-                    isTranscriptionPanelOpen 
-                      ? 'bg-green-600 text-white hover:bg-green-700' 
-                      : 'bg-purple-600 text-white hover:bg-purple-700'
-                  }`}
-                  title={isTranscriptionPanelOpen ? 'Hide Transcription' : 'Show Transcription'}
-                >
-                  <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-mic">
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                    <line x1="12" y1="19" x2="12" y2="23"></line>
-                    <line x1="8" y1="23" x2="16" y2="23"></line>
-                  </svg>
-                </button>
-              )}
+              {/* Text Output toggle removed from here */}
               {/* Show Recordings button (always rightmost) */}
               <button
                 onClick={() => setIsRecordingsPanelOpen(true)}
@@ -672,19 +691,11 @@ export const Room = () => {
                 <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-film"><rect x="2" y="7" width="20" height="10" rx="2" ry="2"></rect><path d="M6 7V5M6 19v-2M18 7V5M18 19v-2"></path></svg>
               </button>
             </div>
-            {/* Transcription Side Panel */}
-            {isConnected && isTranscriptionPanelOpen && (
-              <div className="fixed inset-0 z-40 flex justify-end">
-                <div className="fixed inset-0 bg-black/30" onClick={() => setIsTranscriptionPanelOpen(false)} />
-                <div className="relative w-full max-w-md shadow-xl overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 80px)', marginTop: '80px' }}>
-                  <button
-                    onClick={() => setIsTranscriptionPanelOpen(false)}
-                    className="absolute top-4 right-4 z-10 text-2xl text-gray-400 hover:text-white"
-                    title="Close"
-                  >×</button>
-                  <div className="flex-1 p-4 overflow-hidden">
-                    <TranscriptionViewerWrapper />
-                  </div>
+            {/* Text Output Panel (below videos) - kept mounted to preserve content */}
+            {isConnected && (
+              <div className={`w-full flex justify-center px-4 mt-4 ${isTranscriptionPanelOpen ? '' : 'hidden'}`}>
+                <div className="w-full max-w-[1040px]">
+                  <TranscriptionViewerWrapper />
                 </div>
               </div>
             )}

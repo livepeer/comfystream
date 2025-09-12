@@ -493,12 +493,12 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
             required={false}
           />
           <div className="text-sm text-gray-500">
-            Optional: Leave empty for noop passthrough mode (WebRTC validation)
+            Optional: Leave empty for passthrough mode
           </div>
         </div>
 
         <Button type="submit" className="w-full mt-4 mb-4">
-          {prompts.length > 0 ? "Start Stream with Workflow" : "Start Noop Stream (WebRTC Test)"}
+          {prompts.length > 0 ? "Start Stream with Workflow" : "Start Passthrough Stream"}
         </Button>
       </form>
     </Form>
