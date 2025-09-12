@@ -3,5 +3,5 @@ export interface Peer {
   remoteStream: MediaStream | null;
   controlChannel: RTCDataChannel | null;
   dataChannel: RTCDataChannel | null;
-  transcriptionData: string | null;
+  textOutputData: string | null;
 }

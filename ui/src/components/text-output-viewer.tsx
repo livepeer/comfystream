@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,98 +6,79 @@ import { Button } from '@/components/ui/button';
 import { MessageSquare, Copy, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-interface TranscriptionSegment {
+interface TextOutputSegment {
   id: string;
   text: string;
   timestamp: Date;
-  confidence?: number;
   isProcessing?: boolean;
 }
 
-interface TranscriptionViewerProps {
+interface TextOutputViewerProps {
   isConnected: boolean;
-  transcriptionData?: string;
+  textOutputData?: string;
 }
 
-export const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({
+export const TextOutputViewer: React.FC<TextOutputViewerProps> = ({
   isConnected,
-  transcriptionData,
+  textOutputData,
 }) => {
-  const [segments, setSegments] = useState<TranscriptionSegment[]>([]);
+  const [segments, setSegments] = useState<TextOutputSegment[]>([]);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to top where newest messages appear
   useEffect(() => {
     if (scrollAreaRef.current) {
       scrollAreaRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [segments]);
 
-  // Process incoming transcription data
   useEffect(() => {
-    if (!transcriptionData) return;
+    if (!textOutputData) return;
 
     try {
-      // Handle different formats: text, json_segments, or json_words
-      let newSegments: TranscriptionSegment[] = [];
-      
-      if (transcriptionData.startsWith('[') || transcriptionData.startsWith('{')) {
-        // JSON format
-        const parsed = JSON.parse(transcriptionData);
+      let newSegments: TextOutputSegment[] = [];
+      if (textOutputData.startsWith('[') || textOutputData.startsWith('{')) {
+        const parsed = JSON.parse(textOutputData);
         if (Array.isArray(parsed)) {
-          // json_segments or json_words format
-          newSegments = parsed.map((item, index) => ({
+          newSegments = parsed.map((item: any, index: number) => ({
             id: `${Date.now()}-${index}`,
             text: item.text || item.word || '',
             timestamp: new Date(),
-            confidence: item.probability || 0.9,
           })).filter(seg => seg.text.trim() && !seg.text.includes('__WARMUP_SENTINEL__'));
         }
-      } else if (typeof transcriptionData === 'string' && transcriptionData.trim()) {
-        // Plain text format
-        if (!transcriptionData.includes('__WARMUP_SENTINEL__')) {
+      } else if (typeof textOutputData === 'string' && textOutputData.trim()) {
+        if (!textOutputData.includes('__WARMUP_SENTINEL__')) {
           newSegments = [{
             id: `${Date.now()}`,
-            text: transcriptionData.trim(),
+            text: textOutputData.trim(),
             timestamp: new Date(),
-            confidence: 0.9,
           }];
         }
       }
 
       if (newSegments.length > 0) {
-        // Insert newest segments at the beginning (newest-first ordering)
         setSegments(prev => [...newSegments, ...prev].slice(0, 50));
       }
     } catch (error) {
-      console.error('Error parsing transcription data:', error);
+      console.error('Error parsing text output data:', error);
     }
-  }, [transcriptionData]);
+  }, [textOutputData]);
 
   const copyAllText = () => {
-    // Copy in chronological order (oldest first)
     const allText = [...segments]
       .reverse()
       .map(seg => `[${formatTime(seg.timestamp)}] ${seg.text}`)
       .join('\n');
     navigator.clipboard.writeText(allText);
-    toast.success('Transcription copied to clipboard');
+    toast.success('Text copied to clipboard');
   };
 
-  const clearTranscriptions = () => {
+  const clearText = () => {
     setSegments([]);
-    toast.success('Transcriptions cleared');
+    toast.success('Text cleared');
   };
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
-
-  const getConfidenceColor = (confidence?: number) => {
-    if (!confidence) return 'bg-gray-500';
-    if (confidence >= 0.8) return 'bg-green-500';
-    if (confidence >= 0.6) return 'bg-yellow-500';
-    return 'bg-red-500';
   };
 
   return (
@@ -138,7 +117,7 @@ export const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({
             <Button
               variant="ghost"
               size="sm"
-              onClick={clearTranscriptions}
+              onClick={clearText}
               disabled={segments.length === 0}
               className="text-xs text-gray-400 hover:text-gray-300"
             >
@@ -174,21 +153,12 @@ export const TranscriptionViewer: React.FC<TranscriptionViewerProps> = ({
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {segment.confidence && (
-                        <div className="flex items-center gap-1">
-                          <div 
-                            className={`w-2 h-2 rounded-full ${getConfidenceColor(segment.confidence)}`}
-                            title={`Confidence: ${Math.round(segment.confidence * 100)}%`}
-                          />
-                        </div>
-                      )}
                       <span className="text-xs text-gray-400 font-mono">
                         {formatTime(segment.timestamp)}
                       </span>
                     </div>
                   </div>
                   
-                  {/* Copy button for individual segment */}
                   <Button
                     variant="ghost"
                     size="sm"

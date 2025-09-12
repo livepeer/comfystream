@@ -17,7 +17,7 @@ export function usePeer(props: PeerProps): Peer {
     null,
   );
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
-  const [transcriptionData, setTranscriptionData] = useState<string | null>(null);
+  const [textOutputData, setTextOutputData] = useState<string | null>(null);
 
   const connectionStateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -90,7 +90,6 @@ export function usePeer(props: PeerProps): Peer {
       const pc = new RTCPeerConnection(configuration);
       setPeerConnection(pc);
 
-      // Add transceivers for both audio and video if tracks exist
       if (localStream.getVideoTracks().length > 0) {
         pc.addTransceiver("video");
       }
@@ -101,20 +100,17 @@ export function usePeer(props: PeerProps): Peer {
 
       localStream.getTracks().forEach((track) => {
         pc.addTrack(track, localStream);
-        // Keep essential audio debugging
         if (track.kind === 'audio') {
           console.log(`[usePeer] Audio track - enabled: ${track.enabled}, readyState: ${track.readyState}, muted: ${track.muted}`);
         }
       });
 
-      // Create control channel for negotiation and control
       const control = pc.createDataChannel("control");
       setControlChannel(control);
 
       control.onopen = () => {
         console.log("[usePeer] Control channel opened, readyState:", control.readyState);
 
-        // Send resolution configuration to server if available
         if (props.resolution) {
           setTimeout(() => {
             const resolution = props.resolution!;
@@ -142,7 +138,6 @@ export function usePeer(props: PeerProps): Peer {
         console.error("Control channel error:", error);
       };
 
-      // Create data channel for transcription or other data
       const data = pc.createDataChannel("data");
       setDataChannel(data);
 
@@ -160,7 +155,7 @@ export function usePeer(props: PeerProps): Peer {
           const message = JSON.parse(event.data);
           if (message.type === "text") {
             console.log("[usePeer] Received text data:", message.data);
-            setTranscriptionData(message.data);
+            setTextOutputData(message.data);
           } else {
             console.warn("[usePeer] Unknown message type:", message.type);
           }
@@ -208,7 +203,7 @@ export function usePeer(props: PeerProps): Peer {
         peerConnection.close();
       }
       setControlChannel(null);
-      setDataChannel(null); // Reset the data channel
+      setDataChannel(null);
       setRemoteStream(null);
       setPeerConnection(null);
     }
@@ -222,7 +217,6 @@ export function usePeer(props: PeerProps): Peer {
     props.resolution,
   ]);
 
-  // Update resolution when it changes
   useEffect(() => {
     if (controlChannel && controlChannel.readyState === "open" && props.resolution) {
       const resolution = props.resolution;
@@ -241,6 +235,6 @@ export function usePeer(props: PeerProps): Peer {
     remoteStream,
     controlChannel,
     dataChannel,
-    transcriptionData,
+    textOutputData,
   };
 }

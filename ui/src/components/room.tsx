@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/tooltip";
 import { ControlPanelsContainer } from "@/components/control-panels-container";
 import { StreamControl } from "@/components/stream-control";
-import { TranscriptionViewer } from "@/components/transcription-viewer";
+import { TextOutputViewer } from "@/components/text-output-viewer";
 import fixWebmDuration from 'webm-duration-fix';
 import { set, get, del, keys } from 'idb-keyval';
 import { Drawer, DrawerContent, DrawerTitle } from "./ui/drawer";
@@ -60,9 +60,9 @@ function TranscriptionViewerWrapper() {
   const peer = usePeerContext();
   
   return (
-    <TranscriptionViewer 
+    <TextOutputViewer 
       isConnected={!!peer?.peerConnection && peer.peerConnection.connectionState === 'connected'}
-      transcriptionData={peer?.transcriptionData || undefined}
+      textOutputData={peer?.textOutputData || undefined}
     />
   );
 }
