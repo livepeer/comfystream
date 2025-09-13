@@ -5,7 +5,6 @@ from .pitch_shift import PitchShifter
 
 NODE_CLASS_MAPPINGS = {
     "LoadAudioTensor": LoadAudioTensor,
-    "LoadAudioTensorStream": LoadAudioTensorStream,
     "SaveAudioTensor": SaveAudioTensor,
     "PitchShifter": PitchShifter,
 }

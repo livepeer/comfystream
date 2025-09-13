@@ -3,12 +3,14 @@ import torch
 import numpy as np
 import asyncio
 import logging
-from typing import Any, Dict, Union, List, Optional, Callable, Awaitable
+from typing import Any, Dict, Union, List, Optional, Callable, Awaitable, Set
 
 from comfystream.client import ComfyStreamClient
 from comfystream.utils import detect_prompt_modalities
 from comfystream.server.utils import temporary_log_level
-
+from .modalities import detect_prompt_modalities, detect_io_points, WorkflowModality
+from .modalities import create_empty_workflow_modality
+                
 WARMUP_RUNS = 3  # Reduced since we're using larger frames and longer processing times
 
 logger = logging.getLogger(__name__)
@@ -49,68 +51,40 @@ class Pipeline:
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
-        
-        # Cache modalities to avoid recomputing on every frame
-        self._cached_modalities: Optional[Dict[str, Dict[str, bool]]] = None
-        
-        # Text monitoring
-        self._text_callback: Optional[Callable[[str], Awaitable[bool]]] = None
-        self._text_monitor_task: Optional[asyncio.Task] = None
-        self._text_monitor_stop_event = asyncio.Event()
-        self._text_monitoring_active = False
+        self._cached_modalities: Optional[Set[str]] = None
+        self._cached_io_capabilities: Optional[WorkflowModality] = None
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
-        # Only warm if the current workflow actually has video outputs
-        modalities = self._cached_modalities or detect_prompt_modalities(self.client.current_prompts)
-        if not modalities.get("video", {}).get("output", False):
-            logger.info("Skipping video warmup - no video outputs in current workflow")
+        # Only warm if workflow accepts video input
+        if not self.accepts_video_input():
+            logger.debug("Skipping video warmup - workflow doesn't accept video input")
             return
             
         # Create dummy frame with the CURRENT resolution settings
         dummy_frame = av.VideoFrame()
         dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
         
-        logger.info(f"Warming video pipeline with resolution {self.width}x{self.height}")
-        successful_runs = 0
+        logger.debug(f"Warming video pipeline with resolution {self.width}x{self.height}")
 
-        # Use longer timeout for warmup since first runs need to load models
-        warmup_timeout = max(self.video_processing_timeout * 5, 25.0)  # At least 25s, or 5x normal timeout
-        
-        for run_idx in range(WARMUP_RUNS):
-            logger.info(f"Starting video warmup run {run_idx + 1}/{WARMUP_RUNS}")
+        for _ in range(WARMUP_RUNS):
             self.client.put_video_input(dummy_frame)
-            try:
-                async with asyncio.timeout(warmup_timeout):
-                    output = await self.client.get_video_output()
-                    logger.info(f"Video warmup run {run_idx + 1}/{WARMUP_RUNS} completed successfully")
-                    successful_runs += 1
-            except asyncio.TimeoutError:
-                logger.warning(f"Video warmup run {run_idx + 1}/{WARMUP_RUNS} timed out after {warmup_timeout}s")
-            except Exception as e:
-                logger.error(f"Video warmup run {run_idx + 1}/{WARMUP_RUNS} failed: {e}")
-        
-        if successful_runs > 0:
-            logger.info(f"Video warmup completed: {successful_runs}/{WARMUP_RUNS} runs successful")
-        else:
-            logger.error(f"Video warmup failed: 0/{WARMUP_RUNS} runs successful")
+            
+            # Wait on the outputs that the workflow actually produces
+            if self.produces_video_output():
+                await self.client.get_video_output()
+            if self.produces_audio_output():
+                await self.client.get_audio_output()
+            if self.produces_text_output():
+                await self.client.get_text_output()
 
     async def warm_audio(self):
         """Warm up the audio processing pipeline with dummy frames."""
-        # Only warm if the current workflow actually has audio inputs or outputs
-        modalities = self._cached_modalities or {}
-        has_audio_input = modalities.get("audio", {}).get("input", False)
-        has_audio_output = modalities.get("audio", {}).get("output", False)
-        has_text_output = modalities.get("text", {}).get("output", False)
-        
-        if not (has_audio_input or has_audio_output):
-            logger.info("Skipping audio warmup - no audio inputs or outputs in current workflow")
+        # Only warm if workflow accepts audio input
+        if not self.accepts_audio_input():
+            logger.debug("Skipping audio warmup - workflow doesn't accept audio input")
             return
             
-        logger.info(f"Audio warmup needed - inputs: {has_audio_input}, audio_outputs: {has_audio_output}, text_outputs: {has_text_output}")
-            
-        # Create larger dummy frame to match typical audio buffer size (4 seconds at 16kHz)
-        # This matches the Whisper-optimized audio buffer: 4.0s at 16000Hz = 64000 samples
         dummy_frame = av.AudioFrame()
         sample_rate = 16000  # Match the expected sample rate for transcription
         duration_seconds = 4.0  # Match the buffer duration
@@ -132,46 +106,13 @@ class Pipeline:
             logger.info(f"Starting audio warmup run {run_idx + 1}/{WARMUP_RUNS}")
             self.client.put_audio_input(dummy_frame)
             
-            # Wait for appropriate output type based on workflow
-            if has_audio_output:
-                # Workflow produces audio outputs - wait for audio
-                try:
-                    async with asyncio.timeout(warmup_timeout):
-                        output = await self.client.get_audio_output()
-                        logger.info(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} completed successfully")
-                        successful_runs += 1
-                except asyncio.TimeoutError:
-                    logger.warning(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} timed out after {warmup_timeout}s")
-                except Exception as e:
-                    logger.error(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} failed: {e}")
-            elif has_text_output:
-                # Workflow produces text outputs (like transcription) - wait for text
-                try:
-                    async with asyncio.timeout(warmup_timeout):
-                        text_output = await self.get_processed_text_output()
-                        logger.info(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} completed successfully")
-                        successful_runs += 1
-                except asyncio.TimeoutError:
-                    logger.warning(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} timed out after {warmup_timeout}s waiting for text output")
-                except Exception as e:
-                    logger.error(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} failed: {e}")
-            else:
-                # For true input-only workflows, wait for processing to complete
-                try:
-                    # Wait for processing to complete
-                    processing_delay = 2.0  # Allow time for processing
-                    logger.info(f"Waiting {processing_delay}s for input-only audio processing...")
-                    await asyncio.sleep(processing_delay)
-                    
-                    logger.info(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} completed (input-only workflow)")
-                    successful_runs += 1
-                except Exception as e:
-                    logger.error(f"Audio warmup run {run_idx + 1}/{WARMUP_RUNS} failed during processing: {e}")
-        
-        if successful_runs > 0:
-            logger.info(f"Audio warmup completed: {successful_runs}/{WARMUP_RUNS} runs successful")
-        else:
-            logger.error(f"Audio warmup failed: 0/{WARMUP_RUNS} runs successful")
+            # Wait on the outputs that the workflow actually produces
+            if self.produces_video_output():
+                await self.client.get_video_output()
+            if self.produces_audio_output():
+                await self.client.get_audio_output()
+            if self.produces_text_output():
+                await self.client.get_text_output()
 
     async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Set the processing prompts for the pipeline.
@@ -183,18 +124,14 @@ class Pipeline:
             ValueError: If prompts is None or empty
             Exception: If prompt setting fails
         """
-        if prompts is None:
-            raise ValueError("Prompts cannot be None")
-            
-        # Normalize to list format
-        prompt_list = prompts if isinstance(prompts, list) else [prompts]
+        if isinstance(prompts, list):
+            await self.client.set_prompts(prompts)
+        else:
+            await self.client.set_prompts([prompts])
         
-        if not prompt_list:
-            raise ValueError("Cannot set empty prompts")
-        
-        # Set prompts and update cached modalities
-        await self.client.set_prompts(prompt_list)
-        self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+        # Clear cached modalities and I/O capabilities when prompts change
+        self._cached_modalities = None
+        self._cached_io_capabilities = None
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Update the existing processing prompts.
@@ -207,8 +144,9 @@ class Pipeline:
         else:
             await self.client.update_prompts([prompts])
         
-        # Update cached modalities when prompts change
-        self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+        # Clear cached modalities and I/O capabilities when prompts change
+        self._cached_modalities = None
+        self._cached_io_capabilities = None
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -216,7 +154,18 @@ class Pipeline:
         Args:
             frame: The video frame to process
         """
+        # Check if workflow accepts video input
+        if not self.accepts_video_input():
+            # Mark frame as skipped and don't send to client
+            frame.side_data.skipped = True
+            frame.side_data.passthrough = True
+            await self.video_incoming_frames.put(frame)
+            return
+
+        # Process and send to client only if input is accepted
         frame.side_data.input = self.video_preprocess(frame)
+        frame.side_data.skipped = True
+        frame.side_data.passthrough = False
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
 
@@ -226,7 +175,19 @@ class Pipeline:
         Args:
             frame: The audio frame to process
         """
+        # Check if workflow accepts audio input
+        if not self.accepts_audio_input():
+            # Mark frame as skipped and don't send to client
+            frame.side_data.skipped = True
+            frame.side_data.passthrough = True
+            await self.audio_incoming_frames.put(frame)
+            return
+
+        # Process and send to client when input is accepted
         frame.side_data.input = self.audio_preprocess(frame)
+        frame.side_data.skipped = True
+        # Mark passthrough based on whether workflow produces audio output
+        frame.side_data.passthrough = not self.produces_audio_output()
         self.client.put_audio_input(frame)
         await self.audio_incoming_frames.put(frame)
 
@@ -323,70 +284,57 @@ class Pipeline:
         """Get the next processed video frame.
         
         Returns:
-            The processed video frame
+            The processed video frame, or original frame if no processing needed
         """
-        # Use cached modalities to avoid recomputing on every frame
-        modalities = self._cached_modalities or {}
-        has_video_output = modalities.get("video", {}).get("output", False)
-
-        logger.debug("Waiting for video frame from incoming queue...")
         frame = await self.video_incoming_frames.get()
-
-        if not has_video_output:
-            # Bypass Comfy and return the original frame immediately
-            # This ensures continuous video flow for audio-only workflows
-            logger.debug("Video passthrough - no video outputs detected")
+        
+        # Skip frames that were marked as skipped
+        while frame.side_data.skipped and not hasattr(frame.side_data, 'passthrough'):
+            frame = await self.video_incoming_frames.get()
+        
+        # If this is a passthrough frame (no video output from workflow), return original
+        if hasattr(frame.side_data, 'passthrough') and frame.side_data.passthrough:
             return frame
-
-        try:
-            logger.debug(f"Processing video frame through ComfyUI pipeline") 
-            async with temporary_log_level("comfy", self._comfyui_inference_log_level):
-                out_tensor = await self.client.get_video_output()
-                if out_tensor is None:
-                    logger.debug("No video output tensor, returning original frame")
-                    return frame
-            logger.debug(f"Got video output tensor: {type(out_tensor)}")
-
+        
+        # Get processed output from client
+        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+            out_tensor = await self.client.get_video_output()
             processed_frame = self.video_postprocess(out_tensor)
             processed_frame.pts = frame.pts
             processed_frame.time_base = frame.time_base
             
             return processed_frame
-        except Exception as e:
-            logger.error(f"Video processing failed, falling back to passthrough: {e}")
-            # Fallback to passthrough if video processing fails
-            return frame
 
     async def get_processed_audio_frame(self) -> av.AudioFrame:
         """Get the next processed audio frame.
         
         Returns:
-            The processed audio frame
+            The processed audio frame, or original frame if no processing needed
         """
-        modalities = self._cached_modalities or {}
-        has_audio_input = modalities.get("audio", {}).get("input", False)
-        has_audio_output = modalities.get("audio", {}).get("output", False)
-
-        frame = await self.audio_incoming_frames.get()
+        try:
+            # Add timeout to detect if no frames are being put in the queue
+            frame = await asyncio.wait_for(self.audio_incoming_frames.get(), timeout=1.0)
+        except asyncio.TimeoutError:
+            logger.debug("No audio frames available - generating silence frame")
+            # Generate a silent audio frame to prevent blocking
+            silent_frame = av.AudioFrame.from_ndarray(
+                np.zeros((1, 1024), dtype=np.int16), 
+                format='s16', 
+                layout='mono'
+            )
+            silent_frame.sample_rate = 48000
+            return silent_frame
         
-        # For input-only workflows (like transcription), we still need to process the audio
-        # but we pass through the original frame since there's no audio output
-        if has_audio_input and not has_audio_output:
-            # Audio input-only workflow (e.g., transcription)
-            # The audio processing happens in the background for text generation
-            # but we pass through the original audio unchanged
-            logger.debug("Audio input-only workflow - passing through original frame")
+        # If this is a passthrough frame (no audio output from workflow), return original
+        if hasattr(frame.side_data, 'passthrough') and frame.side_data.passthrough:
             return frame
-        elif not has_audio_output:
-            # No audio processing at all - pass through unchanged
-            logger.debug("No audio processing - passing through original frame")
-            return frame
-
-        # Audio output workflow - process and return modified audio
+        
+        # Process audio if needed
         if frame.samples > len(self.processed_audio_buffer):
             async with temporary_log_level("comfy", self._comfyui_inference_log_level):
                 out_tensor = await self.client.get_audio_output()
             self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
+        
         out_data = self.processed_audio_buffer[:frame.samples]
         self.processed_audio_buffer = self.processed_audio_buffer[frame.samples:]
 
@@ -397,28 +345,19 @@ class Pipeline:
         
         return processed_frame
     
-    async def get_processed_text_output(self) -> Optional[str]:
-        """Get the next processed text output.
+    async def get_text_output(self) -> str:
+        """Get the next text output from the pipeline.
         
         Returns:
-            The processed text output, or None if no text outputs are available
+            The processed text output, or empty string if no text output produced
         """
-        modalities = self._cached_modalities or {}
-        has_text_output = modalities.get("text", {}).get("output", False)
-        
-        if not has_text_output:
-            # No text processing - return None
-            logger.debug("No text processing - no text outputs detected")
-            return None
-        
-        try:
-            # Get text output from client (now non-blocking)
-            text_output = await self.client.get_text_output()
-            logger.debug(f"Got text output from client: {text_output[:100] if text_output else 'None'}...")
-            return text_output
-        except Exception as e:
-            logger.error(f"Text processing failed: {e}")
-            return None
+        # If workflow doesn't produce text output, return empty string immediately
+        if not self.produces_text_output():
+            return ""
+            
+        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+            out_text = await self.client.get_text_output()
+        return out_text
     
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
@@ -429,80 +368,111 @@ class Pipeline:
         nodes_info = await self.client.get_available_nodes()
         return nodes_info
     
-    def get_prompt_modalities(self) -> Dict[str, Dict[str, bool]]:
-        """Detect which modalities (audio/video) are present in the current prompts.
+    def get_workflow_io_capabilities(self) -> WorkflowModality:
+        """Get the I/O capabilities for each modality in the current workflow.
         
-        Returns a dict with keys 'audio' and 'video', each mapping to a dict with
-        boolean flags for 'input' and 'output'.
+        Returns:
+            WorkflowModality mapping each modality to its input/output capabilities
+        """
+        if self._cached_io_capabilities is None:
+            if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
+                # Return empty capabilities if no prompts
+                return create_empty_workflow_modality()
+            
+            self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
+        
+        return self._cached_io_capabilities
+
+    def get_workflow_modalities(self) -> Set[str]:
+        """Get the modalities required by the current workflow.
+        
+        Returns:
+            Set of modality strings: {'video', 'audio', 'text'}
         """
         if self._cached_modalities is None:
+            if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
+                return set()
+            
             self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+        
         return self._cached_modalities
     
-    def set_text_callback(self, callback: Optional[Callable[[str], Awaitable[bool]]]):
-        """Set a callback function to be called when text output is available.
-        
-        Args:
-            callback: Async function that takes text output and returns success status.
-                     If None, text monitoring will be disabled.
-        """
-        self._text_callback = callback
-        logger.info(f"Text callback {'set' if callback else 'cleared'}")
+    def get_modalities(self) -> Set[str]:
+        """Alias for get_workflow_modalities for compatibility."""
+        return self.get_workflow_modalities()
     
-    def start_text_monitoring(self):
-        """Start text monitoring if not already active and callback is set."""
-        if not self._text_monitoring_active and self._text_callback:
-            self._text_monitor_stop_event.clear()
-            self._text_monitor_task = asyncio.create_task(self._monitor_text_outputs())
-            self._text_monitoring_active = True
-            logger.info("Started text monitoring")
+    def requires_video(self) -> bool:
+        """Check if the workflow requires video processing."""
+        return "video" in self.get_workflow_modalities()
     
-    def stop_text_monitoring(self):
-        """Stop text monitoring and cleanup task."""
-        if self._text_monitoring_active:
-            logger.info("Stopping text monitoring")
-            self._text_monitor_stop_event.set()
-            
-            if self._text_monitor_task and not self._text_monitor_task.done():
-                self._text_monitor_task.cancel()
-                logger.info("Cancelled text monitoring task")
-            
-            self._text_monitoring_active = False
-            logger.info("Text monitoring stopped")
-
-    async def _monitor_text_outputs(self):
-        """Monitor text outputs and call the callback when available."""
-        try:
-            while not self._text_monitor_stop_event.is_set():
-                try:
-                    modalities = self.get_prompt_modalities()
-                    if not modalities.get("text", {}).get("output", False):
-                        await asyncio.sleep(1)
-                        continue
-                    
-                    text_data = await self.get_processed_text_output()
-                    if text_data and "__WARMUP_SENTINEL__" not in text_data and self._text_callback:
-                        success = await self._text_callback(text_data)
-                        if not success:
-                            logger.warning("Text callback failed, stopping text monitoring")
-                            break  # Exit the loop if callback fails
-                    else:
-                        await asyncio.sleep(0.1)
-                
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Text monitoring error: {e}")
-                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            logger.info("Text monitoring task cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Error in text monitoring task: {e}")
-        finally:
-            self._text_monitoring_active = False
+    def requires_audio(self) -> bool:
+        """Check if the workflow requires audio processing."""
+        return "audio" in self.get_workflow_modalities()
+    
+    def requires_text(self) -> bool:
+        """Check if the workflow requires text processing."""
+        return "text" in self.get_workflow_modalities()
+    
+    def accepts_video_input(self) -> bool:
+        """Check if the workflow accepts video input."""
+        return self.get_workflow_io_capabilities()["video"]["input"]
+    
+    def accepts_audio_input(self) -> bool:
+        """Check if the workflow accepts audio input."""
+        return self.get_workflow_io_capabilities()["audio"]["input"]
+    
+    def produces_video_output(self) -> bool:
+        """Check if the workflow produces video output."""
+        return self.get_workflow_io_capabilities()["video"]["output"]
+    
+    def produces_audio_output(self) -> bool:
+        """Check if the workflow produces audio output."""
+        return self.get_workflow_io_capabilities()["audio"]["output"]
+    
+    def produces_text_output(self) -> bool:
+        """Check if the workflow produces text output."""
+        return self.get_workflow_io_capabilities()["text"]["output"]
     
     async def cleanup(self):
-        """Clean up resources used by the pipeline."""
-        self.stop_text_monitoring()
+        """Clean up resources used by the pipeline.
+        
+        This includes:
+        - Canceling running prompts
+        - Clearing all queues (video, audio, tensor caches)
+        - Stopping the ComfyUI client
+        - Clearing cached modalities
+        """
+        logger.debug("Starting pipeline cleanup")
+        
+        # Clear cached modalities and I/O capabilities since we're resetting
+        self._cached_modalities = None
+        self._cached_io_capabilities = None
+        
+        # Clear pipeline queues
+        await self._clear_pipeline_queues()
+        
+        # Cleanup client (this handles prompt cancellation and tensor cache cleanup)
         await self.client.cleanup()
+        
+        logger.debug("Pipeline cleanup completed")
+    
+    async def _clear_pipeline_queues(self):
+        """Clear the pipeline's internal frame queues."""
+        # Clear video frame queue
+        while not self.video_incoming_frames.empty():
+            try:
+                self.video_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+                
+        # Clear audio frame queue  
+        while not self.audio_incoming_frames.empty():
+            try:
+                self.audio_incoming_frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+                
+        # Reset audio buffer
+        self.processed_audio_buffer = np.array([], dtype=np.int16)
+        
+        logger.debug("Pipeline queues cleared") 
