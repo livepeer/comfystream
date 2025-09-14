@@ -3,9 +3,9 @@
     "inputs": {
       "batch_size": 2
     },
-    "class_type": "LoadBatchTensor",
+    "class_type": "LoadTensor",
     "_meta": {
-      "title": "Load Batch Tensor (Size 2)"
+      "title": "Load Tensor (Batch Size 2)"
     }
   },
   "2": {
@@ -217,11 +217,12 @@
       "images": [
         "14",
         0
-      ]
+      ],
+      "split_batch": true
     },
-    "class_type": "SaveBatchTensor",
+    "class_type": "SaveTensor",
     "_meta": {
-      "title": "Save Batch Tensor Output"
+      "title": "Save Batch Tensor Output (Split)"
     }
   },
   "18": {
