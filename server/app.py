@@ -753,7 +753,7 @@ if __name__ == "__main__":
             comfyui_inference_log_level=args.comfyui_inference_log_level,
             warmup_workflow=args.warmup_workflow
         )
-
+        
         # Create frame skip configuration only if enabled
         frame_skip_config = None
         if args.frame_skip_enabled:
@@ -762,8 +762,12 @@ if __name__ == "__main__":
         else:
             logger.info("Frame skipping disabled")
         
-        processor = StreamProcessor.from_handlers(
-            frame_processor,
+        processor = StreamProcessor(
+            video_processor=frame_processor.process_video_async,
+            audio_processor=frame_processor.process_audio_async,
+            model_loader=frame_processor.load_model,
+            param_updater=frame_processor.update_params,
+            on_stream_stop=frame_processor.on_stream_stop,
             name="comfystream-processor",
             port=int(args.port),
             host=args.host,
