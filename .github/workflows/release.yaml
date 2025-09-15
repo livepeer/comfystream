@@ -6,6 +6,7 @@ on:
       - main
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   issues: write
@@ -57,7 +58,7 @@ jobs:
   publish-comfyui-node:
     name: Publish Custom Node to ComfyUI registry
     runs-on: ubuntu-latest
-    if: ${{ github.ref_type == 'tag' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
