@@ -7,7 +7,6 @@ from typing import List
 import numpy as np
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
-from pytrickle.decorators import trickle_handler
 from comfystream.pipeline import Pipeline
 from comfystream.utils import load_prompt_from_file, get_default_workflow, ComfyStreamParamsUpdateRequest
 
@@ -48,8 +47,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if self.pipeline and self._stream_processor:
             self.pipeline.set_text_callback(self._text_callback)
             self.pipeline.start_text_monitoring()
-
-    @trickle_handler("stream_stop")
+    
     async def on_stream_stop(self):
         """Called when stream stops - cleanup background tasks."""
         logger.info("Stream stopped, cleaning up text monitoring")
@@ -59,7 +57,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         
         logger.info("Text monitoring cleanup completed, ComfyUI reset for next stream")
     
-    @trickle_handler("model_loader")
+
     async def load_model(self, **kwargs):
         """Load model and initialize the pipeline."""
         params = {**self._load_params, **kwargs}
@@ -137,7 +135,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
 
-    @trickle_handler("video")
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline."""
         try:
@@ -159,7 +156,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             logger.error(f"Video processing failed: {e}")
             return frame
 
-    @trickle_handler("audio")
     async def process_audio_async(self, frame: AudioFrame) -> List[AudioFrame]:
         """Process audio frame through ComfyStream Pipeline or passthrough."""
         try:
@@ -177,7 +173,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             logger.error(f"Audio processing failed: {e}")
             return [frame]
 
-    @trickle_handler("param_updater")
     async def update_params(self, params: dict):
         """Update processing parameters."""
         if not self.pipeline:
