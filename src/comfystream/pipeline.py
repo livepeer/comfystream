@@ -6,7 +6,6 @@ import logging
 from typing import Any, Dict, Union, List, Optional, Callable, Awaitable, Set
 
 from comfystream.client import ComfyStreamClient
-from comfystream.utils import detect_prompt_modalities
 from comfystream.server.utils import temporary_log_level
 from .modalities import detect_prompt_modalities, detect_io_points, WorkflowModality
 from .modalities import create_empty_workflow_modality
@@ -53,6 +52,11 @@ class Pipeline:
         self._comfyui_inference_log_level = comfyui_inference_log_level
         self._cached_modalities: Optional[Set[str]] = None
         self._cached_io_capabilities: Optional[WorkflowModality] = None
+
+        # Text output callback/monitoring
+        self._text_callback: Optional[Callable[[str], Awaitable[bool]]] = None
+        self._text_monitoring_task: Optional[asyncio.Task] = None
+        self._text_monitoring_started: bool = False
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -124,14 +128,14 @@ class Pipeline:
             ValueError: If prompts is None or empty
             Exception: If prompt setting fails
         """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        await self.client.set_prompts(prompts)
         
         # Clear cached modalities and I/O capabilities when prompts change
         self._cached_modalities = None
         self._cached_io_capabilities = None
+        # Recompute and log capabilities for debugging
+        io_caps = self.get_workflow_io_capabilities()
+        logger.info(f"[Pipeline] IO capabilities after set_prompts: {io_caps}")
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Update the existing processing prompts.
@@ -155,11 +159,13 @@ class Pipeline:
             frame: The video frame to process
         """
         # Check if workflow accepts video input
-        if not self.accepts_video_input():
+        accepts_video = self.accepts_video_input()
+        if not accepts_video:
             # Mark frame as skipped and don't send to client
             frame.side_data.skipped = True
             frame.side_data.passthrough = True
             await self.video_incoming_frames.put(frame)
+            logger.debug("[Pipeline] Video frame passthrough (workflow does not accept video input)")
             return
 
         # Process and send to client only if input is accepted
@@ -168,6 +174,7 @@ class Pipeline:
         frame.side_data.passthrough = False
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
+        logger.debug("[Pipeline] Video frame queued for processing")
 
     async def put_audio_frame(self, frame: av.AudioFrame):
         """Queue an audio frame for processing.
@@ -358,6 +365,56 @@ class Pipeline:
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_text = await self.client.get_text_output()
         return out_text
+
+    def set_text_callback(self, callback: Callable[[str], Awaitable[bool]]) -> None:
+        """Set an async callback to receive text outputs.
+
+        The callback is awaited with the text string whenever new text
+        is available via get_text_output().
+        """
+        self._text_callback = callback
+
+    def start_text_monitoring(self) -> None:
+        """Start a background task to forward text outputs via the callback."""
+        if self._text_monitoring_started:
+            return
+        if not self._text_callback:
+            return
+        if not self.produces_text_output():
+            return
+
+        self._text_monitoring_started = True
+
+        async def _monitor_text_outputs():
+            try:
+                while self._text_monitoring_started:
+                    try:
+                        text_output = await asyncio.wait_for(self.get_text_output(), timeout=1.0)
+                        if text_output and text_output.strip():
+                            try:
+                                # Ignore callback result; best-effort delivery
+                                await self._text_callback(text_output)
+                            except Exception:
+                                # Swallow callback errors to keep loop alive
+                                logger.debug("Text callback error", exc_info=True)
+                    except asyncio.TimeoutError:
+                        continue
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        logger.debug("Text monitoring error", exc_info=True)
+                        await asyncio.sleep(0.1)
+            finally:
+                logger.info("Text monitoring task ended")
+
+        self._text_monitoring_task = asyncio.create_task(_monitor_text_outputs())
+
+    def stop_text_monitoring(self) -> None:
+        """Stop the background text monitoring task if running."""
+        self._text_monitoring_started = False
+        if self._text_monitoring_task and not self._text_monitoring_task.done():
+            self._text_monitoring_task.cancel()
+        self._text_monitoring_task = None
     
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
@@ -444,6 +501,9 @@ class Pipeline:
         """
         logger.debug("Starting pipeline cleanup")
         
+        # Stop text monitoring first
+        self.stop_text_monitoring()
+
         # Clear cached modalities and I/O capabilities since we're resetting
         self._cached_modalities = None
         self._cached_io_capabilities = None

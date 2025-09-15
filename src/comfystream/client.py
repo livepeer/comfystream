@@ -40,6 +40,7 @@ class ComfyStreamClient:
         # Reset stop event for new prompts
         self._stop_event.clear()
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        logger.info(f"Queuing {len(self.current_prompts)} prompt(s) for execution")
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
@@ -128,9 +129,6 @@ class ComfyStreamClient:
     
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
-    
-    async def get_text_output(self):
-        return await tensor_cache.text_outputs.get()
     
     async def get_text_output(self):
         try:
