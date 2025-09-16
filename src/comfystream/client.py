@@ -134,7 +134,13 @@ class ComfyStreamClient:
         try:
             return tensor_cache.text_outputs.get_nowait()
         except:
-            return None
+    except asyncio.QueueEmpty:
+        # Expected case - queue is empty, no text available
+        return None
+    except Exception as e:
+        # Unexpected errors logged for debugging
+        logger.warning(f"Unexpected error in get_text_output: {e}")
+        return None
 
     async def get_available_nodes(self):
         """Get metadata and available nodes info in a single pass"""
