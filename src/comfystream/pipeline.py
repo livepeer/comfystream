@@ -3,14 +3,14 @@ import torch
 import numpy as np
 import asyncio
 import logging
-from typing import Any, Dict, Union, List, Optional, Callable, Awaitable, Set
+from typing import Any, Dict, Union, List, Optional, Set
 
 from comfystream.client import ComfyStreamClient
 from comfystream.server.utils import temporary_log_level
 from .modalities import detect_prompt_modalities, detect_io_points, WorkflowModality
 from .modalities import create_empty_workflow_modality
                 
-WARMUP_RUNS = 3  # Reduced since we're using larger frames and longer processing times
+WARMUP_RUNS = 5
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +24,7 @@ class Pipeline:
     """
     
     def __init__(self, width: int = 512, height: int = 512, 
-                 comfyui_inference_log_level: Optional[int] = None,
-                 video_processing_timeout: float = 20.0, # Functionally a pipeline warmup timeout
-                 **kwargs):
+                 comfyui_inference_log_level: Optional[int] = None, **kwargs):
         """Initialize the pipeline with the given configuration.
         
         Args:
@@ -34,15 +32,11 @@ class Pipeline:
             height: Height of the video frames (default: 512)
             comfyui_inference_log_level: The logging level for ComfyUI inference.
                 Defaults to None, using the global ComfyUI log level.
-            video_processing_timeout: Timeout in seconds for pipeline warmup operations (default: 20.0)
             **kwargs: Additional arguments to pass to the ComfyStreamClient
         """
         self.client = ComfyStreamClient(**kwargs)
         self.width = width
         self.height = height
-        
-        # Pipeline warmup timeout
-        self.video_processing_timeout = video_processing_timeout
 
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
@@ -52,11 +46,6 @@ class Pipeline:
         self._comfyui_inference_log_level = comfyui_inference_log_level
         self._cached_modalities: Optional[Set[str]] = None
         self._cached_io_capabilities: Optional[WorkflowModality] = None
-
-        # Text output callback/monitoring
-        self._text_callback: Optional[Callable[[str], Awaitable[bool]]] = None
-        self._text_monitoring_task: Optional[asyncio.Task] = None
-        self._text_monitoring_started: bool = False
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -90,24 +79,10 @@ class Pipeline:
             return
             
         dummy_frame = av.AudioFrame()
-        sample_rate = 16000  # Match the expected sample rate for transcription
-        duration_seconds = 4.0  # Match the buffer duration
-        num_samples = int(sample_rate * duration_seconds)
-        
-        # Create float32 audio data like runtime (range [-1, 1])
-        dummy_frame.side_data.input = np.random.uniform(-0.5, 0.5, num_samples).astype(np.float32)
-        dummy_frame.sample_rate = sample_rate
-        
-        logger.info(f"Using audio warmup frame: {duration_seconds}s at {sample_rate}Hz = {num_samples} samples")
+        dummy_frame.side_data.input = np.random.randint(-32768, 32767, int(48000 * 0.5), dtype=np.int16)   # TODO: adds a lot of delay if it doesn't match the buffer size, is warmup needed?
+        dummy_frame.sample_rate = 48000
 
-        logger.info(f"Warming audio pipeline")
-        successful_runs = 0
-
-        # Use longer timeout for warmup since first runs need to load models  
-        warmup_timeout = max(self.video_processing_timeout * 5, 25.0)  # At least 25s, or 5x normal timeout
-        
-        for run_idx in range(WARMUP_RUNS):
-            logger.info(f"Starting audio warmup run {run_idx + 1}/{WARMUP_RUNS}")
+        for _ in range(WARMUP_RUNS):
             self.client.put_audio_input(dummy_frame)
             
             # Wait on the outputs that the workflow actually produces
@@ -123,19 +98,15 @@ class Pipeline:
         
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
-            
-        Raises:
-            ValueError: If prompts is None or empty
-            Exception: If prompt setting fails
         """
-        await self.client.set_prompts(prompts)
+        if isinstance(prompts, list):
+            await self.client.set_prompts(prompts)
+        else:
+            await self.client.set_prompts([prompts])
         
         # Clear cached modalities and I/O capabilities when prompts change
         self._cached_modalities = None
         self._cached_io_capabilities = None
-        # Recompute and log capabilities for debugging
-        io_caps = self.get_workflow_io_capabilities()
-        logger.info(f"[Pipeline] IO capabilities after set_prompts: {io_caps}")
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Update the existing processing prompts.
@@ -159,13 +130,11 @@ class Pipeline:
             frame: The video frame to process
         """
         # Check if workflow accepts video input
-        accepts_video = self.accepts_video_input()
-        if not accepts_video:
+        if not self.accepts_video_input():
             # Mark frame as skipped and don't send to client
             frame.side_data.skipped = True
             frame.side_data.passthrough = True
             await self.video_incoming_frames.put(frame)
-            logger.debug("[Pipeline] Video frame passthrough (workflow does not accept video input)")
             return
 
         # Process and send to client only if input is accepted
@@ -174,7 +143,6 @@ class Pipeline:
         frame.side_data.passthrough = False
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
-        logger.debug("[Pipeline] Video frame queued for processing")
 
     async def put_audio_frame(self, frame: av.AudioFrame):
         """Queue an audio frame for processing.
@@ -219,48 +187,16 @@ class Pipeline:
         Returns:
             The preprocessed frame as a tensor or numpy array
         """
-        # Convert frame to numpy array
-        audio_data = frame.to_ndarray()
+    def audio_preprocess(self, frame: av.AudioFrame) -> Union[torch.Tensor, np.ndarray]:
+        """Preprocess an audio frame before processing.
         
-        # Handle different audio channel configurations
-        if audio_data.ndim == 1:
-            # Mono audio - use as is
-            processed_audio = audio_data
-        elif audio_data.ndim == 2:
-            # Multi-channel audio
-            if audio_data.shape[0] == 1:
-                # Single channel in 2D array [1, samples]
-                processed_audio = audio_data.ravel()
-            elif audio_data.shape[1] == 1:
-                # Single channel in 2D array [samples, 1]
-                processed_audio = audio_data.ravel()
-            elif audio_data.shape[0] == 2:
-                # Stereo audio [2, samples] - average to mono
-                processed_audio = audio_data.mean(axis=0)
-            elif audio_data.shape[1] == 2:
-                # Stereo audio [samples, 2] - average to mono
-                processed_audio = audio_data.mean(axis=1)
-            else:
-                # Multi-channel audio - average all channels to mono
-                processed_audio = audio_data.mean(axis=0 if audio_data.shape[0] > audio_data.shape[1] else 1)
-        else:
-            # Fallback for unexpected dimensions
-            processed_audio = audio_data.ravel()
-        
-        # Convert to int16 with proper scaling for float32 input
-        if processed_audio.dtype in [np.float32, np.float64]:
-            # Float audio in range [-1, 1] needs to be scaled to int16 range [-32768, 32767]
-            # Clip to prevent overflow and scale
-            processed_audio = np.clip(processed_audio, -1.0, 1.0)
-            processed_audio = (processed_audio * 32767).astype(np.int16)
-        else:
-            # Already integer format, just convert to int16
-            processed_audio = processed_audio.astype(np.int16)
-        
-        # Log only if there are issues
-        if processed_audio.size == 0:
-            logger.warning("Audio preprocessing produced empty output, check input format")
-        return processed_audio
+        Args:
+            frame: The audio frame to preprocess
+            
+        Returns:
+            The preprocessed frame as a tensor or numpy array
+        """
+        return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
     
     def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
         """Postprocess a video frame after processing.
@@ -306,11 +242,12 @@ class Pipeline:
         # Get processed output from client
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_tensor = await self.client.get_video_output()
-            processed_frame = self.video_postprocess(out_tensor)
-            processed_frame.pts = frame.pts
-            processed_frame.time_base = frame.time_base
-            
-            return processed_frame
+
+        processed_frame = self.video_postprocess(out_tensor)
+        processed_frame.pts = frame.pts
+        processed_frame.time_base = frame.time_base
+        
+        return processed_frame
 
     async def get_processed_audio_frame(self) -> av.AudioFrame:
         """Get the next processed audio frame.
@@ -365,56 +302,6 @@ class Pipeline:
         async with temporary_log_level("comfy", self._comfyui_inference_log_level):
             out_text = await self.client.get_text_output()
         return out_text
-
-    def set_text_callback(self, callback: Callable[[str], Awaitable[bool]]) -> None:
-        """Set an async callback to receive text outputs.
-
-        The callback is awaited with the text string whenever new text
-        is available via get_text_output().
-        """
-        self._text_callback = callback
-
-    def start_text_monitoring(self) -> None:
-        """Start a background task to forward text outputs via the callback."""
-        if self._text_monitoring_started:
-            return
-        if not self._text_callback:
-            return
-        if not self.produces_text_output():
-            return
-
-        self._text_monitoring_started = True
-
-        async def _monitor_text_outputs():
-            try:
-                while self._text_monitoring_started:
-                    try:
-                        text_output = await asyncio.wait_for(self.get_text_output(), timeout=1.0)
-                        if text_output and text_output.strip():
-                            try:
-                                # Ignore callback result; best-effort delivery
-                                await self._text_callback(text_output)
-                            except Exception:
-                                # Swallow callback errors to keep loop alive
-                                logger.debug("Text callback error", exc_info=True)
-                    except asyncio.TimeoutError:
-                        continue
-                    except asyncio.CancelledError:
-                        break
-                    except Exception:
-                        logger.debug("Text monitoring error", exc_info=True)
-                        await asyncio.sleep(0.1)
-            finally:
-                logger.info("Text monitoring task ended")
-
-        self._text_monitoring_task = asyncio.create_task(_monitor_text_outputs())
-
-    def stop_text_monitoring(self) -> None:
-        """Stop the background text monitoring task if running."""
-        self._text_monitoring_started = False
-        if self._text_monitoring_task and not self._text_monitoring_task.done():
-            self._text_monitoring_task.cancel()
-        self._text_monitoring_task = None
     
     async def get_nodes_info(self) -> Dict[str, Any]:
         """Get information about all nodes in the current prompt including metadata.
@@ -501,9 +388,6 @@ class Pipeline:
         """
         logger.debug("Starting pipeline cleanup")
         
-        # Stop text monitoring first
-        self.stop_text_monitoring()
-
         # Clear cached modalities and I/O capabilities since we're resetting
         self._cached_modalities = None
         self._cached_io_capabilities = None
