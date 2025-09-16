@@ -51,11 +51,6 @@ def main():
         "--workspace", default=None, required=True, help="Set Comfy workspace"
     )
     parser.add_argument(
-        "--warmup-workflow",
-        default=os.getenv("WARMUP_WORKFLOW"),
-        help="Path to a JSON workflow file to warm up at startup. Can also be set via WARMUP_WORKFLOW env var",
-    )
-    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -133,8 +128,7 @@ def main():
         disable_cuda_malloc=True,
         gpu_only=True,
         preview_method='none',
-        comfyui_inference_log_level=args.comfyui_inference_log_level,
-        warmup_workflow=args.warmup_workflow
+        comfyui_inference_log_level=args.comfyui_inference_log_level
     )
     
     # Create frame skip configuration only if enabled

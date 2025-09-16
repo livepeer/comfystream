@@ -8,7 +8,7 @@ import numpy as np
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
 from comfystream.pipeline import Pipeline
-from comfystream.utils import load_prompt_from_file, get_default_workflow, ComfyStreamParamsUpdateRequest
+from comfystream.utils import convert_prompt, ComfyStreamParamsUpdateRequest
 
 logger = logging.getLogger(__name__)
 
@@ -159,50 +159,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 preview_method=params.get('preview_method', 'none'),
                 comfyui_inference_log_level=params.get('comfyui_inference_log_level'),
             )
-        
-        # Store warmup workflow for later use in update_params
-        self._warmup_workflow = params.get('warmup_workflow')
-        if self._warmup_workflow:
-            try:
-                workflow_data = load_prompt_from_file(self._warmup_workflow)
-                logger.info(f"Loaded workflow data: {list(workflow_data.keys()) if workflow_data else 'None'}")
-                logger.info(f"Node types in workflow: {[node.get('class_type') for node in workflow_data.values()] if workflow_data else 'None'}")
-                self._warmup_workflow_data = workflow_data
-            except Exception as e:
-                logger.error(f"Failed to load workflow: {e}")
-                self._warmup_workflow_data = None
-        else:
-            self._warmup_workflow_data = None
-        
-        # Set up text monitoring after pipeline is ready
-        #self._setup_text_monitoring()
-    
-    async def _start_comfyui(self):
-            
-        try:
-            # Use warmup workflow if available, otherwise default workflow
-            if self._warmup_workflow_data:
-                workflow_data = self._warmup_workflow_data
-                logger.info("Starting ComfyUI with warmup workflow")
-            else:
-                workflow_data = get_default_workflow()
-                logger.info("Starting ComfyUI with default workflow")
-            
-            # Set prompts to start ComfyUI
-            await self.pipeline.set_prompts([workflow_data])
-            logger.info("ComfyUI started successfully")
-
-            # Start text monitoring if applicable
-            # self._setup_text_monitoring()
-            
-            # Run warmup if we have warmup workflow
-            if self._warmup_workflow_data:
-                await self._run_warmup()
-                logger.info("Warmup completed successfully")
-                
-        except Exception as e:
-            logger.error(f"Failed to start ComfyUI: {e}")
-            raise
 
     async def warmup(self):
         """Public warmup method that triggers pipeline warmup."""
@@ -287,135 +243,72 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             return
         
         try:
-            # Detect sentinel early but evaluate truthiness after validation too
-            requested_warmup = False
-            try:
-                requested_warmup = bool(params.get("warmup")) if isinstance(params, dict) else False
-            except Exception:
-                requested_warmup = False
-
+            # Handle list input - take first element
             if isinstance(params, list) and params:
                 params = params[0]
             
-            logger.info(f"About to validate params: {type(params)}")
+            # Validate parameters using the centralized validation
             validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
-            logger.info(f"Validation successful, validated keys: {list(validated.keys())}")
+            logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
             
+            # Process prompts if provided
+            if "prompts" in validated and validated["prompts"]:
+                await self._process_prompts(validated["prompts"])
             
-            # Preserve original prompt if directly provided as dict
-            original_prompt_dict = None
-            try:
-                if isinstance(params, dict) and isinstance(params.get("prompts"), dict):
-                    original_prompt_dict = params.get("prompts")
-            except Exception:
-                original_prompt_dict = None
-            
-            # Prefer raw params for prompts to avoid over-normalization, fallback to validated
-            raw_prompts = None
-            if isinstance(params, dict) and params.get("prompts") is not None:
-                raw_prompts = params.get("prompts")
-            elif "prompts" in validated and validated["prompts"]:
-                raw_prompts = validated["prompts"]
-
-            if raw_prompts is not None:
-                # Normalize to a single prompt dict
-                prompt_dict = None
-                try:
-                    # Accept Pydantic-style objects
-                    if hasattr(raw_prompts, "model_dump"):
-                        raw_prompts = raw_prompts.model_dump()
-                    elif hasattr(raw_prompts, "dict") and callable(getattr(raw_prompts, "dict")):
-                        raw_prompts = raw_prompts.dict()
-
-                    if isinstance(raw_prompts, str):
-                        parsed = json.loads(raw_prompts)
-                        if hasattr(parsed, "model_dump"):
-                            parsed = parsed.model_dump()
-                        if isinstance(parsed, dict):
-                            prompt_dict = parsed
-                        elif isinstance(parsed, list):
-                            prompt_dict = next((p for p in parsed if isinstance(p, dict)), None)
-                    elif isinstance(raw_prompts, list):
-                        # Prefer first dict entry, otherwise try to parse strings
-                        prompt_dict = next((p for p in raw_prompts if isinstance(p, dict)), None)
-                        if prompt_dict is None:
-                            for item in raw_prompts:
-                                if isinstance(item, str):
-                                    try:
-                                        candidate = json.loads(item)
-                                        if isinstance(candidate, dict):
-                                            prompt_dict = candidate
-                                            break
-                                    except Exception:
-                                        continue
-                    elif isinstance(raw_prompts, dict):
-                        prompt_dict = raw_prompts
-                except Exception as parse_e:
-                    logger.warning(f"Failed to parse/normalize prompts: {parse_e}")
-
-                if not isinstance(prompt_dict, dict):
-                    # Fallback to original dict if available
-                    if isinstance(original_prompt_dict, dict):
-                        prompt_dict = original_prompt_dict
-                    else:
-                        logger.error("Prompts normalization failed: expected a single prompt dict")
-                        prompt_dict = None
-
-                if isinstance(prompt_dict, dict):
-                    # Log pre-conversion keys/types
-                    try:
-                        node_types = [node.get('class_type') for node in prompt_dict.values()]
-                    except Exception:
-                        node_types = []
-                    logger.info(f"Setting prompts in pipeline: {list(prompt_dict.keys())}")
-                    logger.info(f"Node types before conversion: {node_types}")
-
-                    # Convert to comfy format dict
-                    from comfystream.utils import convert_prompt
-                    try:
-                        converted = convert_prompt(prompt_dict, return_dict=True)
-                    except Exception as conv_e:
-                        logger.error(f"Prompt conversion failed: {conv_e}")
-                        converted = prompt_dict
-
-                    await self.pipeline.set_prompts([converted])
-                    # Start or stop text monitoring based on updated workflow modalities
-                    try:
-                        if bool(self.pipeline.produces_text_output()):
-                            self._setup_text_monitoring()
-                        else:
-                            await self._stop_text_forwarder()
-                    except Exception:
-                        # Best-effort: if capability detection fails, do nothing here
-                        logger.debug("Unable to determine text output capability after prompts update", exc_info=True)
-            
+            # Update pipeline dimensions
             if "width" in validated:
                 self.pipeline.width = int(validated["width"])
             if "height" in validated:
                 self.pipeline.height = int(validated["height"])
             
-            # Schedule warmup if requested via sentinel flag
-            if requested_warmup or bool(validated.get("warmup", False)):
+            # Schedule warmup if requested
+            if validated.get("warmup", False):
                 self._schedule_warmup()
-                # After warmup completes, start text monitoring exactly once here
-                async def _start_monitoring_after_warmup():
-                    try:
-                        task = self._warmup_task
-                        if task:
-                            try:
-                                await task
-                            except asyncio.CancelledError:
-                                return
-                        # Start monitoring only after warmup
-                        self._setup_text_monitoring()
-                    except Exception:
-                        logger.warning("Failed to start text monitoring after warmup", exc_info=True)
-
-                try:
-                    follow_up_task = asyncio.create_task(_start_monitoring_after_warmup())
-                    self._background_tasks.append(follow_up_task)
-                except Exception:
-                    logger.debug("Unable to schedule post-warmup text monitoring task", exc_info=True)
+                # await self._setup_post_warmup_monitoring()
+            try:
+                if bool(self.pipeline.produces_text_output()):
+                    self._setup_text_monitoring()
+                else:
+                    await self._stop_text_forwarder()
+            except Exception:
+                # Best-effort: if capability detection fails, do nothing here
+                logger.debug("Unable to determine text output capability after prompts update", exc_info=True)
                 
         except Exception as e:
             logger.error(f"Parameter update failed: {e}")
+
+    async def _process_prompts(self, prompts):
+        """Process and set prompts in the pipeline."""
+        try:
+            converted = convert_prompt(prompts, return_dict=True)
+            
+            # Set prompts in pipeline
+            await self.pipeline.set_prompts([converted])
+            logger.info(f"Prompts set successfully: {list(prompts.keys())}")
+            
+            # Update text monitoring based on workflow capabilities
+            if self.pipeline.produces_text_output():
+                self._setup_text_monitoring()
+            else:
+                await self._stop_text_forwarder()
+                
+        except Exception as e:
+            logger.error(f"Failed to process prompts: {e}")
+
+    async def _setup_post_warmup_monitoring(self):
+        """Setup text monitoring after warmup completes."""
+        async def _start_monitoring_after_warmup():
+            try:
+                if self._warmup_task:
+                    await self._warmup_task
+                self._setup_text_monitoring()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning(f"Failed to start text monitoring after warmup: {e}")
+
+        try:
+            follow_up_task = asyncio.create_task(_start_monitoring_after_warmup())
+            self._background_tasks.append(follow_up_task)
+        except Exception as e:
+            logger.debug(f"Unable to schedule post-warmup text monitoring: {e}")
