@@ -25,6 +25,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self.pipeline = None
         self._load_params = load_params
         self._stream_processor = None
+        self._warmup_task = None
         super().__init__()
 
     def set_stream_processor(self, stream_processor):
@@ -135,6 +136,31 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
 
+    async def warmup(self):
+        """Public warmup method that triggers pipeline warmup."""
+        if not self.pipeline:
+            logger.warning("Warmup requested before pipeline initialization")
+            return
+        await self._run_warmup()
+
+    def _schedule_warmup(self) -> None:
+        """Schedule warmup in background if not already running."""
+        try:
+            if self._warmup_task and not self._warmup_task.done():
+                logger.info("Warmup already in progress, skipping new warmup request")
+                return
+
+            async def _run():
+                try:
+                    await self.warmup()
+                except Exception:
+                    logger.debug("Background warmup error", exc_info=True)
+
+            self._warmup_task = asyncio.create_task(_run())
+            logger.info("Warmup scheduled in background")
+        except Exception:
+            logger.debug("Failed to schedule warmup", exc_info=True)
+
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline."""
         try:
@@ -179,6 +205,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             return
         
         try:
+            # Detect sentinel early but evaluate truthiness after validation too
+            requested_warmup = False
+            try:
+                requested_warmup = bool(params.get("warmup")) if isinstance(params, dict) else False
+            except Exception:
+                requested_warmup = False
+
             if isinstance(params, list) and params:
                 params = params[0]
             
@@ -271,6 +304,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 self.pipeline.width = int(validated["width"])
             if "height" in validated:
                 self.pipeline.height = int(validated["height"])
+            
+            # Schedule warmup if requested via sentinel flag
+            if requested_warmup or bool(validated.get("warmup", False)):
+                self._schedule_warmup()
                 
         except Exception as e:
             logger.error(f"Parameter update failed: {e}")

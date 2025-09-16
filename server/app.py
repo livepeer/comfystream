@@ -24,16 +24,11 @@ from aiortc.rtcrtpsender import RTCRtpSender
 from twilio.rest import Client
 
 
-from pytrickle.stream_processor import StreamProcessor
-from pytrickle.frames import VideoFrame, AudioFrame
-from pytrickle.utils.register import RegisterCapability
-from pytrickle.frame_skipper import FrameSkipConfig
 from comfystream.pipeline import Pipeline
 from comfystream.utils import load_prompt_from_file, convert_prompt, ComfyStreamParamsUpdateRequest
 from comfystream import tensor_cache
 from comfystream.server.utils import FPSMeter, patch_loop_datagram, add_prefix_to_app_routes
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
-from frame_processor import ComfyStreamFrameProcessor
 from http_streaming.routes import setup_routes
 from frame_buffer import FrameBuffer
 
@@ -626,8 +621,7 @@ async def on_shutdown(app: web.Application):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run comfystream server. Use --enable-trickle for pytrickle mode, "
-                   "otherwise runs in WebRTC mode."
+        description="Run comfystream server in WebRTC mode."
     )
     parser.add_argument("--port", default=8889, help="Set the signaling port")
     parser.add_argument(
@@ -672,33 +666,6 @@ if __name__ == "__main__":
         choices=logging._nameToLevel.keys(),
         help="Set the logging level for ComfyUI inference",
     )
-    parser.add_argument(
-        "--orch-url",
-        default=None,
-        help="Orchestrator URL for capability registration",
-    )
-    parser.add_argument(
-        "--orch-secret",
-        default=None,
-        help="Orchestrator secret for capability registration",
-    )
-    parser.add_argument(
-        "--capability-name",
-        default=None,
-        help="Name for this capability (default: comfystream-processor)",
-    )
-    parser.add_argument(
-        "--frame-skip-enabled",
-        default=True,
-        action="store_true",
-        help="Enable adaptive frame skipping based on queue sizes",
-    )
-    parser.add_argument(
-        "--enable-trickle",
-        default=False,
-        action="store_true",
-        help="Enable pytrickle mode instead of WebRTC mode",
-    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -716,116 +683,46 @@ if __name__ == "__main__":
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
 
-    async def register_orchestrator(app_instance=None):
-        """Register capability with orchestrator if configured."""
-        try:
-            orch_url = args.orch_url or os.getenv("ORCH_URL")
-            orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
-            
-            if orch_url and orch_secret:
-                os.environ.update({
-                    "CAPABILITY_NAME": args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor",
-                    "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
-                    "CAPABILITY_URL": f"http://{args.host}:{args.port}",
-                    "CAPABILITY_CAPACITY": "1",
-                    "ORCH_URL": orch_url,
-                    "ORCH_SECRET": orch_secret
-                })
-                
-                result = await RegisterCapability.register(logger=logger)
-                if result:
-                    logger.info(f"Registered capability: {result.geturl()}")
-        except Exception as e:
-            logger.error(f"Orchestrator registration failed: {e}")
-
-    # Choose between pytrickle and WebRTC based on --enable-trickle flag
-    enable_trickle = args.enable_trickle
+    # Use WebRTC server
+    logger.info("Starting WebRTC server...")
+    app = web.Application()
+    app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
+    app["workspace"] = args.workspace
+    app["warmup_workflow"] = args.warmup_workflow
     
-    if enable_trickle and StreamProcessor is not None:
-        logger.info("--enable-trickle flag detected, starting pytrickle StreamProcessor...")
-        frame_processor = ComfyStreamFrameProcessor(
-            width=512,
-            height=512,
-            workspace=args.workspace,
-            disable_cuda_malloc=True,
-            gpu_only=True,
-            preview_method='none',
-            comfyui_inference_log_level=args.comfyui_inference_log_level,
-            warmup_workflow=args.warmup_workflow
-        )
-        
-        # Create frame skip configuration only if enabled
-        frame_skip_config = None
-        if args.frame_skip_enabled:
-            frame_skip_config = FrameSkipConfig()
-            logger.info("Frame skipping enabled: adaptive skipping based on queue sizes")
-        else:
-            logger.info("Frame skipping disabled")
-        
-        processor = StreamProcessor(
-            video_processor=frame_processor.process_video_async,
-            audio_processor=frame_processor.process_audio_async,
-            model_loader=frame_processor.load_model,
-            param_updater=frame_processor.update_params,
-            on_stream_stop=frame_processor.on_stream_stop,
-            name="comfystream-processor",
-            port=int(args.port),
-            host=args.host,
-            frame_skip_config=frame_skip_config
-        )
+    cors = setup_cors(app, defaults={
+        "*": ResourceOptions(allow_credentials=True, expose_headers="*", 
+                           allow_headers="*", allow_methods=["GET", "POST", "OPTIONS"])
+    })
 
-        frame_processor.set_stream_processor(processor)
-        
-        # Create async startup function to load model
-        async def load_model_on_startup(app):
-            await processor._frame_processor.load_model()
-        
-        # Add model loading and registration to startup hooks
-        processor.server.app.on_startup.append(load_model_on_startup)
-        processor.server.app.on_startup.append(register_orchestrator)
-        processor.run()
-        
-    else:
-        # Use WebRTC server (default mode)
-        logger.info("Starting WebRTC server...")
-        app = web.Application()
-        app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
-        app["workspace"] = args.workspace
-        app["warmup_workflow"] = args.warmup_workflow
-        
-        cors = setup_cors(app, defaults={
-            "*": ResourceOptions(allow_credentials=True, expose_headers="*", 
-                               allow_headers="*", allow_methods=["GET", "POST", "OPTIONS"])
-        })
+    # Create pipeline for WebRTC mode
+    app["pipeline"] = Pipeline(
+        width=512, height=512, cwd=args.workspace,
+        disable_cuda_malloc=True, gpu_only=True, preview_method='none',
+        comfyui_inference_log_level=args.comfyui_inference_log_level
+    )
+    
+    app.on_startup.extend([on_startup, warmup_on_startup])
+    app.on_shutdown.append(on_shutdown)
 
-        # Create pipeline for WebRTC mode
-        app["pipeline"] = Pipeline(
-            width=512, height=512, cwd=args.workspace,
-            disable_cuda_malloc=True, gpu_only=True, preview_method='none',
-            comfyui_inference_log_level=args.comfyui_inference_log_level
-        )
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+    app.router.add_post("/offer", offer)
+    app.router.add_post("/prompt", set_prompt)
+    
+    setup_routes(app, cors)
+    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
+    
+    # Add metrics if enabled
+    app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
+    if args.monitor:
+        app["metrics_manager"].enable()
+        app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
         
-        app.on_startup.extend([on_startup, warmup_on_startup])
-        app.on_shutdown.append(on_shutdown)
+    # Add stream stats
+    stream_stats_manager = StreamStatsManager(app)
+    app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
+    app.router.add_get("/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id)
 
-        app.router.add_get("/", health)
-        app.router.add_get("/health", health)
-        app.router.add_post("/offer", offer)
-        app.router.add_post("/prompt", set_prompt)
-        
-        setup_routes(app, cors)
-        app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
-        
-        # Add metrics if enabled
-        app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
-        if args.monitor:
-            app["metrics_manager"].enable()
-            app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
-            
-        # Add stream stats
-        stream_stats_manager = StreamStatsManager(app)
-        app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
-        app.router.add_get("/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id)
-
-        add_prefix_to_app_routes(app, "/live")
-        web.run_app(app, host=args.host, port=int(args.port), print=force_print)
+    add_prefix_to_app_routes(app, "/live")
+    web.run_app(app, host=args.host, port=int(args.port), print=force_print)
