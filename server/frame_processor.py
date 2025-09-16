@@ -241,41 +241,29 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """Update processing parameters."""
         if not self.pipeline:
             return
+    
+        # Handle list input - take first element
+        if isinstance(params, list) and params:
+            params = params[0]
         
-        try:
-            # Handle list input - take first element
-            if isinstance(params, list) and params:
-                params = params[0]
+        # Validate parameters using the centralized validation
+        validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
+        logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
+        
+        # Process prompts if provided
+        if "prompts" in validated and validated["prompts"]:
+            await self._process_prompts(validated["prompts"])
+        
+        # Update pipeline dimensions
+        if "width" in validated:
+            self.pipeline.width = int(validated["width"])
+        if "height" in validated:
+            self.pipeline.height = int(validated["height"])
+        
+        # Schedule warmup if requested
+        if validated.get("warmup", False):
+            self._schedule_warmup()
             
-            # Validate parameters using the centralized validation
-            validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
-            logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
-            
-            # Process prompts if provided
-            if "prompts" in validated and validated["prompts"]:
-                await self._process_prompts(validated["prompts"])
-            
-            # Update pipeline dimensions
-            if "width" in validated:
-                self.pipeline.width = int(validated["width"])
-            if "height" in validated:
-                self.pipeline.height = int(validated["height"])
-            
-            # Schedule warmup if requested
-            if validated.get("warmup", False):
-                self._schedule_warmup()
-                # await self._setup_post_warmup_monitoring()
-            try:
-                if bool(self.pipeline.produces_text_output()):
-                    self._setup_text_monitoring()
-                else:
-                    await self._stop_text_forwarder()
-            except Exception:
-                # Best-effort: if capability detection fails, do nothing here
-                logger.debug("Unable to determine text output capability after prompts update", exc_info=True)
-                
-        except Exception as e:
-            logger.error(f"Parameter update failed: {e}")
 
     async def _process_prompts(self, prompts):
         """Process and set prompts in the pipeline."""
@@ -294,21 +282,3 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 
         except Exception as e:
             logger.error(f"Failed to process prompts: {e}")
-
-    async def _setup_post_warmup_monitoring(self):
-        """Setup text monitoring after warmup completes."""
-        async def _start_monitoring_after_warmup():
-            try:
-                if self._warmup_task:
-                    await self._warmup_task
-                self._setup_text_monitoring()
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
-                logger.warning(f"Failed to start text monitoring after warmup: {e}")
-
-        try:
-            follow_up_task = asyncio.create_task(_start_monitoring_after_warmup())
-            self._background_tasks.append(follow_up_task)
-        except Exception as e:
-            logger.debug(f"Unable to schedule post-warmup text monitoring: {e}")
