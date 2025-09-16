@@ -81,7 +81,7 @@ def convert_prompt(prompt: PromptDictInput, return_dict: bool = False) -> Prompt
     # Validate the processed prompt and return Pydantic object
     return Prompt.validate(prompt)
 
-class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest if StreamParamsUpdateRequest else object):
+class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest):
     """ComfyStream parameter validation."""
     
     def __init__(self, **data):
