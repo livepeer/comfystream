@@ -4,14 +4,18 @@ import json
 import logging
 import os
 import sys
-
+import time
+import secrets
 import torch
+
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
 
-from aiohttp import web
+
+from aiohttp import web, MultipartWriter
 from aiohttp_cors import setup as setup_cors, ResourceOptions
+from aiohttp import web
 from aiortc import (
     MediaStreamTrack,
     RTCConfiguration,
@@ -19,22 +23,20 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
+# Import HTTP streaming modules
+from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
-from twilio.rest import Client
-
-
 from comfystream.pipeline import Pipeline
-from comfystream.utils import load_prompt_from_file, convert_prompt, ComfyStreamParamsUpdateRequest
-from comfystream import tensor_cache
-from comfystream.server.utils import FPSMeter, patch_loop_datagram, add_prefix_to_app_routes
+from twilio.rest import Client
+from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
-from http_streaming.routes import setup_routes
-from frame_buffer import FrameBuffer
+import time
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
 logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
+
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
@@ -108,12 +110,14 @@ class VideoStreamTrack(MediaStreamTrack):
         """
         processed_frame = await self.pipeline.get_processed_video_frame()
 
-        # Update the frame buffer with the processed frame
+                # Update the frame buffer with the processed frame
         try:
+            from frame_buffer import FrameBuffer
             frame_buffer = FrameBuffer.get_instance()
             frame_buffer.update_frame(processed_frame)
         except Exception as e:
-            logger.warning(f"Error updating frame buffer: {e}")
+            # Don't let frame buffer errors affect the main pipeline
+            print(f"Error updating frame buffer: {e}")
 
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
@@ -229,6 +233,7 @@ def get_twilio_token():
 
     return token
 
+
 def get_ice_servers():
     ice_servers = []
 
@@ -314,20 +319,6 @@ async def offer(request):
     @pc.on("datachannel")
     def on_datachannel(channel):
         if channel.label == "control":
-            
-            # Set up text monitoring callback for this channel
-            async def text_callback(text_data: str) -> bool:
-                try:
-                    response = {"type": "text_output", "text": text_data}
-                    channel.send(json.dumps(response))
-                    return True
-                except Exception as e:
-                    logger.error(f"Failed to send text data via control channel: {e}")
-                    return False
-            
-            # Set up text monitoring
-            pipeline.set_text_callback(text_callback)
-            pipeline.start_text_monitoring()
 
             @channel.on("message")
             async def on_message(message):
@@ -344,10 +335,10 @@ async def offer(request):
                                 "[Control] Missing prompt in update_prompt message"
                             )
                             return
-                        validated_prompts = validate_prompts(params["prompts"])
-                        if validated_prompts:
-                            await pipeline.update_prompts([validated_prompts])
-                            logger.debug("Control channel prompts updated successfully")
+                        try:
+                            await pipeline.update_prompts(params["prompts"])
+                        except Exception as e:
+                            logger.error(f"Error updating prompt: {str(e)}")
                         response = {"type": "prompts_updated", "success": True}
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
@@ -503,8 +494,6 @@ async def offer(request):
     async def on_connectionstatechange():
         logger.info(f"Connection state is: {pc.connectionState}")
         if pc.connectionState == "failed":
-            logger.error("WebRTC connection failed!")
-            pipeline.stop_text_monitoring()
             await pc.close()
             pcs.discard(pc)
             # Cancel any running data channel tasks
@@ -514,8 +503,6 @@ async def offer(request):
                         task.cancel()
                 request.app["data_channel_tasks"].clear()
         elif pc.connectionState == "closed":
-            logger.info("WebRTC connection closed")
-            pipeline.stop_text_monitoring()
             await pc.close()
             pcs.discard(pc)
             # Cancel any running data channel tasks
@@ -524,8 +511,6 @@ async def offer(request):
                     if not task.done():
                         task.cancel()
                 request.app["data_channel_tasks"].clear()
-        elif pc.connectionState == "connected":
-            logger.info("WebRTC connection fully established")
 
     await pc.setRemoteDescription(offer)
 
@@ -568,48 +553,31 @@ async def cancel_collect_frames(track):
 
 async def set_prompt(request):
     pipeline = request.app["pipeline"]
+
     prompt = await request.json()
-    
-    validated_prompts = validate_prompts(prompt)
-    if validated_prompts:
-        await pipeline.set_prompts([validated_prompts])
-        return web.Response(content_type="application/json", text="OK")
-    else:
-        return web.Response(content_type="application/json", text="Invalid prompts", status=400)
+    await pipeline.set_prompts(prompt)
+
+    return web.Response(content_type="application/json", text="OK")
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
-
-def validate_prompts(prompts_data):
-    """Validate and normalize prompts data."""
-    try:
-        validated_request = ComfyStreamParamsUpdateRequest.model_validate({"prompts": prompts_data})
-        validated_params = validated_request.model_dump()
-        return validated_params.get("prompts")
-    except Exception as e:
-        logger.error(f"Prompt validation failed: {e}")
-        return None
-
-
 
 
 async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
+
+    app["pipeline"] = Pipeline(
+        width=512,
+        height=512,
+        cwd=app["workspace"], 
+        disable_cuda_malloc=True, 
+        gpu_only=True, 
+        preview_method='none',
+        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+    )
     app["pcs"] = set()
     app["video_tracks"] = {}
-
-async def warmup_on_startup(app: web.Application):
-    # In WebRTC mode, only set prompts during startup
-    # Actual warmup happens when resolution is received via control message
-    warmup_path = app.get("warmup_workflow")
-    if warmup_path and "pipeline" in app:
-        try:
-            prompt = load_prompt_from_file(warmup_path)
-            await app["pipeline"].set_prompts([prompt])
-            logger.info("Warmup workflow loaded, warmup will run when resolution is received")
-        except Exception as e:
-            logger.error(f"Failed to load warmup workflow: {e}")
 
 
 async def on_shutdown(app: web.Application):
@@ -620,9 +588,7 @@ async def on_shutdown(app: web.Application):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run comfystream server in WebRTC mode."
-    )
+    parser = argparse.ArgumentParser(description="Run comfystream server")
     parser.add_argument("--port", default=8889, help="Set the signaling port")
     parser.add_argument(
         "--media-ports", default=None, help="Set the UDP ports for WebRTC media"
@@ -630,11 +596,6 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
     parser.add_argument(
         "--workspace", default=None, required=True, help="Set Comfy workspace"
-    )
-    parser.add_argument(
-        "--warmup-workflow",
-        default=os.getenv("WARMUP_WORKFLOW"),
-        help="Path to a JSON workflow file to warm up at startup (RTC only). Can also be set via WARMUP_WORKFLOW env var",
     )
     parser.add_argument(
         "--log-level",
@@ -674,55 +635,68 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
-    # Allow overriding of ComfyUI log levels.
-    if args.comfyui_log_level:
-        log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
-        logging.getLogger("comfy").setLevel(log_level)
+    app = web.Application()
+    app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
+    app["workspace"] = args.workspace
+    
+    # Setup CORS
+    cors = setup_cors(app, defaults={
+        "*": ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+            allow_methods=["GET", "POST", "OPTIONS"]
+        )
+    })
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    # WebRTC signalling and control routes.
+    app.router.add_post("/offer", offer)
+    app.router.add_post("/prompt", set_prompt)
+    
+    # Setup HTTP streaming routes
+    setup_routes(app, cors)
+    
+    # Serve static files from the public directory
+    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
+
+    # Add routes for getting stream statistics.
+    stream_stats_manager = StreamStatsManager(app)
+    app.router.add_get(
+        "/streams/stats", stream_stats_manager.collect_all_stream_metrics
+    )
+    app.router.add_get(
+        "/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id
+    )
+
+    # Add Prometheus metrics endpoint.
+    app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
+    if args.monitor:
+        app["metrics_manager"].enable()
+        logger.info(
+            f"Monitoring enabled - Prometheus metrics available at: "
+            f"http://{args.host}:{args.port}/metrics"
+        )
+        app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
+
+    # Add hosted platform route prefix.
+    # NOTE: This ensures that the local and hosted experiences have consistent routes.
+    add_prefix_to_app_routes(app, "/live")
 
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)
         sys.stdout.flush()
 
-    # Use WebRTC server
-    logger.info("Starting WebRTC server...")
-    app = web.Application()
-    app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
-    app["workspace"] = args.workspace
-    app["warmup_workflow"] = args.warmup_workflow
-    
-    cors = setup_cors(app, defaults={
-        "*": ResourceOptions(allow_credentials=True, expose_headers="*", 
-                           allow_headers="*", allow_methods=["GET", "POST", "OPTIONS"])
-    })
+    # Allow overriding of ComyfUI log levels.
+    if args.comfyui_log_level:
+        log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
+        logging.getLogger("comfy").setLevel(log_level)
+    if args.comfyui_inference_log_level:
+        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 
-    # Create pipeline for WebRTC mode
-    app["pipeline"] = Pipeline(
-        width=512, height=512, cwd=args.workspace,
-        disable_cuda_malloc=True, gpu_only=True, preview_method='none',
-        comfyui_inference_log_level=args.comfyui_inference_log_level
-    )
-    
-    app.on_startup.extend([on_startup, warmup_on_startup])
-    app.on_shutdown.append(on_shutdown)
-
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
-    app.router.add_post("/offer", offer)
-    app.router.add_post("/prompt", set_prompt)
-    
-    setup_routes(app, cors)
-    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
-    
-    # Add metrics if enabled
-    app["metrics_manager"] = MetricsManager(include_stream_id=args.stream_id_label)
-    if args.monitor:
-        app["metrics_manager"].enable()
-        app.router.add_get("/metrics", app["metrics_manager"].metrics_handler)
-        
-    # Add stream stats
-    stream_stats_manager = StreamStatsManager(app)
-    app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
-    app.router.add_get("/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id)
-
-    add_prefix_to_app_routes(app, "/live")
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)
