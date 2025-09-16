@@ -2,7 +2,6 @@
 from comfy_compatibility.imports import ImportContext, SITE_PACKAGES, MAIN_PY
 with ImportContext("comfy", "comfy_extras", order=[SITE_PACKAGES, MAIN_PY]):
     from .audio_utils import *
-    from .text_utils import *
     from .tensor_utils import *
     from .video_stream_utils import *
 from .api import *
@@ -13,7 +12,7 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Import and update mappings from submodules
-for module in [audio_utils, tensor_utils, text_utils, video_stream_utils, api, web]:
+for module in [audio_utils, tensor_utils, video_stream_utils, api, web]:
     if hasattr(module, 'NODE_CLASS_MAPPINGS'):
         NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
     if hasattr(module, 'NODE_DISPLAY_NAME_MAPPINGS'):
