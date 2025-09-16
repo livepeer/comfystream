@@ -84,10 +84,10 @@ def main():
         help="Name for this capability (default: comfystream-processor)",
     )
     parser.add_argument(
-        "--frame-skip-enabled",
-        default=True,
+        "--disable-frame-skip",
+        default=False,
         action="store_true",
-        help="Enable adaptive frame skipping based on queue sizes",
+        help="Disable adaptive frame skipping based on queue sizes (enabled by default)",
     )
     parser.add_argument(
         "--width",
@@ -133,11 +133,11 @@ def main():
     
     # Create frame skip configuration only if enabled
     frame_skip_config = None
-    if args.frame_skip_enabled:
+    if args.disable_frame_skip:
+        logger.info("Frame skipping disabled")
+    else:
         frame_skip_config = FrameSkipConfig()
         logger.info("Frame skipping enabled: adaptive skipping based on queue sizes")
-    else:
-        logger.info("Frame skipping disabled")
     
     # Create StreamProcessor with frame processor
     processor = StreamProcessor(
