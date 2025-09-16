@@ -177,8 +177,9 @@ def main():
     async def warmup_handler(request):
         try:
             body = await request.json()
-        except Exception:
-            body = {}
+        except Exception as e:
+            logger.error(f"Invalid JSON in warmup request: {e}")
+            return web.json_response({"error": "Invalid JSON"}, status=400)
         try:
             # Inject sentinel to trigger warmup inside update_params on the model thread
             if isinstance(body, dict):
