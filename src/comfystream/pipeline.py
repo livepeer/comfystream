@@ -144,7 +144,7 @@ class Pipeline:
         self.client.put_video_input(frame)
         await self.video_incoming_frames.put(frame)
 
-    async def put_audio_frame(self, frame: av.AudioFrame):
+    async def put_audio_frame(self, frame: av.AudioFrame, preprocess: bool = True):
         """Queue an audio frame for processing.
         
         Args:
@@ -159,7 +159,7 @@ class Pipeline:
             return
 
         # Process and send to client when input is accepted
-        frame.side_data.input = self.audio_preprocess(frame)
+        frame.side_data.input = self.audio_preprocess(frame) if preprocess else frame.to_ndarray()
         frame.side_data.skipped = True
         # Mark passthrough based on whether workflow produces audio output
         frame.side_data.passthrough = not self.produces_audio_output()
@@ -187,60 +187,7 @@ class Pipeline:
         Returns:
             The preprocessed frame as a tensor or numpy array
         """
-        #return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
-                # Convert frame to numpy array
-        
-        audio_data = frame.to_ndarray()
-        
-        # Handle different audio channel configurations
-        if audio_data.ndim == 1:
-            # Mono audio - use as is
-            processed_audio = audio_data
-        elif audio_data.ndim == 2:
-            # Multi-channel audio
-            if audio_data.shape[0] == 1:
-                # Single channel in 2D array [1, samples]
-                processed_audio = audio_data.ravel()
-            elif audio_data.shape[1] == 1:
-                # Single channel in 2D array [samples, 1]
-                processed_audio = audio_data.ravel()
-            elif audio_data.shape[0] == 2:
-                # Stereo audio [2, samples] - average to mono
-                processed_audio = audio_data.mean(axis=0)
-            elif audio_data.shape[1] == 2:
-                # Stereo audio [samples, 2] - average to mono
-                processed_audio = audio_data.mean(axis=1)
-            else:
-                # Multi-channel audio - average all channels to mono
-                processed_audio = audio_data.mean(axis=0 if audio_data.shape[0] > audio_data.shape[1] else 1)
-        else:
-            # Fallback for unexpected dimensions
-            processed_audio = audio_data.ravel()
-        
-        # Resample to 16 kHz if needed (simple linear resampling)
-        target_rate = 16000
-        input_rate = getattr(frame, 'sample_rate', target_rate) or target_rate
-        if input_rate != target_rate and processed_audio.size > 0:
-            try:
-                num_input = processed_audio.shape[-1]
-                num_output = max(1, int(round(num_input * (target_rate / float(input_rate)))))
-                x = np.linspace(0.0, 1.0, num=num_input, endpoint=False)
-                xi = np.linspace(0.0, 1.0, num=num_output, endpoint=False)
-                processed_audio = np.interp(xi, x, processed_audio.astype(np.float32)).astype(processed_audio.dtype)
-            except Exception:
-                logger.debug("Audio resample failed; continuing with original rate", exc_info=True)
-        
-        # Convert to int16 with proper scaling for float32/float64 input
-        if processed_audio.dtype in [np.float32, np.float64]:
-            processed_audio = np.clip(processed_audio, -1.0, 1.0)
-            processed_audio = (processed_audio * 32767).astype(np.int16)
-        else:
-            processed_audio = processed_audio.astype(np.int16)
-        
-        # Log only if there are issues
-        if processed_audio.size == 0:
-            logger.warning("Audio preprocessing produced empty output, check input format")
-        return processed_audio
+        return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
     
     def video_postprocess(self, output: Union[torch.Tensor, np.ndarray]) -> av.VideoFrame:
         """Postprocess a video frame after processing.

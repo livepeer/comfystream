@@ -4,7 +4,6 @@ import logging
 import os
 from typing import List
 
-import numpy as np
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
 from comfystream.pipeline import Pipeline
@@ -226,9 +225,8 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             if not self.pipeline:
                 return [frame]
             
-            # Audio processing needed - use pipeline
-            av_frame = frame.to_av_frame()
-            await self.pipeline.put_audio_frame(av_frame)
+            frame_av = frame.to_av_frame()
+            await self.pipeline.put_audio_frame(frame_av, preprocess=False)
             processed_av_frame = await self.pipeline.get_processed_audio_frame()
             processed_frame = AudioFrame.from_av_audio(processed_av_frame)
             return [processed_frame]
