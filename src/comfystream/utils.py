@@ -110,22 +110,14 @@ class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest):
                     data.pop("prompts")
         
         # Call parent constructor
-        if StreamParamsUpdateRequest:
-            super().__init__(**data)
-        else:
-            for key, value in data.items():
-                setattr(self, key, value)
+        super().__init__(**data)
     
     @classmethod
     def model_validate(cls, obj):
         return cls(**obj)
     
     def model_dump(self):
-        if StreamParamsUpdateRequest:
-            return super().model_dump()
-        else:
-            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-
+        return super().model_dump()
 
 def get_default_workflow() -> dict:
     """Return the default workflow as a dictionary for warmup.
