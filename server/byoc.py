@@ -34,7 +34,11 @@ async def register_orchestrator(orch_url=None, orch_secret=None, capability_name
                 "ORCH_SECRET": orch_secret
             })
             
-            result = await RegisterCapability.register(logger=logger)
+            # Pass through explicit capability_name to ensure CLI/env override takes effect
+            result = await RegisterCapability.register(
+                logger=logger,
+                capability_name=capability_name
+            )
             if result:
                 logger.info(f"Registered capability: {result.geturl()}")
     except Exception as e:
@@ -146,10 +150,13 @@ def main():
         model_loader=frame_processor.load_model,
         param_updater=frame_processor.update_params,
         on_stream_stop=frame_processor.on_stream_stop,
-        name="comfystream-processor",
+        # Align processor name with capability for consistent logs
+        name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor"),
         port=int(args.port),
         host=args.host,
-        frame_skip_config=frame_skip_config
+        frame_skip_config=frame_skip_config,
+        # Ensure server metadata reflects the desired capability name
+        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor")
     )
 
     # Set the stream processor reference for text data publishing
