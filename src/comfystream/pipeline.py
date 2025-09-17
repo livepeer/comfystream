@@ -187,15 +187,6 @@ class Pipeline:
         Returns:
             The preprocessed frame as a tensor or numpy array
         """
-    def audio_preprocess(self, frame: av.AudioFrame) -> Union[torch.Tensor, np.ndarray]:
-        """Preprocess an audio frame before processing.
-        
-        Args:
-            frame: The audio frame to preprocess
-            
-        Returns:
-            The preprocessed frame as a tensor or numpy array
-        """
         #return frame.to_ndarray().ravel().reshape(-1, 2).mean(axis=1).astype(np.int16)
                 # Convert frame to numpy array
         
