@@ -1,10 +1,6 @@
 {
   "10": {
     "inputs": {
-      "sample_rate": [
-        "11",
-        1
-      ],
       "transcription_interval": 2,
       "accumulation_duration": 3,
       "whisper_model": "base",
@@ -12,7 +8,7 @@
       "enable_vad": true,
       "output_format": "json_segments",
       "audio": [
-        "11",
+        "18",
         0
       ]
     },
@@ -57,6 +53,30 @@
     "class_type": "SaveTextTensor",
     "_meta": {
       "title": "SaveTextTensor"
+    }
+  },
+  "15": {
+    "inputs": {
+      "audio": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "AudioChannelSplit",
+    "_meta": {
+      "title": "Audio Channel Split ⚡🅡🅞🅣🅘"
+    }
+  },
+  "18": {
+    "inputs": {
+      "audio_list": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "AudioChannelMerge",
+    "_meta": {
+      "title": "Audio Channel Merge ⚡🅡🅞🅣🅘"
     }
   }
 }

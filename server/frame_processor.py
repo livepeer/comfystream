@@ -228,7 +228,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             
             # Audio processing needed - use pipeline
             av_frame = frame.to_av_frame()
-            await self.pipeline.put_audio_frame(av_frame, trickle=True)
+            await self.pipeline.put_audio_frame(av_frame)
             processed_av_frame = await self.pipeline.get_processed_audio_frame()
             processed_frame = AudioFrame.from_av_audio(processed_av_frame)
             return [processed_frame]
