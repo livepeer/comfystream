@@ -41,10 +41,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """Set reference to StreamProcessor for data publishing."""
         self._stream_processor = stream_processor
         logger.info("StreamProcessor reference set for text data publishing")
-        
-        # Set up text monitoring if pipeline is already loaded
-        #if self.pipeline:
-        #    self._setup_text_monitoring()
     
     def _setup_text_monitoring(self):
         """Set up background text forwarding from the pipeline."""
