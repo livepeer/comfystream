@@ -36,9 +36,15 @@ class PitchShifter:
         else:
             audio_numpy = waveform.squeeze()
         
-        # Ensure float32 format for librosa processing
+        # Ensure float32 format and proper normalization for librosa processing
         if audio_numpy.dtype != np.float32:
             audio_numpy = audio_numpy.astype(np.float32)
+        
+        # Check if data needs normalization (librosa expects [-1, 1] range)
+        max_abs_val = np.abs(audio_numpy).max()
+        if max_abs_val > 1.0:
+            # Data appears to be in int16 range, normalize it
+            audio_numpy = audio_numpy / 32768.0
         
         # Apply pitch shift
         shifted_audio = librosa.effects.pitch_shift(y=audio_numpy, sr=sample_rate, n_steps=pitch_shift)
