@@ -8,7 +8,7 @@
       "enable_vad": true,
       "output_format": "json_segments",
       "audio": [
-        "18",
+        "11",
         0
       ]
     },
@@ -42,7 +42,7 @@
       "title": "SRT Generator"
     }
   },
-  "13": {
+  "26": {
     "inputs": {
       "data": [
         "12",
@@ -53,30 +53,6 @@
     "class_type": "SaveTextTensor",
     "_meta": {
       "title": "SaveTextTensor"
-    }
-  },
-  "15": {
-    "inputs": {
-      "audio": [
-        "11",
-        0
-      ]
-    },
-    "class_type": "AudioChannelSplit",
-    "_meta": {
-      "title": "Audio Channel Split ⚡🅡🅞🅣🅘"
-    }
-  },
-  "18": {
-    "inputs": {
-      "audio_list": [
-        "15",
-        0
-      ]
-    },
-    "class_type": "AudioChannelMerge",
-    "_meta": {
-      "title": "Audio Channel Merge ⚡🅡🅞🅣🅘"
     }
   }
 }
