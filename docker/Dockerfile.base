@@ -1,6 +1,6 @@
 ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 \
     CONDA_VERSION=latest \
-    PYTHON_VERSION=3.12
+    PYTHON_VERSION=3.11.13
 
 FROM "${BASE_IMAGE}"
 
@@ -8,6 +8,7 @@ ARG CONDA_VERSION \
     PYTHON_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    TensorRT_ROOT=/opt/TensorRT-10.12.0.36 \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
@@ -54,6 +55,21 @@ conda run -n comfystream --no-capture-output pip install wheel
 # Copy only files needed for setup
 COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
 COPY ./configs /workspace/comfystream/configs
+
+# TensorRT SDK
+WORKDIR /opt
+RUN wget --progress=dot:giga \
+    https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.12.0/tars/TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz \
+    && tar -xzf TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz \
+    && rm TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz
+
+# Link libraries and update linker cache
+RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
+    && ldconfig
+
+# Install matching TensorRT Python bindings for CPython 3.11
+RUN conda run -n comfystream pip install --no-cache-dir \
+    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp311-none-linux_x86_64.whl
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.56 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
