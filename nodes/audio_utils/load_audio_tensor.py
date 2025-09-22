@@ -9,10 +9,11 @@ from comfystream import tensor_cache
 logger = logging.getLogger(__name__)
 
 class LoadAudioTensor:
-    CATEGORY = "audio_utils"
+    CATEGORY = "ComfyStream/Loaders"
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
     FUNCTION = "execute"
+    DESCRIPTION = "Load audio tensor from ComfyStream input with configurable buffer size and timeout. Raises exception if no audio input available within timeout period."
     
     def __init__(self):
         self.audio_buffer = np.empty(0, dtype=np.int16)
@@ -25,10 +26,19 @@ class LoadAudioTensor:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "buffer_size": ("FLOAT", {"default": 500.0}),
+                "buffer_size": ("FLOAT", {
+                    "default": 500.0,
+                    "tooltip": "Audio buffer size in milliseconds"
+                }),
             },
             "optional": {
-                "timeout_seconds": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.1}),
+                "timeout_seconds": ("FLOAT", {
+                    "default": 1.0, 
+                    "min": 0.1, 
+                    "max": 10.0, 
+                    "step": 0.1,
+                    "tooltip": "Maximum time to wait for audio frames before raising an error"
+                }),
             }
         }
     
@@ -88,17 +98,7 @@ class LoadAudioTensor:
         return self._collect_audio_chunks(timeout_seconds)
 
     def _collect_audio_chunks(self, timeout_seconds: float) -> np.ndarray:
-        """Collect audio chunks to fill the buffer.
-        
-        Args:
-            timeout_seconds: Timeout for waiting for frames
-            
-        Returns:
-            Collected audio data as numpy array
-            
-        Raises:
-            RuntimeError: When audio stream is interrupted and insufficient data available
-        """
+        """Collect audio chunks to fill the buffer."""
         chunks = [self.leftover] if self.leftover.size > 0 else []
         total_samples = self.leftover.shape[0]
         
@@ -128,14 +128,7 @@ class LoadAudioTensor:
             raise RuntimeError(error_msg)
 
     def _format_audio_output(self, buffered_audio: np.ndarray) -> tuple:
-        """Format the buffered audio data into the expected output format.
-        
-        Args:
-            buffered_audio: Raw audio data as numpy array
-            
-        Returns:
-            Tuple containing audio dictionary in ComfyUI format
-        """
+        """Format buffered audio data into ComfyUI AUDIO format."""
         # Convert numpy array to torch tensor and normalize int16 to float32
         waveform_tensor = torch.from_numpy(buffered_audio.astype(np.float32) / 32768.0)
         
@@ -156,18 +149,6 @@ class LoadAudioTensor:
         return (audio_dict,)
 
     def execute(self, buffer_size: float, timeout_seconds: float = 1.0) -> tuple:
-        """Execute the LoadAudioTensor node to get audio input.
-        
-        Args:
-            buffer_size: Buffer size in milliseconds
-            timeout_seconds: Timeout for waiting for frames
-            
-        Returns:
-            Tuple containing the audio dictionary in ComfyUI format
-            
-        Raises:
-            RuntimeError: When no input available within timeout
-        """
         self._initialize_if_needed(buffer_size, timeout_seconds)
         buffered_audio = self._process_audio_buffer(timeout_seconds)
         return self._format_audio_output(buffered_audio)

@@ -8,15 +8,22 @@ logger = logging.getLogger(__name__)
 
 
 class LoadTensor:
-    CATEGORY = "tensor_utils"
+    CATEGORY = "ComfyStream/Loaders"
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "execute"
+    DESCRIPTION = "Load image tensor from ComfyStream input with configurable timeout. Raises exception if no input available within timeout period."
 
     @classmethod
     def INPUT_TYPES(s):
         return {
             "optional": {
-                "timeout_seconds": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.1}),
+                "timeout_seconds": ("FLOAT", {
+                    "default": 1.0, 
+                    "min": 0.1, 
+                    "max": 10.0, 
+                    "step": 0.1,
+                    "tooltip": "Maximum time to wait for image frames before raising an error"
+                }),
             }
         }
 
@@ -25,17 +32,6 @@ class LoadTensor:
         return float("nan")
 
     def execute(self, timeout_seconds: float = 1.0) -> Tuple[torch.Tensor]:
-        """Execute the LoadTensor node to get image input.
-        
-        Args:
-            timeout_seconds: Timeout for waiting for frames
-            
-        Returns:
-            Tuple containing the image tensor
-            
-        Raises:
-            RuntimeError: When no input available within timeout
-        """
         try:
             frame = tensor_cache.image_inputs.get(block=True, timeout=timeout_seconds)
             frame.side_data.skipped = False
