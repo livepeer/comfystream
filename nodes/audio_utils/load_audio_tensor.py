@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import queue
 import logging
+from typing import Optional, Any
 
 from comfystream import tensor_cache
 
@@ -18,12 +19,16 @@ class LoadAudioTensor:
         self.buffer_samples = None
         self.sample_rate = None
         self.last_sample_rate = 44100  # Default fallback sample rate
+        self.leftover = np.empty(0, dtype=np.int16)  # Initialize to prevent race conditions
     
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "buffer_size": ("FLOAT", {"default": 500.0}),
+            },
+            "optional": {
+                "timeout_seconds": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.1}),
             }
         }
     
@@ -31,76 +36,106 @@ class LoadAudioTensor:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
     
-    def _get_audio_frame_with_timeout(self, timeout_seconds=1.0):
+    def _get_audio_frame_with_timeout(self, timeout_seconds: float) -> Optional[Any]:
         """Get audio frame with timeout, return None if no frame available."""
         try:
             return tensor_cache.audio_inputs.get(block=True, timeout=timeout_seconds)
         except queue.Empty:
             return None
     
-    def _create_silent_audio(self, buffer_samples, sample_rate):
-        """Create silent audio buffer as fallback."""
-        logger.info(f"No audio input available, generating silent audio buffer ({buffer_samples} samples at {sample_rate}Hz)")
-        return np.zeros(buffer_samples, dtype=np.int16)
     
-    def execute(self, buffer_size):
-        # Initialize if needed
+    def _initialize_if_needed(self, buffer_size: float, timeout_seconds: float) -> None:
+        """Initialize audio parameters if needed.
+        
+        Args:
+            buffer_size: Buffer size in milliseconds
+            timeout_seconds: Timeout for waiting for frames
+            
+        Raises:
+            RuntimeError: When no input available within timeout
+        """
         if self.sample_rate is None or self.buffer_samples is None:
-            frame = self._get_audio_frame_with_timeout(1.0)
+            frame = self._get_audio_frame_with_timeout(timeout_seconds)
             
             if frame is None:
-                # No audio input available - use last known sample rate or default
-                self.sample_rate = self.last_sample_rate
-                logger.warning(f"No audio frames available in tensor cache, using sample rate: {self.sample_rate} Hz")
-                self.buffer_samples = int(self.sample_rate * buffer_size / 1000)
-                self.leftover = np.empty(0, dtype=np.int16)
-                
-                # Return silent audio immediately
-                buffered_audio = self._create_silent_audio(self.buffer_samples, self.sample_rate)
+                error_msg = f"No audio frames available in tensor cache after {timeout_seconds}s timeout. ComfyStream may not be receiving audio input or the workflow may not have audio input nodes."
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
             else:
                 # Normal ComfyStream mode - remember this sample rate for future fallbacks
                 self.sample_rate = frame.sample_rate
                 self.last_sample_rate = self.sample_rate
                 self.buffer_samples = int(self.sample_rate * buffer_size / 1000)
                 self.leftover = frame.side_data.input
+                logger.info(f"Audio input initialized: {self.sample_rate} Hz, {self.buffer_samples} samples per buffer")
+
+    def _process_audio_buffer(self, timeout_seconds: float) -> np.ndarray:
+        """Process the audio buffer and return buffered audio data.
         
-        # Handle case where we need to generate silent audio immediately
-        if not hasattr(self, 'leftover'):
-            buffered_audio = self._create_silent_audio(self.buffer_samples, self.sample_rate)
-        # If we have leftover data, use it first
-        elif self.leftover.shape[0] >= self.buffer_samples:
+        Args:
+            timeout_seconds: Timeout for waiting for frames
+            
+        Returns:
+            Buffered audio data as numpy array
+        """
+        # If we have enough leftover data, use it first
+        if self.leftover.shape[0] >= self.buffer_samples:
             buffered_audio = self.leftover[:self.buffer_samples]
             self.leftover = self.leftover[self.buffer_samples:]
-        elif self.leftover.shape[0] < self.buffer_samples:
-            # Need more audio data
-            chunks = [self.leftover] if self.leftover.size > 0 else []
-            total_samples = self.leftover.shape[0]
+            return buffered_audio
+        
+        # Need more audio data
+        return self._collect_audio_chunks(timeout_seconds)
+
+    def _collect_audio_chunks(self, timeout_seconds: float) -> np.ndarray:
+        """Collect audio chunks to fill the buffer.
+        
+        Args:
+            timeout_seconds: Timeout for waiting for frames
             
-            while total_samples < self.buffer_samples:
-                frame = self._get_audio_frame_with_timeout(1.0)
-                
-                if frame is None:
-                    # No more audio available, pad with silence
-                    remaining_samples = self.buffer_samples - total_samples
-                    silence = np.zeros(remaining_samples, dtype=np.int16)
-                    chunks.append(silence)
-                    logger.debug(f"Padded {remaining_samples} samples with silence")
-                    break
-                else:
-                    # Normal frame processing
-                    if frame.sample_rate != self.sample_rate:
-                        raise ValueError("Sample rate mismatch")
-                    chunks.append(frame.side_data.input)
-                    total_samples += frame.side_data.input.shape[0]
+        Returns:
+            Collected audio data as numpy array
             
-            if chunks:
-                merged_audio = np.concatenate(chunks, dtype=np.int16)
-                buffered_audio = merged_audio[:self.buffer_samples]
-                self.leftover = merged_audio[self.buffer_samples:] if merged_audio.shape[0] > self.buffer_samples else np.empty(0, dtype=np.int16)
+        Raises:
+            RuntimeError: When audio stream is interrupted and insufficient data available
+        """
+        chunks = [self.leftover] if self.leftover.size > 0 else []
+        total_samples = self.leftover.shape[0]
+        
+        while total_samples < self.buffer_samples:
+            frame = self._get_audio_frame_with_timeout(timeout_seconds)
+            
+            if frame is None:
+                error_msg = f"Audio stream interrupted after {timeout_seconds}s timeout, insufficient data available (need {self.buffer_samples} samples, have {total_samples})"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
             else:
-                # No chunks at all, create silent buffer
-                buffered_audio = self._create_silent_audio(self.buffer_samples, self.sample_rate)
-                
+                # Normal frame processing
+                if frame.sample_rate != self.sample_rate:
+                    raise ValueError(f"Sample rate mismatch: expected {self.sample_rate}Hz, got {frame.sample_rate}Hz")
+                chunks.append(frame.side_data.input)
+                total_samples += frame.side_data.input.shape[0]
+        
+        if chunks:
+            merged_audio = np.concatenate(chunks, dtype=np.int16)
+            buffered_audio = merged_audio[:self.buffer_samples]
+            self.leftover = merged_audio[self.buffer_samples:] if merged_audio.shape[0] > self.buffer_samples else np.empty(0, dtype=np.int16)
+            return buffered_audio
+        else:
+            # This should not happen given the logic above, but just in case
+            error_msg = f"No audio data collected after timeout"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+    def _format_audio_output(self, buffered_audio: np.ndarray) -> tuple:
+        """Format the buffered audio data into the expected output format.
+        
+        Args:
+            buffered_audio: Raw audio data as numpy array
+            
+        Returns:
+            Tuple containing audio dictionary in ComfyUI format
+        """
         # Convert numpy array to torch tensor and normalize int16 to float32
         waveform_tensor = torch.from_numpy(buffered_audio.astype(np.float32) / 32768.0)
         
@@ -119,3 +154,20 @@ class LoadAudioTensor:
         }
         
         return (audio_dict,)
+
+    def execute(self, buffer_size: float, timeout_seconds: float = 1.0) -> tuple:
+        """Execute the LoadAudioTensor node to get audio input.
+        
+        Args:
+            buffer_size: Buffer size in milliseconds
+            timeout_seconds: Timeout for waiting for frames
+            
+        Returns:
+            Tuple containing the audio dictionary in ComfyUI format
+            
+        Raises:
+            RuntimeError: When no input available within timeout
+        """
+        self._initialize_if_needed(buffer_size, timeout_seconds)
+        buffered_audio = self._process_audio_buffer(timeout_seconds)
+        return self._format_audio_output(buffered_audio)
