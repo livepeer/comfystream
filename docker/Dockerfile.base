@@ -69,7 +69,7 @@ RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
 
 # Install matching TensorRT Python bindings for CPython 3.11
 RUN conda run -n comfystream pip install --no-cache-dir \
-    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp311-none-linux_x86_64.whl
+    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp312-none-linux_x86_64.whl
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.56 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
