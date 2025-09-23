@@ -3,6 +3,7 @@ import queue
 import logging
 from typing import Tuple
 from comfystream import tensor_cache
+from comfystream.exceptions import ComfyStreamInputTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,11 @@ class LoadTensor:
         return {
             "optional": {
                 "timeout_seconds": ("FLOAT", {
-                    "default": 1.0, 
+                    "default": 3.0, 
                     "min": 0.1, 
-                    "max": 10.0, 
+                    "max": 30.0,  # Increased max for warmup scenarios
                     "step": 0.1,
-                    "tooltip": "Maximum time to wait for image frames before raising an error"
+                    "tooltip": "Maximum time to wait for image frames before raising an error. Use higher values (10-30s) for warmup scenarios."
                 }),
             }
         }
@@ -37,6 +38,4 @@ class LoadTensor:
             frame.side_data.skipped = False
             return (frame.side_data.input,)
         except queue.Empty:
-            error_msg = f"No image frames available in tensor cache after {timeout_seconds}s timeout. ComfyStream may not be receiving input or the workflow may not have image input nodes."
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise ComfyStreamInputTimeoutError("video", timeout_seconds, "ComfyStream may not be receiving input or workflow may not have video input nodes")

@@ -7,6 +7,7 @@ from typing import Optional, Any
 from comfystream import tensor_cache
 
 logger = logging.getLogger(__name__)
+from comfystream.exceptions import ComfyStreamInputTimeoutError, ComfyStreamAudioBufferError
 
 class LoadAudioTensor:
     CATEGORY = "ComfyStream/Loaders"
@@ -69,8 +70,8 @@ class LoadAudioTensor:
             
             if frame is None:
                 error_msg = f"No audio frames available in tensor cache after {timeout_seconds}s timeout. ComfyStream may not be receiving audio input or the workflow may not have audio input nodes."
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+                # Reduce logging verbosity - let ComfyStream client handle this gracefully
+                raise ComfyStreamInputTimeoutError("audio", timeout_seconds, "ComfyStream may not be receiving audio input or workflow may not have audio input nodes")
             else:
                 # Normal ComfyStream mode - remember this sample rate for future fallbacks
                 self.sample_rate = frame.sample_rate
@@ -107,8 +108,8 @@ class LoadAudioTensor:
             
             if frame is None:
                 error_msg = f"Audio stream interrupted after {timeout_seconds}s timeout, insufficient data available (need {self.buffer_samples} samples, have {total_samples})"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+                # Reduce logging verbosity - let ComfyStream client handle this gracefully
+                raise ComfyStreamAudioBufferError(timeout_seconds, self.buffer_samples, total_samples)
             else:
                 # Normal frame processing
                 if frame.sample_rate != self.sample_rate:
@@ -124,8 +125,8 @@ class LoadAudioTensor:
         else:
             # This should not happen given the logic above, but just in case
             error_msg = f"No audio data collected after timeout"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            # Reduce logging verbosity - let ComfyStream client handle this gracefully
+            raise ComfyStreamInputTimeoutError("audio", 0.0, "No audio data collected after timeout")
 
     def _format_audio_output(self, buffered_audio: np.ndarray) -> tuple:
         """Format buffered audio data into ComfyUI AUDIO format."""

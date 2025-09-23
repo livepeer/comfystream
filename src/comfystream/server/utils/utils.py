@@ -83,3 +83,66 @@ async def temporary_log_level(logger_name: str, level: int):
     finally:
         if level is not None:
             logger.setLevel(original_level)
+
+
+class ComfyStreamTimeoutFilter(logging.Filter):
+    """
+    Custom logging filter to suppress verbose ComfyUI execution stack traces 
+    for ComfyStream timeout exceptions.
+    
+    This prevents the extensive stack traces that ComfyUI logs when our LoadTensor
+    and LoadAudioTensor nodes timeout waiting for input frames, which is expected
+    behavior during stream switching and warmup scenarios.
+    """
+    
+    def filter(self, record):
+        """
+        Filter out ComfyUI execution error logs for ComfyStream timeout exceptions.
+        
+        Args:
+            record: The log record to potentially filter
+            
+        Returns:
+            False to suppress the log, True to allow it
+        """
+        # Only filter ERROR level messages from ComfyUI execution system
+        if record.levelno != logging.ERROR:
+            return True
+            
+        # Check if this is from ComfyUI execution system
+        if not (record.name.startswith("comfy") and ("execution" in record.name or record.name == "comfy")):
+            return True
+            
+        # Get the full message including any exception info
+        message = record.getMessage()
+        
+        # Check if this is a ComfyStream timeout-related error
+        timeout_indicators = [
+            "ComfyStreamInputTimeoutError",
+            "ComfyStreamAudioBufferError", 
+            "No video frames available",
+            "No audio frames available", 
+            "Audio stream interrupted",
+            "insufficient data available",
+            "ComfyStream may not be receiving input"
+        ]
+        
+        # Suppress if any timeout indicator is found in the message
+        for indicator in timeout_indicators:
+            if indicator in message:
+                return False
+                
+        # Also check the exception info if present
+        if record.exc_info and record.exc_info[1]:
+            exc_str = str(record.exc_info[1])
+            for indicator in timeout_indicators:
+                if indicator in exc_str:
+                    return False
+                    
+        # Check if the record has exc_text (formatted exception)
+        if hasattr(record, 'exc_text') and record.exc_text:
+            for indicator in timeout_indicators:
+                if indicator in record.exc_text:
+                    return False
+                    
+        return True
