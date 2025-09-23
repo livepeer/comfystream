@@ -15,7 +15,7 @@ class LoadTensor:
         return {
             "optional": {
                 "timeout_seconds": ("FLOAT", {
-                    "default": 3.0, 
+                    "default": 1.0, 
                     "min": 0.1, 
                     "max": 30.0,
                     "step": 0.1,
@@ -28,7 +28,7 @@ class LoadTensor:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def execute(self, timeout_seconds: float = 3.0):
+    def execute(self, timeout_seconds: float = 1.0):
         try:
             frame = tensor_cache.image_inputs.get(block=True, timeout=timeout_seconds)
             frame.side_data.skipped = False

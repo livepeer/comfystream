@@ -29,7 +29,7 @@ class LoadAudioTensor:
             },
             "optional": {
                 "timeout_seconds": ("FLOAT", {
-                    "default": 3.0, 
+                    "default": 1.0, 
                     "min": 0.1, 
                     "max": 30.0, 
                     "step": 0.1,
@@ -42,7 +42,7 @@ class LoadAudioTensor:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def execute(self, buffer_size: float, timeout_seconds: float = 3.0):
+    def execute(self, buffer_size: float, timeout_seconds: float = 1.0):
         # Initialize if needed
         if self.sample_rate is None or self.buffer_samples is None:
             try:
