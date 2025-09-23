@@ -156,45 +156,22 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 comfyui_inference_log_level=params.get('comfyui_inference_log_level'),
             )
 
-    async def warmup(self, warmup_timeout: float = 15.0):
-        """Public warmup method that triggers pipeline warmup with appropriate timeout.
-        
-        Args:
-            warmup_timeout: Timeout to use for warmup operations (default: 15 seconds)
-        """
+    async def warmup(self):
+        """Warm up the pipeline."""
         if not self.pipeline:
             logger.warning("Warmup requested before pipeline initialization")
             return
         
-        logger.info(f"Running pipeline warmup with {warmup_timeout}s timeout...")
+        logger.info("Running pipeline warmup...")
         try:
-            # If we have current prompts, temporarily update them with warmup timeout
-            if hasattr(self.pipeline, 'current_prompts') and self.pipeline.current_prompts:
-                logger.info("Updating existing workflow with warmup timeout for warmup")
-                # Convert current prompt back to dict format and apply warmup timeout
-                current_prompt_dict = dict(self.pipeline.current_prompts[0])  # Assume single prompt
-                await self._process_prompts(current_prompt_dict, timeout_override=warmup_timeout)
-                
             capabilities = self.pipeline.get_workflow_io_capabilities()
-            logger.info(f"Detected I/O capabilities for warmup: {capabilities}")
+            logger.info(f"Detected I/O capabilities: {capabilities}")
             
-            # Warm video if there are video inputs or outputs
             if capabilities.get("video", {}).get("input") or capabilities.get("video", {}).get("output"):
-                logger.info("Running video warmup...")
                 await self.pipeline.warm_video()
-                logger.info("Video warmup completed")
             
-            # Warm audio if there are audio inputs or outputs  
             if capabilities.get("audio", {}).get("input") or capabilities.get("audio", {}).get("output"):
-                logger.info("Running audio warmup...")
                 await self.pipeline.warm_audio()
-                logger.info("Audio warmup completed")
-            
-            # After warmup, update back to normal timeout if we had prompts
-            if self.pipeline.current_prompts:
-                logger.info("Updating workflow back to normal timeout after warmup")
-                current_prompt_dict = dict(self.pipeline.current_prompts[0])
-                await self._process_prompts(current_prompt_dict, timeout_override=3.0)  # Normal timeout
                 
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
@@ -277,15 +254,14 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             self._schedule_warmup()
             
 
-    async def _process_prompts(self, prompts, timeout_override: float = None):
+    async def _process_prompts(self, prompts):
         """Process and set prompts in the pipeline."""
         try:
-            converted = convert_prompt(prompts, return_dict=True, timeout_override=timeout_override)
+            converted = convert_prompt(prompts, return_dict=True)
                  
             # Set prompts in pipeline
             await self.pipeline.set_prompts([converted])
-            timeout_msg = f" with {timeout_override}s timeout" if timeout_override else ""
-            logger.info(f"Prompts set successfully{timeout_msg}: {list(prompts.keys())}")
+            logger.info(f"Prompts set successfully: {list(prompts.keys())}")
             
             # Update text monitoring based on workflow capabilities
             if self.pipeline.produces_text_output():

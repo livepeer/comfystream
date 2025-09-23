@@ -697,10 +697,7 @@ if __name__ == "__main__":
     
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
-    # Also apply to the general comfy logger to catch all execution-related logs
     logging.getLogger("comfy").addFilter(ComfyStreamTimeoutFilter())
-    # Apply to root logger as well to catch any propagated logs
-    logging.getLogger().addFilter(ComfyStreamTimeoutFilter())
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 

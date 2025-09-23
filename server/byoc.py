@@ -121,10 +121,7 @@ def main():
     
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
-    # Also apply to the general comfy logger to catch all execution-related logs
     logging.getLogger("comfy").addFilter(ComfyStreamTimeoutFilter())
-    # Apply to root logger as well to catch any propagated logs
-    logging.getLogger().addFilter(ComfyStreamTimeoutFilter())
 
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)

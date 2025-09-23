@@ -1,10 +1,10 @@
 import asyncio
 from typing import List
-from comfystream.exceptions import ComfyStreamInputTimeoutError
 import logging
 
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
+from comfystream.exceptions import ComfyStreamInputTimeoutError
 
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
@@ -22,21 +22,12 @@ class ComfyStreamClient:
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
-        # Add runtime error detection
-        self._runtime_error_detected = asyncio.Event()
-        # Add delayed execution support for modality switching
-        self._execution_paused = False
-        self._awaiting_first_frame = False
 
-    async def set_prompts(self, prompts: List[PromptDictInput], timeout_override: float = None):
+    async def set_prompts(self, prompts: List[PromptDictInput]):
         """Set new prompts, replacing any existing ones.
-        
-        Prompts are prepared and execution will start automatically when first input frame arrives.
-        This prevents timeout errors when switching between modalities and works seamlessly with warmup.
         
         Args:
             prompts: List of prompt dictionaries to set
-            timeout_override: If provided, overrides timeout in LoadTensor/LoadAudioTensor nodes (for warmup)
             
         Raises:
             ValueError: If prompts list is empty
@@ -47,114 +38,44 @@ class ComfyStreamClient:
             
         # Cancel existing prompts first to avoid conflicts
         await self.cancel_running_prompts()
-        # Reset stop event and runtime error detection for new prompts
+        # Reset stop event for new prompts
         self._stop_event.clear()
-        self._runtime_error_detected.clear()
-        self._execution_paused = True
-        self._awaiting_first_frame = True
-        
-        self.current_prompts = [convert_prompt(prompt, timeout_override=timeout_override) for prompt in prompts]
-        
-        if timeout_override is not None:
-            logger.info(f"Applied {timeout_override}s timeout override to workflows")
-        
-        timeout_msg = f" with {timeout_override}s timeout" if timeout_override else ""
-        logger.info(f"Prepared {len(self.current_prompts)} prompt(s){timeout_msg} - execution will start when first frame arrives")
-
-    def _start_prompt_tasks(self):
-        """Start the prompt execution tasks."""
+        self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
+        logger.info(f"Queuing {len(self.current_prompts)} prompt(s) for execution")
         for idx in range(len(self.current_prompts)):
             task = asyncio.create_task(self.run_prompt(idx))
             self.running_prompts[idx] = task
 
-    async def start_execution(self):
-        """Start execution of prepared prompts (used after set_prompts with start_immediately=False)."""
-        if not self._execution_paused:
-            logger.warning("Execution is not paused, start_execution() has no effect")
-            return
-            
-        if not self.current_prompts:
-            raise ValueError("No prompts prepared for execution")
-            
-        self._execution_paused = False
-        self._awaiting_first_frame = False
-        logger.info(f"Starting execution of {len(self.current_prompts)} prepared prompt(s)")
-        self._start_prompt_tasks()
-
-    def _start_execution_if_awaiting(self):
-        """Internal method to start execution when first frame arrives."""
-        if self._awaiting_first_frame and self._execution_paused:
-            self._execution_paused = False
-            self._awaiting_first_frame = False
-            logger.info(f"First frame received - starting execution of {len(self.current_prompts)} prompt(s)")
-            self._start_prompt_tasks()
-
-    async def update_prompts(self, prompts: List[PromptDictInput], timeout_override: float = None):
-        """Update existing prompts and optionally override timeout values.
-        
-        Args:
-            prompts: List of updated prompt dictionaries
-            timeout_override: Optional timeout override for LoadTensor/LoadAudioTensor nodes
-        """
+    async def update_prompts(self, prompts: List[PromptDictInput]):
         async with self._prompt_update_lock:
             # TODO: currently under the assumption that only already running prompts are updated
             if len(prompts) != len(self.current_prompts):
                 raise ValueError(
                     "Number of updated prompts must match the number of currently running prompts."
                 )
-                
             # Validation step before updating the prompt, only meant for a single prompt for now
             for idx, prompt in enumerate(prompts):
-                converted_prompt = convert_prompt(prompt, timeout_override=timeout_override)
+                converted_prompt = convert_prompt(prompt)
                 try:
                     await self.comfy_client.queue_prompt(converted_prompt)
                     self.current_prompts[idx] = converted_prompt
                 except Exception as e:
                     raise Exception(f"Prompt update failed: {str(e)}") from e
-                    
-            if timeout_override is not None:
-                logger.info(f"Applied {timeout_override}s timeout override to updated workflows")
-            
-            timeout_msg = f" with {timeout_override}s timeout" if timeout_override else ""
-            logger.info(f"Updated {len(prompts)} prompt(s){timeout_msg}")
-
 
     async def run_prompt(self, prompt_index: int):
-        while not self._stop_event.is_set() and not self._runtime_error_detected.is_set():
+        while not self._stop_event.is_set():
             async with self._prompt_update_lock:
                 try:
                     await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
                 except asyncio.CancelledError:
                     raise
-                except ComfyStreamInputTimeoutError as e:
-                    # Expected timeout condition - minimal logging
-                    logger.info(f"Waiting for {e.input_type} input (timeout: {e.timeout_seconds}s)")
-                    self._runtime_error_detected.set()
-                    break
+                except ComfyStreamInputTimeoutError:
+                    # Timeout errors are expected during stream switching - just continue
+                    continue
                 except Exception as e:
-                    # Unexpected workflow errors - log with warning level
-                    logger.warning(f"Unexpected workflow issue in prompt {prompt_index}: {str(e)}")
-                    self._runtime_error_detected.set()
-                    break
-        
-        # Log why the prompt loop ended
-        if self._runtime_error_detected.is_set():
-            logger.info(f"Prompt {prompt_index} stopped due to runtime error detection")
-        elif self._stop_event.is_set():
-            logger.info(f"Prompt {prompt_index} stopped due to stop event")
-
-    def stop_prompts_execution(self):
-        """Manually stop all running prompts due to external conditions.
-        
-        This method triggers the same stop behavior as workflow execution errors,
-        causing all prompt loops to stop immediately. Prompts will remain stopped
-        until set_prompts() is called again.
-        
-        Useful for integration with pipeline lifecycle events like warmup completion,
-        stream disconnection, or other external stop conditions.
-        """
-        logger.info("Manually stopping all prompt execution")
-        self._runtime_error_detected.set()
+                    await self.cleanup()
+                    logger.error(f"Error running prompt: {str(e)}")
+                    raise
 
     async def cleanup(self):
         # Set stop event to signal prompt loops to exit
@@ -203,13 +124,9 @@ class ComfyStreamClient:
         if tensor_cache.image_inputs.full():
             tensor_cache.image_inputs.get(block=True)
         tensor_cache.image_inputs.put(frame)
-        # Start execution if we're awaiting the first frame
-        self._start_execution_if_awaiting()
     
     def put_audio_input(self, frame):
         tensor_cache.audio_inputs.put(frame)
-        # Start execution if we're awaiting the first frame
-        self._start_execution_if_awaiting()
 
     async def get_video_output(self):
         return await tensor_cache.image_outputs.get()

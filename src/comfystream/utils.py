@@ -42,7 +42,7 @@ def _validate_prompt_constraints(counts: Dict[str, int]) -> None:
     if counts["outputs"] == 0:
         raise Exception("missing output")
 
-def convert_prompt(prompt: PromptDictInput, return_dict: bool = False, timeout_override: float = None) -> Prompt:
+def convert_prompt(prompt: PromptDictInput, return_dict: bool = False) -> Prompt:
     """Convert a prompt by replacing specific node types with tensor equivalents."""
     try:
         # Note: lazy import is necessary to prevent KeyError during validation
@@ -74,15 +74,6 @@ def convert_prompt(prompt: PromptDictInput, return_dict: bool = False, timeout_o
         node = prompt[key]
         prompt[key] = create_save_tensor_node(node["inputs"])
     
-    # Apply timeout override to LoadTensor and LoadAudioTensor nodes if provided
-    if timeout_override is not None:
-        for node_id, node_data in prompt.items():
-            if isinstance(node_data, dict) and 'class_type' in node_data:
-                class_type = node_data['class_type']
-                if class_type in ['LoadTensor', 'LoadAudioTensor']:
-                    if 'inputs' not in node_data:
-                        node_data['inputs'] = {}
-                    node_data['inputs']['timeout_seconds'] = timeout_override
 
     # Return dict if requested (for downstream components that expect plain dicts)
     if return_dict:

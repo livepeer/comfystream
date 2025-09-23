@@ -93,60 +93,31 @@ class Pipeline:
             if self.produces_text_output():
                 await self.client.get_text_output()
 
-    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]], timeout_override: float = None):
+    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Set the processing prompts for the pipeline.
-        
-        Prompts are prepared and execution will start automatically when first input frame arrives.
-        This prevents timeout errors when switching between modalities and works seamlessly with warmup.
         
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
-            timeout_override: Optional timeout override for LoadTensor/LoadAudioTensor nodes (for warmup)
         """
         if isinstance(prompts, list):
-            await self.client.set_prompts(prompts, timeout_override)
+            await self.client.set_prompts(prompts)
         else:
-            await self.client.set_prompts([prompts], timeout_override)
+            await self.client.set_prompts([prompts])
         
         # Clear cached modalities and I/O capabilities when prompts change
         self._cached_modalities = None
         self._cached_io_capabilities = None
 
-    async def start_execution(self):
-        """Start execution of prepared prompts."""
-        await self.client.start_execution()
-
-    async def set_prompts_for_warmup(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]], warmup_timeout: float = 15.0):
-        """Set prompts optimized for warmup with extended timeout.
-        
-        Args:
-            prompts: Warmup workflow prompts
-            warmup_timeout: Timeout for warmup (default: 15 seconds)
-        """
-        await self.set_prompts(prompts, timeout_override=warmup_timeout)
-
-    async def update_prompts_with_normal_timeout(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]], normal_timeout: float = 3.0):
-        """Update prompts with normal operation timeout (typically after warmup).
-        
-        Args:
-            prompts: Updated workflow prompts
-            normal_timeout: Normal operation timeout (default: 3 seconds)
-        """
-        logger.info(f"Updating prompts with {normal_timeout}s timeout for normal operation")
-        # Update both prompts and timeout in one call
-        await self.update_prompts(prompts, normal_timeout)
-
-    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]], timeout_override: float = None):
+    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Update the existing processing prompts.
         
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
-            timeout_override: Optional timeout override for LoadTensor/LoadAudioTensor nodes
         """
         if isinstance(prompts, list):
-            await self.client.update_prompts(prompts, timeout_override)
+            await self.client.update_prompts(prompts)
         else:
-            await self.client.update_prompts([prompts], timeout_override)
+            await self.client.update_prompts([prompts])
         
         # Clear cached modalities and I/O capabilities when prompts change
         self._cached_modalities = None

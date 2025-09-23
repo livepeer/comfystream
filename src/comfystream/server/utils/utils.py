@@ -86,25 +86,10 @@ async def temporary_log_level(logger_name: str, level: int):
 
 
 class ComfyStreamTimeoutFilter(logging.Filter):
-    """
-    Custom logging filter to suppress verbose ComfyUI execution stack traces 
-    for ComfyStream timeout exceptions.
-    
-    This prevents the extensive stack traces that ComfyUI logs when our LoadTensor
-    and LoadAudioTensor nodes timeout waiting for input frames, which is expected
-    behavior during stream switching and warmup scenarios.
-    """
+    """Filter to suppress verbose ComfyUI execution logs for ComfyStream timeout exceptions."""
     
     def filter(self, record):
-        """
-        Filter out ComfyUI execution error logs for ComfyStream timeout exceptions.
-        
-        Args:
-            record: The log record to potentially filter
-            
-        Returns:
-            False to suppress the log, True to allow it
-        """
+        """Filter out ComfyUI execution error logs for ComfyStream timeout exceptions."""
         # Only filter ERROR level messages from ComfyUI execution system
         if record.levelno != logging.ERROR:
             return True
@@ -121,10 +106,7 @@ class ComfyStreamTimeoutFilter(logging.Filter):
             "ComfyStreamInputTimeoutError",
             "ComfyStreamAudioBufferError", 
             "No video frames available",
-            "No audio frames available", 
-            "Audio stream interrupted",
-            "insufficient data available",
-            "ComfyStream may not be receiving input"
+            "No audio frames available"
         ]
         
         # Suppress if any timeout indicator is found in the message
@@ -137,12 +119,6 @@ class ComfyStreamTimeoutFilter(logging.Filter):
             exc_str = str(record.exc_info[1])
             for indicator in timeout_indicators:
                 if indicator in exc_str:
-                    return False
-                    
-        # Check if the record has exc_text (formatted exception)
-        if hasattr(record, 'exc_text') and record.exc_text:
-            for indicator in timeout_indicators:
-                if indicator in record.exc_text:
                     return False
                     
         return True

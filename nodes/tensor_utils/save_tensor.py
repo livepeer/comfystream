@@ -18,7 +18,7 @@ class SaveTensor:
         }
 
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
+    def IS_CHANGED(s):
         return float("nan")
 
     def execute(self, images: torch.Tensor):
