@@ -182,7 +182,7 @@ interface StageProps {
   prompts: Prompt[] | null;
 }
 
-function Stage({ connected, onStreamReady, onComfyUIReady, resolution, onOutputStreamReady }: StageProps) {
+function Stage({ connected, onStreamReady, onComfyUIReady, resolution, prompts, onOutputStreamReady }: StageProps) {
   const { remoteStream, peerConnection } = usePeerContext();
   const [frameRate, setFrameRate] = useState<number>(0);
   // Add state and refs for tracking frames

@@ -10,78 +10,46 @@ export function StreamControl({ className = "" }: StreamControlProps) {
 
   // Open popup which polls opener for stream and clones tracks locally (no postMessage MediaStream cloning)
   const openWebRTCPopup = useCallback(() => {
-    // Must open first synchronous to user gesture to avoid blockers.
-    let popup: Window | null = window.open('about:blank', '_blank', 'width=1024,height=1024');
-    if (!popup) {
-      // Attempt simplified open.
-      popup = window.open('');
-    }
+    const features = 'width=1024,height=1024';
+    const getBasePath = (): string => {
+      try {
+        const scripts = document.querySelectorAll('script[src]');
+        for (const s of Array.from(scripts)) {
+          const src = (s as HTMLScriptElement).src;
+            // Look for /_next/static/ which precedes hashed chunks
+          const idx = src.indexOf('/_next/static/');
+          if (idx !== -1) {
+            const urlObj = new URL(src);
+            const before = urlObj.pathname.substring(0, urlObj.pathname.indexOf('/_next/static/'));
+            if (before !== undefined) {
+              return before.replace(/\/$/, '');
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      try {
+        const { pathname } = window.location;
+        // If pathname points to a file (no trailing slash and contains a dot), strip file portion
+        if (/\.[a-zA-Z0-9]{2,8}$/.test(pathname.split('/').pop() || '')) {
+          const parts = pathname.split('/');
+          parts.pop();
+          return parts.join('/') || '/';
+        }
+        return pathname.replace(/\/$/, '');
+      } catch { /* ignore */ }
+
+      return '';
+    };
+
+  const basePath = getBasePath();
+  const isDev = process.env.NEXT_PUBLIC_DEV === 'true';
+  const previewPath = (basePath ? basePath : '') + (isDev ? '/webrtc-preview' : '/webrtc-preview.html');
+
+    const popup = window.open(previewPath, 'comfystream_preview', features) || window.open(previewPath);
     if (!popup) {
       alert('Popup blocked. Please allow popups for this site.');
-      return;
     }
-    const html = `<!DOCTYPE html><html><head><title>ComfyStream Preview</title><meta charset='utf-8' />
-    <style>html,body{margin:0;background:#000;height:100%;display:flex;align-items:center;justify-content:center;font-family:sans-serif}video{max-width:100%;max-height:100%;background:#000}#status{color:#0f0;position:absolute;top:6px;left:8px;text-align:left;font:12px monospace;text-shadow:0 0 4px #000}</style>
-    </head><body>
-      <video id="webrtc_preview" autoplay playsinline muted></video>
-      <div id="status">Initializing…</div>
-      <script>
-        (function(){
-          const statusEl = document.getElementById('status');
-          const video = document.getElementById('webrtc_preview');
-          const openerRef = window.opener;
-          let attempts = 0;
-          const MAX_ATTEMPTS = 200; // ~60s at 300ms
-          let localStream = new MediaStream();
-          let clonedIds = new Set();
-          let lastParentStream = null;
-          function setStatus(msg){ if(statusEl) statusEl.textContent = msg; }
-          function validateOpener(){
-            try {
-              if(!window.opener || window.opener !== openerRef){ setStatus('Opener lost. Closing…'); setTimeout(()=>window.close(),800); return false; }
-              void window.opener.location.href; // access for same-origin check
-              return true;
-            } catch { setStatus('Cross-origin opener. Closing…'); setTimeout(()=>window.close(),800); return false; }
-          }
-          function attachVideo(){ if(video.srcObject !== localStream) video.srcObject = localStream; }
-          function cloneTracks(){
-            if(!validateOpener()) return;
-            const parentStream = window.opener.__comfystreamRemoteStream;
-            if(!parentStream){ setStatus('Waiting for stream…'); return; }
-            if(lastParentStream && lastParentStream !== parentStream){
-              localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} });
-              localStream = new MediaStream();
-              clonedIds = new Set();
-            }
-            lastParentStream = parentStream;
-            let added = false;
-            parentStream.getTracks().forEach(src => {
-              if(src.readyState === 'ended') return;
-              if(!clonedIds.has(src.id)){
-                try{ const c = src.clone(); localStream.addTrack(c); clonedIds.add(src.id); added = true; c.addEventListener('ended',()=>{ clonedIds.delete(src.id); }); }
-                catch{ /* fallback skip */ }
-              }
-            });
-            if(added){ attachVideo(); setStatus('Live'); if(video.play) video.play().catch(()=>{}); }
-          }
-          const interval = setInterval(()=>{
-            attempts++;
-            if(!validateOpener()){ clearInterval(interval); return; }
-            // Parent cleared global (disconnect)
-            if(!window.opener.__comfystreamRemoteStream){ setStatus('Parent stream ended'); clearInterval(interval); setTimeout(()=>window.close(),1200); return; }
-            cloneTracks();
-            // Remove ended local tracks (allow re-clone)
-            localStream.getTracks().forEach(t=>{ if(t.readyState==='ended'){ localStream.removeTrack(t); try{t.stop();}catch{}; clonedIds.delete(t.id); }});
-            if(attempts>=MAX_ATTEMPTS && localStream.getTracks().length===0){ setStatus('Timeout waiting for stream'); clearInterval(interval); setTimeout(()=>window.close(),1500); }
-          },300);
-          window.addEventListener('beforeunload', ()=>{ clearInterval(interval); localStream.getTracks().forEach(t=>{ try{t.stop();}catch{} }); });
-          // Initial attempt
-          cloneTracks();
-        })();
-      </script>
-    </body></html>`;
-    popup.document.write(html);
-    popup.document.close();
   }, []);
 
   const openStreamWindow = () => {
