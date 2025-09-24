@@ -1,5 +1,7 @@
 """ComfyStream specific exceptions."""
 
+import logging
+
 
 class ComfyStreamInputTimeoutError(Exception):
     """Raised when input tensors are not available within timeout."""
@@ -18,3 +20,42 @@ class ComfyStreamAudioBufferError(ComfyStreamInputTimeoutError):
         self.needed_samples = needed_samples
         self.available_samples = available_samples
         super().__init__("audio", timeout_seconds)
+
+
+class ComfyStreamTimeoutFilter(logging.Filter):
+    """Filter to suppress verbose ComfyUI execution logs for ComfyStream timeout exceptions."""
+    
+    def filter(self, record):
+        """Filter out ComfyUI execution error logs for ComfyStream timeout exceptions."""
+        # Only filter ERROR level messages from ComfyUI execution system
+        if record.levelno != logging.ERROR:
+            return True
+            
+        # Check if this is from ComfyUI execution system
+        if not (record.name.startswith("comfy") and ("execution" in record.name or record.name == "comfy")):
+            return True
+            
+        # Get the full message including any exception info
+        message = record.getMessage()
+        
+        # Check if this is a ComfyStream timeout-related error
+        timeout_indicators = [
+            "ComfyStreamInputTimeoutError",
+            "ComfyStreamAudioBufferError", 
+            "No video frames available",
+            "No audio frames available"
+        ]
+        
+        # Suppress if any timeout indicator is found in the message
+        for indicator in timeout_indicators:
+            if indicator in message:
+                return False
+                
+        # Also check the exception info if present
+        if record.exc_info and record.exc_info[1]:
+            exc_str = str(record.exc_info[1])
+            for indicator in timeout_indicators:
+                if indicator in exc_str:
+                    return False
+                    
+        return True
