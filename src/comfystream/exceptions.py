@@ -92,35 +92,36 @@ class ComfyStreamTimeoutFilter(logging.Filter):
     
     def filter(self, record):
         """Filter out ComfyUI execution error logs for ComfyStream timeout exceptions."""
-        # Only filter ERROR level messages from ComfyUI execution system
-        if record.levelno != logging.ERROR:
-            return True
+        try:
+            # Only filter ERROR level messages from ComfyUI execution system
+            if record.levelno != logging.ERROR:
+                return True
+                
+            # Check if this is from ComfyUI execution system
+            if not (record.name.startswith("comfy") and ("execution" in record.name or record.name == "comfy")):
+                return True
             
-        # Check if this is from ComfyUI execution system
-        if not (record.name.startswith("comfy") and ("execution" in record.name or record.name == "comfy")):
-            return True
+            # Get the full message including any exception info
+            message = record.getMessage()
             
-        # Get the full message including any exception info
-        message = record.getMessage()
-        
-        # Check if this is a ComfyStream timeout-related error
-        timeout_indicators = [
-            "ComfyStreamInputTimeoutError",
-            "ComfyStreamAudioBufferError", 
-            "No video frames available",
-            "No audio frames available"
-        ]
-        
-        # Suppress if any timeout indicator is found in the message
-        for indicator in timeout_indicators:
-            if indicator in message:
+            # Simple check: if this log contains ComfyStreamAudioBufferError or ComfyStreamInputTimeoutError, suppress it
+            if ("ComfyStreamAudioBufferError" in message or 
+                "ComfyStreamInputTimeoutError" in message):
                 return False
                 
-        # Also check the exception info if present
-        if record.exc_info and record.exc_info[1]:
-            exc_str = str(record.exc_info[1])
-            for indicator in timeout_indicators:
-                if indicator in exc_str:
+            # Also check the exception info if present
+            if record.exc_info and record.exc_info[1]:
+                exc_str = str(record.exc_info[1])
+                exc_type = str(type(record.exc_info[1]))
+                
+                if ("ComfyStreamAudioBufferError" in exc_str or 
+                    "ComfyStreamInputTimeoutError" in exc_str or
+                    "ComfyStreamAudioBufferError" in exc_type or 
+                    "ComfyStreamInputTimeoutError" in exc_type):
                     return False
-                    
-        return True
+            
+            return True
+        except Exception as e:
+            # If filter fails, allow the log through and print the error
+            print(f"[FILTER ERROR] Filter failed: {e}")
+            return True
