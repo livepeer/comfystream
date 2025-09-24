@@ -71,7 +71,7 @@ class ComfyStreamClient:
                     raise
                 except ComfyStreamInputTimeoutError:
                     # Timeout errors are expected during stream switching - just continue
-                    logger.info("Prompt timeout during stream switching - continuing")
+                    logger.info(f"Input for prompt {prompt_index} timed out, continuing")
                     continue
                 except Exception as e:
                     await self.cleanup()
