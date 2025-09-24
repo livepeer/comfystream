@@ -1,18 +1,25 @@
 ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 \
-    CONDA_VERSION=latest \
     PYTHON_VERSION=3.12
 
 FROM "${BASE_IMAGE}"
 
 ARG PYTHON_VERSION
 
+# Set Bash as the default shell
+SHELL ["/bin/bash", "-c"]
+
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHON_VERSION="${PYTHON_VERSION}"
+    PATH="/workspace/.venv/bin:/root/.local/bin:/usr/local/bin:${PATH}" \
+    PYTHON_VERSION="${PYTHON_VERSION}" \
+    VIRTUAL_ENV="/workspace/.venv" \
+    PYTHONPATH="/workspace/.venv/lib/python3.12/site-packages" \
+    SHELL="/bin/bash"
 
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
     git \
     wget \
+    curl \
     nano \
     socat \
     libsndfile1 \
@@ -24,19 +31,12 @@ RUN apt update && apt install -yqq --no-install-recommends \
     swig \
     libprotobuf-dev \
     protobuf-compiler \
+    ffmpeg \
+    python3 \
+    python3-pip \
+    python3-venv \
     curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install uv package manager and setup environment
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    export PATH="/root/.local/bin:$PATH" && \
-    mkdir -p /workspace && \
-    cd /workspace && \
-    git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI && \
-    cd /workspace/ComfyUI && \
-    uv venv
-
-ENV PATH="/root/.local/bin:/workspace/ComfyUI/.venv/bin:${PATH}"
 
 #enable opengl support with nvidia gpu
 RUN printf '%s\n' \
@@ -47,42 +47,63 @@ RUN printf '%s\n' \
   '    }' \
   '}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
-WORKDIR /workspace/ComfyUI
+# Python setup and uv installation
+RUN mkdir -p /workspace/comfystream && \
+    python3 -m pip install --upgrade pip uv && \
+    cd /workspace && \
+    uv venv .venv && \
+    echo 'activate_venv() { if [ -f ".venv/bin/activate" ] && [ "$VIRTUAL_ENV" != "$(pwd)/.venv" ]; then . ".venv/bin/activate"; fi; };' >> ~/.bashrc && \
+    echo 'PROMPT_COMMAND="activate_venv; $PROMPT_COMMAND"' >> ~/.bashrc
 
-# Install ffmpeg separately since we're not using conda
-RUN apt update && apt install -yqq --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+# Ensure pip exists inside the venv for tools that shell out to `python -m pip`
+RUN /workspace/.venv/bin/python -m ensurepip --upgrade && \
+    /workspace/.venv/bin/python -m pip install -U pip setuptools wheel && \
+    /workspace/.venv/bin/python -m pip --version
 
-# Install ComfyUI requirements using uv with torch backend
-RUN uv pip install --torch-backend=auto -r requirements.txt
+# Install comfy-cli using uv
+RUN uv pip install comfy-cli
 
-# Copy ComfyStream files into workspace
+# Copy only files needed for setup
+COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
+COPY ./configs /workspace/comfystream/configs
+
+RUN mkdir -p /workspace
+
+# Install ComfyUI using comfy-cli
+RUN comfy --skip-prompt --workspace /workspace/ComfyUI install --skip-torch-or-directml --nvidia
+
+# Copy ComfyStream files into ComfyUI
 COPY . /workspace/comfystream
+
+RUN cd /workspace/comfystream && uv pip install -r ./src/comfystream/scripts/overrides.txt
 
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 
-# Create overrides file for ComfyUI LTS
-RUN echo "comfyui@git+https://github.com/hiddenswitch/ComfyUI.git@75e39c27202c8e31f8ec84eea4fc560c4e34f2c8" > /workspace/overrides.txt
+# Install ComfyUI requirements (probably not needed)
+# RUN cd /workspace/ComfyUI && uv pip install -r requirements.txt
 
-# Install ComfyStream with overrides (following test pattern)
-RUN uv pip install --torch-backend=auto git+https://github.com/doctorpangloss/comfystream.git@f2f7929def53a4853cc5a1c2774aea70775ce2ff --overrides=/workspace/overrides.txt
-
-# Clone ComfyStream into custom_nodes directory and checkout specific commit (following test pattern)
-RUN mkdir -p /workspace/ComfyUI/custom_nodes
-RUN git clone https://github.com/doctorpangloss/comfystream.git /workspace/ComfyUI/custom_nodes/comfystream
-RUN cd /workspace/ComfyUI/custom_nodes/comfystream && git checkout f2f7929def53a4853cc5a1c2774aea70775ce2ff
+# Install ComfyStream requirements
+RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
+RUN cd /workspace/comfystream && uv pip install -e .
+RUN cd /workspace/comfystream && python install.py --workspace /workspace/ComfyUI
 
 # Accept a build-arg that lets CI force-invalidate setup_nodes.py
 ARG CACHEBUST=static
 ENV CACHEBUST=${CACHEBUST}
 
-# Install additional requirements
-RUN uv pip install "numpy<2.0.0"
-RUN uv pip install --no-cache-dir xformers==0.0.30 --no-build-isolation
+# Run setup_nodes (removing to promote user node installation)
+#RUN cd /workspace/comfystream && python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
 
-# Setup opencv with CUDA support (if needed)
-# Note: This may need to be adapted for the uv environment
-# RUN bash /workspace/comfystream/docker/entrypoint.sh --opencv-cuda
+#RUN uv pip install "numpy<2.0.0"
+#RUN uv pip install --no-cache-dir xformers==0.0.30 --no-deps
 
-WORKDIR /workspace/ComfyUI
+# Set default Python environment with auto-uv-env and ensure .bashrc is sourced
+RUN echo 'source ~/.bashrc' >> ~/.bash_profile && \
+    echo 'if [ -f ~/.bashrc ]; then source ~/.bashrc; fi' >> ~/.profile
+
+# Ensure bash is used by default for interactive shells
+ENV BASH_ENV=/root/.bashrc
+
+WORKDIR /workspace/comfystream
