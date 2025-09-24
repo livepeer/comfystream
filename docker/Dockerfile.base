@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_LINK_MODE=copy \
     PATH="/workspace/.venv/bin:/root/.local/bin:/usr/local/bin:${PATH}" \
     VIRTUAL_ENV="/workspace/.venv" \
-    PYTHONPATH="/workspace/ComfyUI:/workspace/.venv/lib/python${PYTHON_VERSION}/site-packages"
+    PYTHONPATH="/workspace/.venv/lib/python${PYTHON_VERSION}/site-packages"
 
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \

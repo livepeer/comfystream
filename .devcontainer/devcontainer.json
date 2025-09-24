@@ -8,17 +8,18 @@
 	},
 	"runArgs": [
 		"--gpus=all"
-	], 
+	],
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// Configure tool-specific properties.
 	"customizations": {
 		"vscode": {
 			"settings": {
-				"python.defaultInterpreterPath": "/workspace/miniconda3/envs/comfystream/bin/python",
-				"python.venvPath": "/workspace/miniconda3/envs",
-				"python.terminal.activateEnvInCurrentTerminal": false,
-				"python.terminal.activateEnvironment": false,
-				"terminal.integrated.shellIntegration.enabled": true
+				"python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+				"python.venvPath": "/workspace",
+				"python.terminal.activateEnvInCurrentTerminal": true,
+				"python.terminal.activateEnvironment": true,
+				"terminal.integrated.shellIntegration.enabled": true,
+				"python.analysis.autoImportCompletions": true
 			},
 			"extensions": [
 				"ms-python.python",
