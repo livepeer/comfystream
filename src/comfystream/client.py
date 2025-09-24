@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
         config = Configuration(**kwargs)
-        self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
+        self.comfy_client = EmbeddedComfyClient(config,
+                                                max_workers=max_workers,
+                                                blacklist_nodes=["ComfyUI-Manager"])
         self.running_prompts = {} # To be used for cancelling tasks
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
@@ -25,17 +27,17 @@ class ComfyStreamClient:
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         """Set new prompts, replacing any existing ones.
-        
+
         Args:
             prompts: List of prompt dictionaries to set
-            
+
         Raises:
             ValueError: If prompts list is empty
             Exception: If prompt conversion or validation fails
         """
         if not prompts:
             raise ValueError("Cannot set empty prompts list")
-            
+
         # Cancel existing prompts first to avoid conflicts
         await self.cancel_running_prompts()
         # Reset stop event for new prompts
@@ -80,7 +82,7 @@ class ComfyStreamClient:
     async def cleanup(self):
         # Set stop event to signal prompt loops to exit
         self._stop_event.set()
-        
+
         await self.cancel_running_prompts()
         async with self._cleanup_lock:
             if self.comfy_client.is_running:
@@ -103,7 +105,7 @@ class ComfyStreamClient:
                     pass
             self.running_prompts.clear()
 
-        
+
     async def cleanup_queues(self):
         while not tensor_cache.image_inputs.empty():
             tensor_cache.image_inputs.get()
@@ -124,16 +126,16 @@ class ComfyStreamClient:
         if tensor_cache.image_inputs.full():
             tensor_cache.image_inputs.get(block=True)
         tensor_cache.image_inputs.put(frame)
-    
+
     def put_audio_input(self, frame):
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
         return await tensor_cache.image_outputs.get()
-    
+
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
-    
+
     async def get_text_output(self):
         try:
             return tensor_cache.text_outputs.get_nowait()
@@ -156,16 +158,16 @@ class ComfyStreamClient:
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
-            
+
             for prompt_index, prompt in enumerate(self.current_prompts):
                 # Get set of class types we need metadata for, excluding LoadTensor and SaveTensor
                 needed_class_types = {
-                    node.get('class_type') 
+                    node.get('class_type')
                     for node in prompt.values()
                 }
                 remaining_nodes = {
-                    node_id 
-                    for node_id, node in prompt.items() 
+                    node_id
+                    for node_id, node in prompt.items()
                 }
                 nodes_info = {}
 
