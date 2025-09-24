@@ -120,8 +120,7 @@ def main():
         logging.getLogger("comfy").setLevel(log_level)
     
     # Add ComfyStream timeout filter to suppress verbose execution logging
-    timeout_filter = ComfyStreamTimeoutFilter()
-    logging.getLogger("comfy.cmd.execution").addFilter(timeout_filter)
+    logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
 
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)
