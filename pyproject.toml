@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "comfystream"
 description = "Build Live AI Video with ComfyUI"
 version = "0.1.5"
-license = { file = "LICENSE" }
+license = "MIT"
 dynamic = ["dependencies"]
 
 [project.optional-dependencies]
