@@ -29,7 +29,8 @@ from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
 from twilio.rest import Client
-from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter, ComfyStreamTimeoutFilter
+from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+from comfystream.exceptions import ComfyStreamTimeoutFilter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
 import time
 
@@ -95,7 +96,7 @@ class VideoStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting video frames: {str(e)}")
                     self.running = False
                     break
-            
+			
             # Perform cleanup outside the exception handler
             logger.info("Video frame collection stopped")
         except asyncio.CancelledError:
@@ -200,7 +201,7 @@ class AudioStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting audio frames: {str(e)}")
                     self.running = False
                     break
-            
+				
             # Perform cleanup outside the exception handler
             logger.info("Audio frame collection stopped")
         except asyncio.CancelledError:
@@ -268,7 +269,7 @@ async def offer(request):
     else:
         await pipeline.set_prompts(prompts)
         logger.info("[Offer] Set workflow prompts")
-    
+
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
     if resolution:
@@ -444,7 +445,7 @@ async def offer(request):
         elif track.kind == "audio" and tracks["audio"] is not None:
             logger.debug(f"Audio track already exists, ignoring duplicate track event")
             return
-            
+        
         if track.kind == "video":
             if is_noop_mode:
                 # Use simple passthrough track that bypasses pipeline
@@ -454,7 +455,7 @@ async def offer(request):
                 # Always use pipeline processing - it handles passthrough internally based on workflow
                 videoTrack = VideoStreamTrack(track, pipeline)
                 logger.info("[Pipeline] Using video processing pipeline")
-            
+			
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
 
@@ -568,9 +569,9 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
+        cwd=app["workspace"],
+        disable_cuda_malloc=True,
+        gpu_only=True,
         preview_method='none',
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
     )
@@ -694,7 +695,7 @@ if __name__ == "__main__":
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
-    
+
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
     logging.getLogger("comfy").addFilter(ComfyStreamTimeoutFilter())

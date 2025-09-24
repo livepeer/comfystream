@@ -28,14 +28,14 @@ class ComfyStreamClient:
         
         Args:
             prompts: List of prompt dictionaries to set
-            
+
         Raises:
             ValueError: If prompts list is empty
             Exception: If prompt conversion or validation fails
         """
         if not prompts:
             raise ValueError("Cannot set empty prompts list")
-            
+        
         # Cancel existing prompts first to avoid conflicts
         await self.cancel_running_prompts()
         # Reset stop event for new prompts
@@ -71,6 +71,7 @@ class ComfyStreamClient:
                     raise
                 except ComfyStreamInputTimeoutError:
                     # Timeout errors are expected during stream switching - just continue
+                    logger.info(f"Input for prompt {prompt_index} timed out, continuing")
                     continue
                 except Exception as e:
                     await self.cleanup()
@@ -103,7 +104,6 @@ class ComfyStreamClient:
                     pass
             self.running_prompts.clear()
 
-        
     async def cleanup_queues(self):
         while not tensor_cache.image_inputs.empty():
             tensor_cache.image_inputs.get()
@@ -156,16 +156,16 @@ class ComfyStreamClient:
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
-            
+
             for prompt_index, prompt in enumerate(self.current_prompts):
                 # Get set of class types we need metadata for, excluding LoadTensor and SaveTensor
                 needed_class_types = {
-                    node.get('class_type') 
+                    node.get('class_type')
                     for node in prompt.values()
                 }
                 remaining_nodes = {
-                    node_id 
-                    for node_id, node in prompt.items() 
+                    node_id
+                    for node_id, node in prompt.items()
                 }
                 nodes_info = {}
 

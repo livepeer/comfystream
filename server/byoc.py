@@ -14,7 +14,7 @@ from pytrickle.stream_processor import StreamProcessor
 from pytrickle.utils.register import RegisterCapability
 from pytrickle.frame_skipper import FrameSkipConfig
 from frame_processor import ComfyStreamFrameProcessor
-from comfystream.server.utils import ComfyStreamTimeoutFilter
+from comfystream.exceptions import ComfyStreamTimeoutFilter
 
 logger = logging.getLogger(__name__)
 
