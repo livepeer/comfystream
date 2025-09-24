@@ -9,11 +9,14 @@ ARG PYTHON_VERSION
 SHELL ["/bin/bash", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PATH="/workspace/.venv/bin:/root/.local/bin:/usr/local/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}" \
+    SHELL="/bin/bash" \
+    UV_PYTHON="${PYTHON_VERSION}" \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/workspace/.venv/bin:/root/.local/bin:/usr/local/bin:${PATH}" \
     VIRTUAL_ENV="/workspace/.venv" \
-    PYTHONPATH="/workspace/.venv/lib/python3.12/site-packages" \
-    SHELL="/bin/bash"
+    PYTHONPATH="/workspace/ComfyUI:/workspace/.venv/lib/python${PYTHON_VERSION}/site-packages"
 
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
@@ -47,11 +50,14 @@ RUN printf '%s\n' \
   '    }' \
   '}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
-# Python setup and uv installation
+# Install uv package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install Python and setup virtual environment using uv
 RUN mkdir -p /workspace/comfystream && \
-    python3 -m pip install --upgrade pip uv && \
+    uv python install "${PYTHON_VERSION}" && \
     cd /workspace && \
-    uv venv .venv && \
+    uv venv .venv --python="${PYTHON_VERSION}" && \
     echo 'activate_venv() { if [ -f ".venv/bin/activate" ] && [ "$VIRTUAL_ENV" != "$(pwd)/.venv" ]; then . ".venv/bin/activate"; fi; };' >> ~/.bashrc && \
     echo 'PROMPT_COMMAND="activate_venv; $PROMPT_COMMAND"' >> ~/.bashrc
 
