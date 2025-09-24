@@ -80,3 +80,8 @@ nodes:
     url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
     branch: "main"
     type: "utility"
+
+  comfyui-manager:
+    name: "ComfyUI Manager"
+    url: "https://github.com/Comfy-Org/ComfyUI-Manager"
+    type: "utility"

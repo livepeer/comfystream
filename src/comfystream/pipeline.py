@@ -23,7 +23,7 @@ class Pipeline:
     postprocessing, and queue management.
     """
     
-    def __init__(self, width: int = 512, height: int = 512, 
+    def __init__(self, width: int = 512, height: int = 512, blacklist_nodes: Optional[List[str]] = ["ComfyUI-Manager"],
                  comfyui_inference_log_level: Optional[int] = None, **kwargs):
         """Initialize the pipeline with the given configuration.
         

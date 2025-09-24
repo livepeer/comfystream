@@ -1,6 +1,6 @@
 asyncio
-pytrickle @ git+https://github.com/livepeer/pytrickle.git@de37bea74679fa5db46b656a83c9b7240fc597b6
-comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@58622c7e91cb5cc2bca985d713db55e5681ff316
+pytrickle @ git+https://github.com/livepeer/pytrickle.git@v0.1.3
+comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@ac0694a7bd212d92a5f1babd7b02fa149be07898
 aiortc
 aiohttp
 aiohttp_cors
