@@ -16,8 +16,8 @@
 			"settings": {
 				"python.defaultInterpreterPath": "/workspace/.venv/bin/python",
 				"python.venvPath": "/workspace",
-				"python.terminal.activateEnvInCurrentTerminal": true,
-				"python.terminal.activateEnvironment": true,
+				"python.terminal.activateEnvInCurrentTerminal": false,
+				"python.terminal.activateEnvironment": false,
 				"terminal.integrated.shellIntegration.enabled": true,
 				"python.analysis.autoImportCompletions": true
 			},
