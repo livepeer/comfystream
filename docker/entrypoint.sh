@@ -10,6 +10,7 @@ show_help() {
   echo "Options:"
   echo "  --use-volume     Initialize persistent volume mount"
   echo "  --download-models       Download default models"
+  echo "  --download-streamdiffusion Download StreamDiffusion models for TensorRT engines"
   echo "  --build-engines         Build TensorRT engines for default models"
   echo "  --opencv-cuda           Setup OpenCV with CUDA support"
   echo "  --server                Start ComfyUI only"
@@ -81,6 +82,12 @@ if [ "$1" = "--download-models" ]; then
   shift
 fi
 
+if [ "$1" = "--download-streamdiffusion" ]; then
+  cd /workspace/comfystream
+  python -m comfystream.scripts.setup_streamdiffusion_models --workspace /workspace/ComfyUI
+  shift
+fi
+
 TENSORRT_DIR="/workspace/ComfyUI/models/tensorrt"
 DEPTH_ANYTHING_DIR="${TENSORRT_DIR}/depth-anything"
 DEPTH_ANYTHING_ENGINE="depth_anything_vitl14-fp16.engine"
@@ -138,30 +145,60 @@ if [ "$1" = "--build-engines" ]; then
     echo "Engines for FasterLivePortrait already exists, skipping..."
   fi
 
-  # Build Engine for StreamDiffusion
-  if [ ! -f "$TENSORRT_DIR/StreamDiffusion-engines/stabilityai/sd-turbo--lcm_lora-True--tiny_vae-True--max_batch-3--min_batch-3--mode-img2img/unet.engine.opt.onnx" ]; then
-    cd /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion
-    MODELS="stabilityai/sd-turbo KBlueLeaf/kohaku-v2.1"
-    TIMESTEPS="3"
-    for model in $MODELS; do
-      for timestep in $TIMESTEPS; do
-        echo "Building model=$model with timestep=$timestep"
-        python build_tensorrt.py \
-          --model-id "$model" \
-          --timesteps "$timestep" \
-          --engine-dir $TENSORRT_DIR/StreamDiffusion-engines
-      done
-    done
-  else
-    echo "Engine for StreamDiffusion already exists, skipping..."
+
+  # Build StreamDiffusion Engines using the new build script
+  cd /workspace/comfystream
+
+  # Download and patch the build scripts
+  if [ ! -f "build_tensorrt_internal.sh" ]; then
+    curl -o build_tensorrt_internal.sh https://raw.githubusercontent.com/livepeer/ai-runner/refs/heads/main/runner/app/tools/streamdiffusion/build_tensorrt_internal.sh
+    chmod +x build_tensorrt_internal.sh
+    # Hack: Replace hardcoded conda python path with our venv python
+    sed -i 's|CONDA_PYTHON="/workspace/miniconda3/envs/comfystream/bin/python"|CONDA_PYTHON="/workspace/.venv/bin/python"|g' build_tensorrt_internal.sh
   fi
+
+  # First build: SD-Turbo with SD2.1 ControlNets
+  echo "Building StreamDiffusion engines for SD-Turbo with SD2.1 ControlNets..."
+  HUGGINGFACE_HUB_CACHE="/workspace/ComfyUI/models" ./build_tensorrt_internal.sh \
+    --models 'stabilityai/sd-turbo' \
+    --opt-timesteps '3' \
+    --min-timesteps '1' \
+    --max-timesteps '4' \
+    --controlnets 'thibaud/controlnet-sd21-openpose-diffusers thibaud/controlnet-sd21-hed-diffusers thibaud/controlnet-sd21-canny-diffusers thibaud/controlnet-sd21-depth-diffusers thibaud/controlnet-sd21-color-diffusers thibaud/controlnet-sd21-ade20k-diffusers thibaud/controlnet-sd21-normalbae-diffusers' \
+    --build-depth-anything \
+    --build-pose
+
+  # Second build: OpenJourney v4 and Dreamshaper 8 with SD1.5 ControlNets and IPAdapter
+  echo "Building StreamDiffusion engines for OpenJourney v4 and Dreamshaper 8..."
+  HUGGINGFACE_HUB_CACHE="/workspace/ComfyUI/models" ./build_tensorrt_internal.sh \
+    --models 'prompthero/openjourney-v4 Lykon/dreamshaper-8' \
+    --opt-timesteps '3' \
+    --min-timesteps '1' \
+    --max-timesteps '4' \
+    --controlnets 'lllyasviel/control_v11f1p_sd15_depth lllyasviel/control_v11f1e_sd15_tile lllyasviel/control_v11p_sd15_canny' \
+    --ipadapter-types 'regular faceid' \
+    --build-depth-anything \
+    --build-pose
+
+  # Third build: SDXL-Turbo with SDXL ControlNets and IPAdapter
+  echo "Building StreamDiffusion engines for SDXL-Turbo..."
+  HUGGINGFACE_HUB_CACHE="/workspace/ComfyUI/models" ./build_tensorrt_internal.sh \
+    --models 'stabilityai/sdxl-turbo' \
+    --dimensions '1024x1024' \
+    --opt-timesteps '1' \
+    --min-timesteps '1' \
+    --max-timesteps '4' \
+    --controlnets 'xinsir/controlnet-depth-sdxl-1.0 xinsir/controlnet-canny-sdxl-1.0 xinsir/controlnet-tile-sdxl-1.0' \
+    --ipadapter-types 'regular faceid' \
+    --build-depth-anything \
+    --build-pose
   shift
 fi
 
 if [ "$1" = "--opencv-cuda" ]; then
   cd /workspace/comfystream
   conda activate comfystream
-  
+
   # Check if OpenCV CUDA build already exists
   if [ ! -f "/workspace/comfystream/opencv-cuda-release.tar.gz" ]; then
     # Download and extract OpenCV CUDA build
@@ -183,7 +220,7 @@ if [ "$1" = "--opencv-cuda" ]; then
 
   # Handle library dependencies
   CONDA_ENV_LIB="/workspace/miniconda3/envs/comfystream/lib"
-  
+
   # Remove existing libstdc++ and copy system one
   rm -f "${CONDA_ENV_LIB}/libstdc++.so"*
   cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
@@ -206,20 +243,20 @@ if [ "$START_COMFYUI" = true ] || [ "$START_API" = true ] || [ "$START_UI" = tru
   # Start supervisord in background
   /usr/bin/supervisord -c /etc/supervisor/supervisord.conf &
   sleep 2  # Give supervisord time to start
-  
+
   # Start requested services
   if [ "$START_COMFYUI" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfyui
   fi
-  
+
   if [ "$START_API" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfystream-api
   fi
-  
+
   if [ "$START_UI" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfystream-ui
   fi
-  
+
   # Keep the script running
   tail -f /var/log/supervisord.log
 fi

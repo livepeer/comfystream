@@ -8,3 +8,5 @@ toml
 twilio
 prometheus_client
 librosa
+nvidia-ml-py
+huggingface_hub[cli]

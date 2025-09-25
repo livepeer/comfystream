@@ -1,0 +1,180 @@
+models:
+  # Base U-Net models for StreamDiffusion
+  sd-turbo:
+    name: "Stability AI SD-Turbo"
+    url: "stabilityai/sd-turbo"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Fast Stable Diffusion turbo model for real-time generation"
+
+  sdxl-turbo:
+    name: "Stability AI SDXL-Turbo" 
+    url: "stabilityai/sdxl-turbo"
+    type: "huggingface"
+    include: "*.json *.txt */model.safetensors */diffusion_pytorch_model.safetensors"
+    exclude: ".onnx .onnx_data"
+    description: "SDXL turbo model for high-resolution real-time generation"
+
+  openjourney-v4:
+    name: "OpenJourney v4"
+    url: "prompthero/openjourney-v4"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Artistic style model based on Midjourney"
+
+  dreamshaper-8:
+    name: "Dreamshaper v8"
+    url: "Lykon/dreamshaper-8"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Popular general-purpose Stable Diffusion model"
+
+  # SD2.1 ControlNet models (Thibaud collection)
+  controlnet-sd21-openpose:
+    name: "ControlNet SD2.1 OpenPose"
+    url: "thibaud/controlnet-sd21-openpose-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "OpenPose control for SD2.1 models"
+
+  controlnet-sd21-hed:
+    name: "ControlNet SD2.1 HED"
+    url: "thibaud/controlnet-sd21-hed-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "HED edge detection control for SD2.1 models"
+
+  controlnet-sd21-canny:
+    name: "ControlNet SD2.1 Canny"
+    url: "thibaud/controlnet-sd21-canny-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Canny edge detection control for SD2.1 models"
+
+  controlnet-sd21-depth:
+    name: "ControlNet SD2.1 Depth"
+    url: "thibaud/controlnet-sd21-depth-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Depth estimation control for SD2.1 models"
+
+  controlnet-sd21-color:
+    name: "ControlNet SD2.1 Color"
+    url: "thibaud/controlnet-sd21-color-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Color control for SD2.1 models"
+
+  controlnet-sd21-ade20k:
+    name: "ControlNet SD2.1 ADE20K"
+    url: "thibaud/controlnet-sd21-ade20k-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "ADE20K segmentation control for SD2.1 models"
+
+  controlnet-sd21-normalbae:
+    name: "ControlNet SD2.1 NormalBAE"
+    url: "thibaud/controlnet-sd21-normalbae-diffusers"
+    type: "huggingface"
+    include: "*.bin *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Normal map control for SD2.1 models"
+
+  # SD1.5 ControlNet models (lllyasviel collection)
+  controlnet-sd15-depth:
+    name: "ControlNet SD1.5 Depth"
+    url: "lllyasviel/control_v11f1p_sd15_depth"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Depth estimation control for SD1.5 models"
+
+  controlnet-sd15-tile:
+    name: "ControlNet SD1.5 Tile"
+    url: "lllyasviel/control_v11f1e_sd15_tile"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Tile/upscaling control for SD1.5 models"
+
+  controlnet-sd15-canny:
+    name: "ControlNet SD1.5 Canny"
+    url: "lllyasviel/control_v11p_sd15_canny"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Canny edge detection control for SD1.5 models"
+
+  # SDXL ControlNet models (xinsir collection)
+  controlnet-sdxl-depth:
+    name: "ControlNet SDXL Depth"
+    url: "xinsir/controlnet-depth-sdxl-1.0"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Depth estimation control for SDXL models"
+
+  controlnet-sdxl-canny:
+    name: "ControlNet SDXL Canny"
+    url: "xinsir/controlnet-canny-sdxl-1.0"
+    type: "huggingface"
+    include: "diffusion_pytorch_model.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Canny edge detection control for SDXL models"
+
+  controlnet-sdxl-tile:
+    name: "ControlNet SDXL Tile"
+    url: "xinsir/controlnet-tile-sdxl-1.0"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    exclude: ".onnx .onnx_data"
+    description: "Tile/upscaling control for SDXL models"
+
+  # IP-Adapter models
+  ip-adapter:
+    name: "IP-Adapter Base Models"
+    url: "h94/IP-Adapter"
+    type: "huggingface"
+    include: "models/ip-adapter_sd15.bin models/image_encoder/* sdxl_models/ip-adapter_sdxl.bin sdxl_models/image_encoder/*"
+    description: "IP-Adapter models for image prompt conditioning"
+
+  ip-adapter-faceid:
+    name: "IP-Adapter FaceID Models"
+    url: "h94/IP-Adapter-FaceID"
+    type: "huggingface"
+    include: "ip-adapter-faceid_sd15.bin ip-adapter-faceid_sdxl.bin"
+    description: "IP-Adapter FaceID models for face conditioning"
+
+  # Pre-processor models for ONNX/TensorRT conversion
+  depth-anything-onnx:
+    name: "Depth Anything v2 ONNX"
+    url: "yuvraj108c/Depth-Anything-2-Onnx"
+    type: "huggingface"
+    include: "depth_anything_v2_vits.onnx"
+    path: "tensorrt/depth-anything/depth_anything_v2_vits.onnx"
+    description: "ONNX version of Depth Anything v2 for TensorRT conversion"
+
+  yolo-nas-pose-onnx:
+    name: "YOLO-NAS Pose ONNX"
+    url: "yuvraj108c/yolo-nas-pose-onnx"
+    type: "huggingface"
+    include: "yolo_nas_pose_l_0.5.onnx"
+    path: "tensorrt/pose/yolo_nas_pose_l_0.5.onnx"
+    description: "ONNX version of YOLO-NAS pose detection for TensorRT conversion"
+
+  # Safety/filtering models
+  nsfw-detector:
+    name: "NSFW Image Detector"
+    url: "Freepik/nsfw_image_detector"
+    type: "huggingface"
+    include: "*.safetensors *.json *.txt"
+    description: "NSFW content detection model for post-processing"
