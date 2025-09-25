@@ -9,7 +9,7 @@ ENV	PATH="/workspace/.venv/bin:/root/.local/bin:${PATH}" \
 	NVM_DIR=/root/.nvm \
 	NODE_VERSION=18.18.0 \
 	VIRTUAL_ENV="/workspace/.venv" \
-	PYTHONPATH="/workspace/ComfyUI:/workspace/.venv/lib/python${PYTHON_VERSION}/site-packages" \
+	PYTHONPATH="/workspace/.venv/lib/python${PYTHON_VERSION}/site-packages" \
 	SHELL="/bin/bash"
 
 RUN	echo "Using base image: ${BASE_IMAGE}" && \
