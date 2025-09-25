@@ -66,7 +66,7 @@ def download_and_extract_ui_files(version: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Install custom node requirements")
     parser.add_argument(
-        "--workspace", default=os.environ.get('COMFY_UI_WORKSPACE', None), required=False, help="Set Comfy workspace"
+        "--workspace", default=os.environ.get('COMFYUI_WORKSPACE', None), required=False, help="Set Comfy workspace"
     )
     args = parser.parse_args()
     

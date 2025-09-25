@@ -57,9 +57,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 RUN mkdir -p /workspace/comfystream && \
     uv python install "${PYTHON_VERSION}" && \
     cd /workspace && \
-    uv venv .venv --python="${PYTHON_VERSION}" && \
-    echo 'activate_venv() { if [ -f ".venv/bin/activate" ] && [ "$VIRTUAL_ENV" != "$(pwd)/.venv" ]; then . ".venv/bin/activate"; fi; };' >> ~/.bashrc && \
-    echo 'PROMPT_COMMAND="activate_venv; $PROMPT_COMMAND"' >> ~/.bashrc
+    uv venv .venv --python="${PYTHON_VERSION}"
 
 # Ensure pip exists inside the venv for tools that shell out to `python -m pip`
 RUN /workspace/.venv/bin/python -m ensurepip --upgrade && \
@@ -87,9 +85,6 @@ RUN cd /workspace/comfystream && uv pip install -r ./src/comfystream/scripts/ove
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 
-# Install ComfyUI requirements (probably not needed)
-# RUN cd /workspace/ComfyUI && uv pip install -r requirements.txt
-
 # Install ComfyStream requirements
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN cd /workspace/comfystream && uv pip install -e .
@@ -99,15 +94,6 @@ RUN cd /workspace/comfystream && python install.py --workspace /workspace/ComfyU
 ARG CACHEBUST=static
 ENV CACHEBUST=${CACHEBUST}
 
-# Run setup_nodes (removing to promote user node installation)
-#RUN cd /workspace/comfystream && python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
-
-#RUN uv pip install "numpy<2.0.0"
-#RUN uv pip install --no-cache-dir xformers==0.0.30 --no-deps
-
-# Set default Python environment with auto-uv-env and ensure .bashrc is sourced
-RUN echo 'source ~/.bashrc' >> ~/.bash_profile && \
-    echo 'if [ -f ~/.bashrc ]; then source ~/.bashrc; fi' >> ~/.profile
 
 # Ensure bash is used by default for interactive shells
 ENV BASH_ENV=/root/.bashrc

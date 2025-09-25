@@ -4,13 +4,19 @@ import requests
 from tqdm import tqdm
 import yaml
 import argparse
-from utils import get_config_path, load_model_config
+from comfystream.scripts.utils import (
+    get_config_path,
+    load_model_config,
+    get_default_workspace,
+    validate_and_prompt_workspace,
+    setup_workspace_environment
+)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Setup ComfyUI models')
     parser.add_argument('--workspace',
-                       default=os.environ.get('COMFY_UI_WORKSPACE', os.path.expanduser('~/comfyui')),
-                       help='ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)')
+                       default=get_default_workspace(),
+                       help='ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_WORKSPACE)')
     return parser.parse_args()
 
 def download_file(url, destination, description=None):
@@ -121,8 +127,9 @@ def setup_directories(workspace_dir):
 
 def setup_models():
     args = parse_args()
-    workspace_dir = Path(args.workspace)
-
+    workspace_dir = validate_and_prompt_workspace(args.workspace, "setup-models")
+    
+    setup_workspace_environment(workspace_dir)
     setup_directories(workspace_dir)
     setup_model_files(workspace_dir)
 
