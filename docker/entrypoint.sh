@@ -1,7 +1,6 @@
 #!/bin/bash
 
 set -e
-eval "$(conda shell.bash hook)"
 
 # Add help command to show usage
 show_help() {
@@ -76,8 +75,7 @@ fi
 
 if [ "$1" = "--download-models" ]; then
   cd /workspace/comfystream
-  conda activate comfystream
-  python src/comfystream/scripts/setup_models.py --workspace /workspace/ComfyUI
+  python -m comfystream.scripts.setup_models --workspace /workspace/ComfyUI
   shift
 fi
 
@@ -89,7 +87,6 @@ FASTERLIVEPORTRAIT_DIR="/workspace/ComfyUI/models/liveportrait_onnx"
 
 if [ "$1" = "--build-engines" ]; then
   cd /workspace/comfystream
-  conda activate comfystream
 
   # Build Static Engine for Dreamshaper - Square (512x512)
   python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine --width 512 --height 512
@@ -152,8 +149,7 @@ fi
 
 if [ "$1" = "--opencv-cuda" ]; then
   cd /workspace/comfystream
-  conda activate comfystream
-  
+
   # Check if OpenCV CUDA build already exists
   if [ ! -f "/workspace/comfystream/opencv-cuda-release.tar.gz" ]; then
     # Download and extract OpenCV CUDA build
@@ -176,18 +172,18 @@ if [ "$1" = "--opencv-cuda" ]; then
     libswscale-dev
 
   # Remove existing cv2 package
-  SITE_PACKAGES_DIR="/workspace/miniconda3/envs/comfystream/lib/python3.12/site-packages"
+  SITE_PACKAGES_DIR="$(uv python dir --bin)/lib/python3.12/site-packages"
   rm -rf "${SITE_PACKAGES_DIR}/cv2"*
 
   # Copy new cv2 package
   cp -r /workspace/comfystream/cv2 "${SITE_PACKAGES_DIR}/"
 
   # Handle library dependencies
-  CONDA_ENV_LIB="/workspace/miniconda3/envs/comfystream/lib"
-  
+  UV_ENV_LIB="$(uv python dir --bin)/lib"
+
   # Remove existing libstdc++ and copy system one
-  rm -f "${CONDA_ENV_LIB}/libstdc++.so"*
-  cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
+  rm -f "${UV_ENV_LIB}/libstdc++.so"*
+  cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${UV_ENV_LIB}/"
 
   # Copy OpenCV libraries
   cp /workspace/comfystream/opencv/build/lib/libopencv_* /usr/lib/x86_64-linux-gnu/
@@ -207,20 +203,20 @@ if [ "$START_COMFYUI" = true ] || [ "$START_API" = true ] || [ "$START_UI" = tru
   # Start supervisord in background
   /usr/bin/supervisord -c /etc/supervisor/supervisord.conf &
   sleep 2  # Give supervisord time to start
-  
+
   # Start requested services
   if [ "$START_COMFYUI" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfyui
   fi
-  
+
   if [ "$START_API" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfystream-api
   fi
-  
+
   if [ "$START_UI" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfystream-ui
   fi
-  
+
   # Keep the script running
   tail -f /var/log/supervisord.log
 fi

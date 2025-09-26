@@ -4,15 +4,20 @@ import sys
 from pathlib import Path
 import yaml
 import argparse
-from utils import get_config_path, load_model_config
-
+from comfystream.scripts.utils import (
+    get_config_path, 
+    load_model_config, 
+    get_default_workspace,
+    validate_and_prompt_workspace,
+    setup_workspace_environment
+)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI nodes and models")
     parser.add_argument(
-        "--workspace",
-        default=os.environ.get("COMFY_UI_WORKSPACE", Path("~/comfyui").expanduser()),
-        help="ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)",
+        "--workspace",        
+        default=get_default_workspace(),
+        help="ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_WORKSPACE)",
     )
     parser.add_argument(
         "--pull-branches",
@@ -20,14 +25,12 @@ def parse_args():
         default=False,
         help="Update existing nodes to their specified branches",
     )
+    parser.add_argument(
+        "--nodes",
+        default="nodes",
+        help="Node configuration file pattern to use. Examples: 'nodes' (default), 'vision', 'utility', 'nodes-vision.yaml'",
+    )
     return parser.parse_args()
-
-
-def setup_environment(workspace_dir):
-    os.environ["COMFY_UI_WORKSPACE"] = str(workspace_dir)
-    os.environ["PYTHONPATH"] = str(workspace_dir)
-    os.environ["CUSTOM_NODES_PATH"] = str(workspace_dir / "custom_nodes")
-
 
 def setup_directories(workspace_dir):
     """Create required directories in the workspace"""
@@ -35,7 +38,6 @@ def setup_directories(workspace_dir):
     workspace_dir.mkdir(parents=True, exist_ok=True)
     custom_nodes_dir = workspace_dir / "custom_nodes"
     custom_nodes_dir.mkdir(parents=True, exist_ok=True)
-
 
 def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
     """Install custom nodes based on configuration"""
@@ -54,11 +56,13 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
     custom_nodes_path.mkdir(parents=True, exist_ok=True)
     os.chdir(custom_nodes_path)
 
-    # Get the absolute path to constraints.txt
-    constraints_path = Path(__file__).parent / "constraints.txt"
-    if not constraints_path.exists():
-        print(f"Warning: constraints.txt not found at {constraints_path}")
-        constraints_path = None
+    # Get the absolute path to overrides.txt and set UV_OVERRIDES env var
+    overrides_path = Path(__file__).parent / "overrides.txt"
+    if overrides_path.exists():
+        os.environ["UV_OVERRIDES"] = str(overrides_path)
+        print(f"Set UV_OVERRIDES to {overrides_path}")
+    else:
+        print(f"Warning: overrides.txt not found at {overrides_path}")
 
     try:
         for _, node_info in config["nodes"].items():
@@ -90,40 +94,42 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
             # Install requirements if present
             requirements_file = node_path / "requirements.txt"
             if requirements_file.exists():
-                pip_cmd = [
-                    sys.executable,
-                    "-m",
+                print(f"Installing requirements from {requirements_file}")
+                uv_cmd = [
+                    "uv",
                     "pip",
                     "install",
                     "-r",
                     str(requirements_file),
                 ]
-                if constraints_path and constraints_path.exists():
-                    pip_cmd.extend(["-c", str(constraints_path)])
-                subprocess.run(pip_cmd, check=True)
+                subprocess.run(uv_cmd, check=True)
 
             # Install additional dependencies if specified
             if "dependencies" in node_info:
                 for dep in node_info["dependencies"]:
-                    pip_cmd = [sys.executable, "-m", "pip", "install", dep]
-                    if constraints_path and constraints_path.exists():
-                        pip_cmd.extend(["-c", str(constraints_path)])
-                    subprocess.run(pip_cmd, check=True)
+                    uv_cmd = ["uv", "pip", "install", dep]
+                    subprocess.run(uv_cmd, check=True)
 
             print(f"Installed {node_info['name']}")
     except Exception as e:
         print(f"Error installing {node_info['name']} {e}")
         raise e
 
-
 def setup_nodes():
     args = parse_args()
-    workspace_dir = Path(args.workspace)
-
-    setup_environment(workspace_dir)
+    workspace_dir = validate_and_prompt_workspace(args.workspace, "setup-nodes")
+    
+    setup_workspace_environment(workspace_dir)
     setup_directories(workspace_dir)
-    install_custom_nodes(workspace_dir, pull_branches=args.pull_branches)
+    
+    # Get config path from argument
+    config_path = get_config_path(args.nodes)
+    install_custom_nodes(workspace_dir, config_path=config_path, pull_branches=args.pull_branches)
 
+
+def main():
+    """Entry point for command line usage."""
+    setup_nodes()
 
 if __name__ == "__main__":
-    setup_nodes()
+    main()

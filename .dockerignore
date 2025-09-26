@@ -5,3 +5,4 @@
 .venv/
 .github/
 .dockerignore
+ui/node_modules
