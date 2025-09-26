@@ -70,7 +70,7 @@ class VideoStreamTrack(MediaStreamTrack):
         )
         self.running = True
         self.collect_task = asyncio.create_task(self.collect_frames())
-
+        
         # Add cleanup when track ends
         @track.on("ended")
         async def on_ended():
@@ -96,7 +96,7 @@ class VideoStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting video frames: {str(e)}")
                     self.running = False
                     break
-
+            
             # Perform cleanup outside the exception handler
             logger.info("Video frame collection stopped")
         except asyncio.CancelledError:
@@ -175,7 +175,7 @@ class AudioStreamTrack(MediaStreamTrack):
         self.running = True
         logger.info(f"AudioStreamTrack created for track {track.id}")
         self.collect_task = asyncio.create_task(self.collect_frames())
-
+        
         # Add cleanup when track ends
         @track.on("ended")
         async def on_ended():
@@ -201,7 +201,7 @@ class AudioStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting audio frames: {str(e)}")
                     self.running = False
                     break
-
+            
             # Perform cleanup outside the exception handler
             logger.info("Audio frame collection stopped")
         except asyncio.CancelledError:
@@ -259,17 +259,17 @@ async def offer(request):
     pcs = request.app["pcs"]
 
     params = await request.json()
-
+    
     # Check if this is noop mode (no prompts provided)
     prompts = params.get("prompts")
     is_noop_mode = not prompts
-
+    
     if is_noop_mode:
         logger.info("[Offer] No prompts provided - entering noop passthrough mode")
     else:
         await pipeline.set_prompts(prompts)
         logger.info("[Offer] Set workflow prompts")
-
+    
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
     if resolution:
@@ -279,7 +279,7 @@ async def offer(request):
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
-
+    
     ice_servers = get_ice_servers()
     if len(ice_servers) > 0:
         pc = RTCPeerConnection(
@@ -291,7 +291,7 @@ async def offer(request):
     pcs.add(pc)
 
     tracks = {"video": None, "audio": None}
-
+    
     # Flag to track if we've received resolution update
     resolution_received = {"value": False}
 
@@ -347,7 +347,7 @@ async def offer(request):
                         if "width" not in params or "height" not in params:
                             logger.warning("[Control] Missing width or height in update_resolution message")
                             return
-
+                        
                         if is_noop_mode:
                             logger.info(f"[Control] Noop mode - resolution update to {params['width']}x{params['height']} (no pipeline involved)")
                         else:
@@ -355,16 +355,16 @@ async def offer(request):
                             pipeline.width = params["width"]
                             pipeline.height = params["height"]
                             logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
-
+                        
                         # Mark that we've received resolution
                         resolution_received["value"] = True
-
+                        
                         if is_noop_mode:
                             logger.info("[Control] Noop mode - no warmup needed")
                         else:
                             # Note: Video warmup now happens during offer, not here
                             logger.info("[Control] Resolution updated - warmup was already performed during offer")
-
+                            
                         response = {
                             "type": "resolution_updated",
                             "success": True
@@ -437,7 +437,7 @@ async def offer(request):
     @pc.on("track")
     def on_track(track):
         logger.info(f"Track received: {track.kind} (readyState: {track.readyState})")
-
+        
         # Check if we already have a track of this type to avoid duplicate track errors
         if track.kind == "video" and tracks["video"] is not None:
             logger.debug(f"Video track already exists, ignoring duplicate track event")
@@ -445,7 +445,7 @@ async def offer(request):
         elif track.kind == "audio" and tracks["audio"] is not None:
             logger.debug(f"Audio track already exists, ignoring duplicate track event")
             return
-
+            
         if track.kind == "video":
             if is_noop_mode:
                 # Use simple passthrough track that bypasses pipeline
@@ -455,7 +455,7 @@ async def offer(request):
                 # Always use pipeline processing - it handles passthrough internally based on workflow
                 videoTrack = VideoStreamTrack(track, pipeline)
                 logger.info("[Pipeline] Using video processing pipeline")
-
+            
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
 
@@ -466,11 +466,11 @@ async def offer(request):
 
             codec = "video/H264"
             force_codec(pc, sender, codec)
-
-
+            
+            
         elif track.kind == "audio":
             logger.info(f"Creating audio track for track {track.id}")
-
+            
             if is_noop_mode:
                 # Use simple passthrough track that bypasses pipeline
                 audioTrack = NoopAudioStreamTrack(track)
@@ -479,7 +479,7 @@ async def offer(request):
                 # Always use pipeline processing - it handles passthrough internally based on workflow
                 audioTrack = AudioStreamTrack(track, pipeline)
                 logger.info("[Pipeline] Using audio processing pipeline")
-
+            
             tracks["audio"] = audioTrack
             sender = pc.addTrack(audioTrack)
             logger.debug(f"Audio track added to peer connection")
@@ -524,7 +524,7 @@ async def offer(request):
         if "m=video" in pc.remoteDescription.sdp and pipeline.accepts_video_input():
             logger.info("[Offer] Warming up video pipeline")
             await pipeline.warm_video()
-
+            
         if "m=audio" in pc.remoteDescription.sdp and pipeline.accepts_audio_input():
             logger.info("[Offer] Warming up audio pipeline")
             await pipeline.warm_audio()
@@ -569,11 +569,10 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"],
-        disable_cuda_malloc=True,
-        gpu_only=True,
+        cwd=app["workspace"], 
+        disable_cuda_malloc=True, 
+        gpu_only=True, 
         preview_method='none',
-        blacklist_nodes=["ComfyUI-Manager"],
         comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
     )
     app["pcs"] = set()
@@ -638,7 +637,7 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
-
+    
     # Setup CORS
     cors = setup_cors(app, defaults={
         "*": ResourceOptions(
@@ -658,10 +657,10 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
-
+    
     # Setup HTTP streaming routes
     setup_routes(app, cors)
-
+    
     # Serve static files from the public directory
     app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
 
@@ -696,7 +695,7 @@ if __name__ == "__main__":
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
-
+    
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
     if args.comfyui_inference_log_level:
