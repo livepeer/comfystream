@@ -573,7 +573,8 @@ async def on_startup(app: web.Application):
         disable_cuda_malloc=True, 
         gpu_only=True, 
         preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        blacklist_nodes=["ComfyUI-Manager"],
+        comfyui_inference_log_level=app.get("comfui_inference_log_level", None)
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
