@@ -1,5 +1,7 @@
 # comfystream
 
+> ⚠️ **NOTICE:** Active development of this project has moved to [the Livepeer fork](https://github.com/livepeer/comfystream).
+
 comfystream is a package for running img2img [Comfy](https://www.comfy.org/) workflows on video streams.
 
 This repo also includes a WebRTC server and UI that uses comfystream to support streaming from a webcam and processing the stream with a workflow JSON file (API format) created in ComfyUI. If you have an existing ComfyUI installation, the same custom nodes used to create the workflow in ComfyUI will be re-used when processing the video stream.
@@ -27,7 +29,7 @@ This repo also includes a WebRTC server and UI that uses comfystream to support 
 
 Refer to [.devcontainer/README.md](.devcontainer/README.md) to setup ComfyStream in a devcontainer using a pre-configured ComfyUI docker environment.
 
-For other installation options, refer to [Install ComfyUI and ComfyStream](https://docs.comfystream.org/technical/get-started/install) in the ComfyStream documentation.
+For other installation options, refer to [Install ComfyUI and ComfyStream](https://pipelines.livepeer.org/docs/technical/install/local-testing) in the Livepeer pipelines documentation.
 
 For additional information, refer to the remaining sections below.
 
@@ -35,7 +37,7 @@ For additional information, refer to the remaining sections below.
 
 You can quickly deploy ComfyStream using the docker image `livepeer/comfystream`
 
-Refer to the documentation at [https://docs.comfystream.org/technical/get-started/install](https://docs.comfystream.org/technical/get-started/install) for instructions to run locally or on a remote server.
+Refer to the documentation at [https://pipelines.livepeer.org/docs/technical/getting-started/install-comfystream](https://pipelines.livepeer.org/docs/technical/getting-started/install-comfystream) for instructions to run locally or on a remote server.
 
 #### RunPod
 
@@ -77,33 +79,13 @@ Make sure you have [PyTorch](https://pytorch.org/get-started/locally/) installed
 
 Install `comfystream`:
 
-**Option 1: Using pip (standard method)**
-
 ```bash
 pip install git+https://github.com/livepeer/comfystream.git
 
-# For local development:
-# pip install .                    # Install from local repo
-# pip install -e .                 # Install in edit mode for development
-```
-
-**Option 2: Using uv (faster, recommended for development)**
-
-If you want faster dependency resolution and better handling of Git dependencies, install `uv` first:
-
-```bash
-pip install uv
-```
-
-Then install comfystream:
-
-```bash
-uv pip install git+https://github.com/livepeer/comfystream.git
-
-# For local development:
-# uv pip install .                 # Install from local repo  
-# uv pip install -e .              # Install in edit mode for development
-# uv sync                          # Install all dependencies including dev dependencies
+# This can be used to install from a local repo
+# pip install .
+# This can be used to install from a local repo in edit mode
+# pip install -e .
 ```
 
 ### Custom Nodes
@@ -132,14 +114,8 @@ See `example.py`.
 
 Install dev dependencies:
 
-**Using pip:**
 ```bash
 pip install .[dev]
-```
-
-**Using uv (recommended):**
-```bash
-uv sync  # Installs all dependencies including dev dependencies
 ```
 
 Run tests:
@@ -152,14 +128,8 @@ pytest
 
 Install dependencies:
 
-**Using pip:**
 ```bash
-pip install -e .  # Install comfystream and its dependencies
-```
-
-**Using uv:**
-```bash
-uv sync  # Install all dependencies from uv.lock
+pip install -r requirements.txt
 ```
 
 If you have existing custom nodes in your ComfyUI workspace, you will need to install their requirements in your current environment:
