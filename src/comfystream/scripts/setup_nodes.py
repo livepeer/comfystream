@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 import yaml
 import argparse
@@ -29,6 +30,16 @@ def setup_environment(workspace_dir):
     os.environ["CUSTOM_NODES_PATH"] = str(workspace_dir / "custom_nodes")
 
 
+def is_comfy_cli_available():
+    """Check if comfy-cli is available on the system"""
+    return shutil.which("comfy") is not None
+
+
+def get_package_manager():
+    """Return the appropriate package manager (comfy-cli or pip)"""
+    return "comfy-cli" if is_comfy_cli_available() else "pip"
+
+
 def setup_directories(workspace_dir):
     """Create required directories in the workspace"""
     # Create base directories
@@ -53,6 +64,10 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
     custom_nodes_path = workspace_dir / "custom_nodes"
     custom_nodes_path.mkdir(parents=True, exist_ok=True)
     os.chdir(custom_nodes_path)
+
+    # Get the appropriate package manager
+    package_manager = get_package_manager()
+    print(f"Using package manager: {package_manager}")
 
     # Get the absolute path to constraints.txt
     constraints_path = Path(__file__).parent / "constraints.txt"
@@ -87,28 +102,44 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
                 subprocess.run(["git", "-C", dir_name, "fetch", "origin"], check=True)
                 subprocess.run(["git", "-C", dir_name, "checkout", node_info["branch"]], check=True)
 
-            # Install requirements if present
-            requirements_file = node_path / "requirements.txt"
-            if requirements_file.exists():
-                pip_cmd = [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "-r",
-                    str(requirements_file),
-                ]
-                if constraints_path and constraints_path.exists():
-                    pip_cmd.extend(["-c", str(constraints_path)])
-                subprocess.run(pip_cmd, check=True)
-
-            # Install additional dependencies if specified
-            if "dependencies" in node_info:
-                for dep in node_info["dependencies"]:
-                    pip_cmd = [sys.executable, "-m", "pip", "install", dep]
+            # Install the node using comfy-cli or pip
+            if package_manager == "comfy-cli":
+                if pull_branches and node_path.exists():
+                    # Use local mode for existing nodes (pull-branches scenario)
+                    print(f"Installing {node_info['name']} in local mode...")
+                    install_cmd = ["comfy", "node", "install", "--fast-deps", "--mode", "local", str(node_path)]
+                else:
+                    # Use URL mode for new installations
+                    print(f"Installing {node_info['name']} from URL...")
+                    install_cmd = ["comfy", "node", "install", "--fast-deps", "--url", node_info["url"]]
+                    if "branch" in node_info:
+                        install_cmd.extend(["--branch", node_info["branch"]])
+                
+                subprocess.run(install_cmd, check=True)
+            else:
+                # Fallback to pip installation for requirements and dependencies
+                # Install requirements if present
+                requirements_file = node_path / "requirements.txt"
+                if requirements_file.exists():
+                    install_cmd = [
+                        sys.executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        "-r",
+                        str(requirements_file),
+                    ]
                     if constraints_path and constraints_path.exists():
-                        pip_cmd.extend(["-c", str(constraints_path)])
-                    subprocess.run(pip_cmd, check=True)
+                        install_cmd.extend(["-c", str(constraints_path)])
+                    subprocess.run(install_cmd, check=True)
+
+                # Install additional dependencies if specified
+                if "dependencies" in node_info:
+                    for dep in node_info["dependencies"]:
+                        install_cmd = [sys.executable, "-m", "pip", "install", dep]
+                        if constraints_path and constraints_path.exists():
+                            install_cmd.extend(["-c", str(constraints_path)])
+                        subprocess.run(install_cmd, check=True)
 
             print(f"Installed {node_info['name']}")
     except Exception as e:
