@@ -52,7 +52,7 @@ class LoadTensor:
             for i in range(batch_size):
                 if not tensor_cache.image_inputs.empty():
                     try:
-                        frame = tensor_cache.image_inputs.get(block=False, timeout=timeout_seconds)
+                        frame = tensor_cache.image_inputs.get(block=True, timeout=timeout_seconds)
                         frame.side_data.skipped = False
                         batch_images.append(frame.side_data.input)
                     except queue.Empty:
