@@ -30,6 +30,7 @@ from aiortc.rtcrtpsender import RTCRtpSender
 from comfystream.pipeline import Pipeline
 from twilio.rest import Client
 from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+from comfystream.exceptions import ComfyStreamTimeoutFilter
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
 import time
 
@@ -40,6 +41,7 @@ logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
 MAX_BITRATE = 2000000
 MIN_BITRATE = 2000000
+TEXT_POLL_INTERVAL = 0.25  # Interval in seconds to poll for text outputs
 
 
 class VideoStreamTrack(MediaStreamTrack):
@@ -390,11 +392,11 @@ async def offer(request):
                         try:
                             while channel.readyState == "open":
                                 try:
-                                    # Use timeout to prevent indefinite blocking
-                                    text = await asyncio.wait_for(
-                                        pipeline.get_text_output(), 
-                                        timeout=1.0  # Check every second if channel is still open
-                                    )
+                                    # Non-blocking poll; sleep if no text to avoid tight loop
+                                    text = await pipeline.get_text_output()
+                                    if text is None or text.strip() == "":
+                                        await asyncio.sleep(TEXT_POLL_INTERVAL)
+                                        continue
                                     if channel.readyState == "open":
                                         # Send as JSON string for extensibility
                                         try:
@@ -402,9 +404,6 @@ async def offer(request):
                                         except Exception as e:
                                             logger.debug(f"[TextChannel] Send failed, stopping forwarder: {e}")
                                             break
-                                except asyncio.TimeoutError:
-                                    # No text available, continue checking
-                                    continue
                                 except asyncio.CancelledError:
                                     logger.debug("[TextChannel] Forward text task cancelled")
                                     break
@@ -696,6 +695,9 @@ if __name__ == "__main__":
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
+    
+    # Add ComfyStream timeout filter to suppress verbose execution logging
+    logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
     if args.comfyui_inference_log_level:
         app["comfui_inference_log_level"] = args.comfyui_inference_log_level
 
