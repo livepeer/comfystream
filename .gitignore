@@ -25,4 +25,3 @@ nodes/web/static/*
 
 # opencv files
 opencv
-.venv
