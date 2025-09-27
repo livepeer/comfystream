@@ -12,28 +12,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
-
+    
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
-    git \
-    wget \
-    nano \
-    socat \
-    libsndfile1 \
-    build-essential \
-    llvm \
-    tk-dev \
-    libglvnd-dev \
-    cmake \
-    swig \
-    libprotobuf-dev \
-    protobuf-compiler \
-    libcairo2-dev \
-    libpango1.0-dev \
-    libgdk-pixbuf2.0-dev \
-    libffi-dev \
-    libgirepository1.0-dev \
-    pkg-config \
+    git wget nano socat \
+    libsndfile1 build-essential llvm tk-dev \
+    libglvnd-dev cmake swig libprotobuf-dev \
+    protobuf-compiler libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev \
+    libffi-dev libgirepository1.0-dev pkg-config libgflags-dev \
+    libgoogle-glog-dev libjpeg-dev libavcodec-dev libavformat-dev \
+    libavutil-dev libswscale-dev \
     && rm -rf /var/lib/apt/lists/*
 
 #enable opengl support with nvidia gpu
@@ -73,9 +61,9 @@ RUN wget --progress=dot:giga \
 RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
     && ldconfig
 
-# Install matching TensorRT Python bindings for CPython 3.11
+# Install matching TensorRT Python bindings for CPython 3.12
 RUN conda run -n comfystream pip install --no-cache-dir \
-    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp311-none-linux_x86_64.whl
+    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp312-none-linux_x86_64.whl
 
 # Clone ComfyUI
 RUN git clone --branch v0.3.56 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI

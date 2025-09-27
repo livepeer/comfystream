@@ -166,7 +166,7 @@ if [ "$1" = "--opencv-cuda" ]; then
   if [ ! -f "/workspace/comfystream/opencv-cuda-release.tar.gz" ]; then
     # Download and extract OpenCV CUDA build
     DOWNLOAD_NAME="opencv-cuda-release.tar.gz"
-    wget -q -O "$DOWNLOAD_NAME" https://github.com/JJassonn69/ComfyUI-Stream-Pack/releases/download/v2/opencv-cuda-release.tar.gz
+    wget -q -O "$DOWNLOAD_NAME" https://github.com/JJassonn69/ComfyUI-Stream-Pack/releases/download/v2.1/opencv-cuda-release.tar.gz
     tar -xzf "$DOWNLOAD_NAME" -C /workspace/comfystream/
     rm "$DOWNLOAD_NAME"
   else
@@ -174,15 +174,6 @@ if [ "$1" = "--opencv-cuda" ]; then
   fi
 
   # Install required libraries
-  apt-get update && apt-get install -y \
-    libgflags-dev \
-    libgoogle-glog-dev \
-    libjpeg-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libswscale-dev
-
   # Remove existing cv2 package
   SITE_PACKAGES_DIR="/workspace/miniconda3/envs/comfystream/lib/python3.12/site-packages"
   rm -rf "${SITE_PACKAGES_DIR}/cv2"*
