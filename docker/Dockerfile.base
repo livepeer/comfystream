@@ -76,6 +76,10 @@ RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pi
 # Copy comfystream and example workflows to ComfyUI
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
+COPY ./docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+
+# Install OpenCV CUDA
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream --no-capture-output docker/entrypoint.sh --opencv-cuda
 
 # Install ComfyUI requirements
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
