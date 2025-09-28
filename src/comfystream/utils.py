@@ -13,9 +13,14 @@ from .modalities import (
     get_convertible_node_keys,
 )
 
-def create_load_tensor_node():
+def create_load_tensor_node(batch_size: int = 1):
+    """Create a LoadTensor node with specified batch size.
+    
+    Args:
+        batch_size: Number of frames to process in batch (default: 1)
+    """
     return {
-        "inputs": {},
+        "inputs": {"batch_size": batch_size},
         "class_type": "LoadTensor",
         "_meta": {"title": "LoadTensor"},
     }
