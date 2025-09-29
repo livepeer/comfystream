@@ -110,10 +110,16 @@ See `example.py`.
 
 ## Run tests
 
-Install dev dependencies:
+Install dev dependencies (includes testing and profiling tools):
 
 ```bash
 pip install .[dev]
+```
+
+Install TensorDock dependencies (for cloud deployment):
+
+```bash
+pip install .[tensordock]
 ```
 
 Run tests:

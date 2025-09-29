@@ -82,7 +82,8 @@ COPY ./docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream --no-capture-output docker/entrypoint.sh --opencv-cuda
 
 # Install ComfyUI requirements
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore && \
+    conda run -n comfystream --no-capture-output pip install /workspace/comfystream[dev] --root-user-action=ignore
 
 # Install ComfyStream requirements
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream

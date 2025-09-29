@@ -15,6 +15,11 @@ This repository provides an [Ansible playbook](https://docs.ansible.com/ansible/
 
 To monitor the resource consumption of a running ComfyStream server, use the `monitor_pid_resources.py` script:
 
+**Prerequisites:** Install development dependencies first:
+```bash
+pip install .[dev]
+```
+
 1. **Start the ComfyStream server** and execute a streaming workflow.
 2. **Run the profiling script**:
 
