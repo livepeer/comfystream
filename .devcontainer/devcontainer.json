@@ -7,7 +7,8 @@
 		"context": "../"
 	},
 	"runArgs": [
-		"--gpus=all"
+		"--gpus=all",
+		"--add-host=host.docker.internal:host-gateway"
 	], 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// Configure tool-specific properties.

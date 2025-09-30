@@ -52,13 +52,13 @@
                 "--comfyui-inference-log-level=DEBUG",
                 "--width=512",
                 "--height=512"
-            ],            
+            ],
             "env": {
-                "ORCH_URL": "https://172.17.0.1:9995",
+                "ORCH_URL": "https://host.docker.internal:9995",
                 "ORCH_SECRET": "orch-secret",
                 "CAPABILITY_NAME": "comfystream",
                 "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor for BYOC mode",
-                "CAPABILITY_URL": "http://172.17.0.1:8000",
+                "CAPABILITY_URL": "http://host.docker.internal:8000/api",
                 "CAPABILITY_PRICE_PER_UNIT": "0",
                 "CAPABILITY_PRICE_SCALING": "1",
                 "CAPABILITY_CAPACITY": "1"
