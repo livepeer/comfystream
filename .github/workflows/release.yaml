@@ -1,4 +1,4 @@
-name: Create ui-kit release artifact and publish to ComfyUI registry
+name: Create ui-kit release artifact
 
 on:
   push:
@@ -6,10 +6,6 @@ on:
       - main
     tags:
       - "v*"
-  workflow_dispatch:
-
-permissions:
-  issues: write
 
 jobs:
   release:
@@ -54,19 +50,3 @@ jobs:
           files: ${{ steps.build.outputs.dist_file }}
           make_latest: true
           generate_release_notes: true
-
-  publish-comfyui-node:
-    name: Publish Custom Node to ComfyUI registry
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Publish Custom Node
-        uses: Comfy-Org/publish-node-action@v1
-        with:
-          ## Add your own personal access token to your Github Repository secrets and reference it here.
-          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
