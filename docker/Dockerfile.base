@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
-    
+
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
     git wget nano socat \
@@ -110,3 +110,6 @@ RUN conda config --set auto_activate_base false && \
 RUN echo "conda activate comfystream" >> ~/.bashrc
 
 WORKDIR /workspace/comfystream
+
+# Set byoc.py as the default entrypoint with conda activation
+ENTRYPOINT ["conda", "run", "-n", "comfystream", "--no-capture-output", "python", "/workspace/comfystream/server/byoc.py", "--workspace=/workspace/ComfyUI", "--host=0.0.0.0", "--port=8000", "--log-level=INFO", "--comfyui-inference-log-level=DEBUG", "--width=512", "--height=512"]
