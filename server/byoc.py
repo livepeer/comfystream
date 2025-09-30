@@ -58,8 +58,8 @@ def main():
     )
     parser.add_argument(
         "--capability-name",
-        default=None,
-        help="Name for this capability (default: comfystream-processor)",
+        default="comfystream",
+        help="Name for this capability (default: comfystream)",
     )
     parser.add_argument(
         "--disable-frame-skip",
@@ -128,12 +128,12 @@ def main():
         param_updater=frame_processor.update_params,
         on_stream_stop=frame_processor.on_stream_stop,
         # Align processor name with capability for consistent logs
-        name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor"),
+        name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream"),
         port=int(args.port),
         host=args.host,
         frame_skip_config=frame_skip_config,
         # Ensure server metadata reflects the desired capability name
-        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor")
+        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream")
     )
 
     # Set the stream processor reference for text data publishing
@@ -154,7 +154,7 @@ def main():
                 capability_url = os.getenv("CAPABILITY_URL") or f"http://{args.host}:{args.port}"
 
                 os.environ.update({
-                    "CAPABILITY_NAME": args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor",
+                    "CAPABILITY_NAME": args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream",
                     "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
                     "CAPABILITY_URL": capability_url,
                     "CAPABILITY_CAPACITY": "1",
