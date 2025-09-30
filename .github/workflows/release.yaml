@@ -1,6 +1,11 @@
 name: Create ui-kit release artifact and publish to ComfyUI registry
 
 on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
