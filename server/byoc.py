@@ -91,7 +91,7 @@ def main():
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
-
+    
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
 
@@ -100,7 +100,7 @@ def main():
         sys.stdout.flush()
 
     logger.info("Starting ComfyStream BYOC server with pytrickle StreamProcessor...")
-
+    
     # Create frame processor with configuration
     frame_processor = ComfyStreamFrameProcessor(
         width=args.width,
@@ -111,7 +111,7 @@ def main():
         preview_method='none',
         comfyui_inference_log_level=args.comfyui_inference_log_level
     )
-
+    
     # Create frame skip configuration only if enabled
     frame_skip_config = None
     if args.disable_frame_skip:
@@ -119,7 +119,7 @@ def main():
     else:
         frame_skip_config = FrameSkipConfig()
         logger.info("Frame skipping enabled: adaptive skipping based on queue sizes")
-
+    
     # Create StreamProcessor with frame processor
     processor = StreamProcessor(
         video_processor=frame_processor.process_video_async,
@@ -138,11 +138,11 @@ def main():
 
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
-
+    
     # Create async startup function to load model
     async def load_model_on_startup(app):
         await processor._frame_processor.load_model()
-
+	
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
         try:
@@ -197,7 +197,7 @@ def main():
 
     # Mount at same API namespace as StreamProcessor defaults
     processor.server.add_route("POST", "/api/stream/warmup", warmup_handler)
-
+    
     # Run the processor
     processor.run()
 
