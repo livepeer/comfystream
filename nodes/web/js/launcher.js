@@ -101,7 +101,7 @@ document.addEventListener('comfy-extension-registered', (event) => {
 async function controlServer(action) {
     try {
         // Get settings from the settings manager
-        const settings = settingsManager.getCurrentHostPort();
+        const settings = settingsManager.getCurrentServerSettings();
         
         // Set transitional state based on action
         if (action === 'start') {
