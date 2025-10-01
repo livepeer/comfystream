@@ -19,33 +19,6 @@ from comfystream.exceptions import ComfyStreamTimeoutFilter
 logger = logging.getLogger(__name__)
 
 
-async def register_orchestrator(orch_url=None, orch_secret=None, capability_name=None, host="127.0.0.1", port=8889):
-    """Register capability with orchestrator if configured."""
-    try:
-        orch_url = orch_url or os.getenv("ORCH_URL")
-        orch_secret = orch_secret or os.getenv("ORCH_SECRET")
-        
-        if orch_url and orch_secret:
-            os.environ.update({
-                "CAPABILITY_NAME": capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor",
-                "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
-                "CAPABILITY_URL": f"http://{host}:{port}",
-                "CAPABILITY_CAPACITY": "1",
-                "ORCH_URL": orch_url,
-                "ORCH_SECRET": orch_secret
-            })
-            
-            # Pass through explicit capability_name to ensure CLI/env override takes effect
-            result = await RegisterCapability.register(
-                logger=logger,
-                capability_name=capability_name
-            )
-            if result:
-                logger.info(f"Registered capability: {result.geturl()}")
-    except Exception as e:
-        logger.error(f"Orchestrator registration failed: {e}")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Run comfystream server in BYOC (Bring Your Own Compute) mode using pytrickle."
@@ -85,8 +58,8 @@ def main():
     )
     parser.add_argument(
         "--capability-name",
-        default=None,
-        help="Name for this capability (default: comfystream-processor)",
+        default="comfystream",
+        help="Name for this capability (default: comfystream)",
     )
     parser.add_argument(
         "--disable-frame-skip",
@@ -155,12 +128,12 @@ def main():
         param_updater=frame_processor.update_params,
         on_stream_stop=frame_processor.on_stream_stop,
         # Align processor name with capability for consistent logs
-        name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor"),
+        name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream"),
         port=int(args.port),
         host=args.host,
         frame_skip_config=frame_skip_config,
         # Ensure server metadata reflects the desired capability name
-        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream-processor")
+        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream")
     )
 
     # Set the stream processor reference for text data publishing
@@ -169,17 +142,35 @@ def main():
     # Create async startup function to load model
     async def load_model_on_startup(app):
         await processor._frame_processor.load_model()
-    
+	
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
-        await register_orchestrator(
-            orch_url=args.orch_url,
-            orch_secret=args.orch_secret,
-            capability_name=args.capability_name,
-            host=args.host,
-            port=args.port
-        )
-    
+        try:
+            orch_url = args.orch_url or os.getenv("ORCH_URL")
+            orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
+
+            if orch_url and orch_secret:
+                # CAPABILITY_URL always overrides host:port from args
+                capability_url = os.getenv("CAPABILITY_URL") or f"http://{args.host}:{args.port}"
+
+                os.environ.update({
+                    "CAPABILITY_NAME": args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream",
+                    "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
+                    "CAPABILITY_URL": capability_url,
+                    "CAPABILITY_CAPACITY": "1",
+                    "ORCH_URL": orch_url,
+                    "ORCH_SECRET": orch_secret
+                })
+
+                result = await RegisterCapability.register(
+                    logger=logger,
+                    capability_name=args.capability_name
+                )
+                if result:
+                    logger.info(f"Registered capability: {result.geturl()}")
+        except Exception as e:
+            logger.error(f"Orchestrator registration failed: {e}")
+
     # Add model loading and registration to startup hooks
     processor.server.app.on_startup.append(load_model_on_startup)
     processor.server.app.on_startup.append(register_orchestrator_startup)
