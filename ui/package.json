@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",
-    "prepare": "cd .. && husky && husky install ui/.husky"
+    "prepare": "cd .. && husky ui/.husky"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
