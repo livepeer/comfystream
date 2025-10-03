@@ -133,7 +133,9 @@ def main():
         host=args.host,
         frame_skip_config=frame_skip_config,
         # Ensure server metadata reflects the desired capability name
-        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream")
+        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream"),
+        #server_kwargs...
+        route_prefix="/",
     )
 
     # Set the stream processor reference for text data publishing
