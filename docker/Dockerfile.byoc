@@ -1,0 +1,60 @@
+ARG BASE_IMAGE=livepeer/comfyui-base:latest
+
+FROM ${BASE_IMAGE}
+
+ENV PATH="/workspace/miniconda3/bin:${PATH}" \
+    NVM_DIR=/root/.nvm \
+    NODE_VERSION=18.18.0
+
+RUN echo "Using base image: ${BASE_IMAGE}" && \
+    apt update && \
+    apt install -yqq supervisor && \
+    wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+
+WORKDIR /
+
+# Install node and npm
+RUN bash -c "source $NVM_DIR/nvm.sh && \
+    nvm install $NODE_VERSION  && \
+    nvm alias default $NODE_VERSION && \
+    nvm use default"
+
+# Add node and npm to path so the commands are available
+ENV NODE_PATH="$NVM_DIR/v$NODE_VERSION/lib/node_modules" \
+    PATH="$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH"
+
+# BYOC-specific environment variables with defaults from launch.json
+ENV ORCH_URL="https://172.17.0.1:9995" \
+    CAPABILITY_NAME="comfystream" \
+    CAPABILITY_DESCRIPTION="ComfyUI streaming processor for BYOC mode" \
+    CAPABILITY_URL="http://172.17.0.1:8000" \
+    CAPABILITY_PRICE_PER_UNIT="0" \
+    CAPABILITY_PRICE_SCALING="1" \
+    CAPABILITY_CAPACITY="1" \
+    COMFYSTREAM_WORKSPACE="/workspace/ComfyUI" \
+    COMFYSTREAM_HOST="0.0.0.0" \
+    COMFYSTREAM_PORT="8000" \
+    COMFYSTREAM_LOG_LEVEL="INFO" \
+    COMFYUI_INFERENCE_LOG_LEVEL="DEBUG" \
+    COMFYSTREAM_WIDTH="512" \
+    COMFYSTREAM_HEIGHT="512"
+
+# Copy BYOC entrypoint script
+COPY --chmod=0755 docker/entrypoint-byoc.sh /workspace/comfystream/docker/entrypoint-byoc.sh
+
+WORKDIR /workspace/comfystream/ui
+RUN npm install
+RUN npm run build
+
+# Restore .gitkeep file after ui build for devcontainer users
+RUN touch /workspace/comfystream/nodes/web/static/.gitkeep
+
+WORKDIR /workspace/comfystream
+RUN pip install -r requirements.txt
+
+EXPOSE 8000
+
+ENTRYPOINT ["/workspace/comfystream/docker/entrypoint-byoc.sh"]
+
+CMD []
+
