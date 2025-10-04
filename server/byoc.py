@@ -23,10 +23,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run comfystream server in BYOC (Bring Your Own Compute) mode using pytrickle."
     )
-    parser.add_argument("--port", default=8889, help="Set the server port")
-    parser.add_argument("--host", default="127.0.0.1", help="Set the host")
+    parser.add_argument("--port", default=8000, help="Set the server port")
+    parser.add_argument("--host", default="0.0.0.0", help="Set the host")
     parser.add_argument(
-        "--workspace", default=None, required=True, help="Set Comfy workspace"
+        "--workspace", default="/workspace/ComfyUI", required=False, help="Set Comfy workspace"
     )
     parser.add_argument(
         "--log-level",
@@ -48,18 +48,40 @@ def main():
     )
     parser.add_argument(
         "--orch-url",
-        default=None,
+        default=os.getenv("ORCH_URL"),
         help="Orchestrator URL for capability registration",
     )
-    parser.add_argument(
-        "--orch-secret",
-        default=None,
-        help="Orchestrator secret for capability registration",
-    )
+    # Orchestrator secret is always read from environment variable for security
+    # No command line argument to avoid exposing secrets in process lists
     parser.add_argument(
         "--capability-name",
-        default="comfystream",
+        default=os.getenv("CAPABILITY_NAME", "comfystream"),
         help="Name for this capability (default: comfystream)",
+    )
+    parser.add_argument(
+        "--capability-url",
+        default=os.getenv("CAPABILITY_URL", "http://172.17.0.1:8000"),
+        help="URL for this capability (default: http://172.17.0.1:8000)",
+    )
+    parser.add_argument(
+        "--capability-description",
+        default=os.getenv("CAPABILITY_DESCRIPTION", "ComfyUI streaming processor for BYOC mode"),
+        help="Description for this capability",
+    )
+    parser.add_argument(
+        "--capability-price-per-unit",
+        default=os.getenv("CAPABILITY_PRICE_PER_UNIT", "0"),
+        help="Price per unit for this capability (default: 0)",
+    )
+    parser.add_argument(
+        "--capability-price-scaling",
+        default=os.getenv("CAPABILITY_PRICE_SCALING", "1"),
+        help="Price scaling factor for this capability (default: 1)",
+    )
+    parser.add_argument(
+        "--capability-capacity",
+        default=os.getenv("CAPABILITY_CAPACITY", "1"),
+        help="Capacity for this capability (default: 1)",
     )
     parser.add_argument(
         "--disable-frame-skip",
@@ -109,6 +131,7 @@ def main():
         disable_cuda_malloc=True,
         gpu_only=True,
         preview_method='none',
+        blacklist_nodes=["ComfyUI-Manager"],
         comfyui_inference_log_level=args.comfyui_inference_log_level
     )
     
@@ -119,7 +142,7 @@ def main():
     else:
         frame_skip_config = FrameSkipConfig()
         logger.info("Frame skipping enabled: adaptive skipping based on queue sizes")
-    
+        
     # Create StreamProcessor with frame processor
     processor = StreamProcessor(
         video_processor=frame_processor.process_video_async,
@@ -128,12 +151,12 @@ def main():
         param_updater=frame_processor.update_params,
         on_stream_stop=frame_processor.on_stream_stop,
         # Align processor name with capability for consistent logs
-        name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream"),
+        name=args.capability_name,
         port=int(args.port),
         host=args.host,
         frame_skip_config=frame_skip_config,
         # Ensure server metadata reflects the desired capability name
-        capability_name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream"),
+        capability_name=args.capability_name,
         #server_kwargs...
         route_prefix="/",
     )
@@ -144,22 +167,23 @@ def main():
     # Create async startup function to load model
     async def load_model_on_startup(app):
         await processor._frame_processor.load_model()
-	
+        
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
         try:
-            orch_url = args.orch_url or os.getenv("ORCH_URL")
-            orch_secret = args.orch_secret or os.getenv("ORCH_SECRET")
+            # Use command line arguments as primary source for URL, but always read secret from environment
+            orch_url = args.orch_url
+            orch_secret = os.getenv("ORCH_SECRET")
 
             if orch_url and orch_secret:
-                # CAPABILITY_URL always overrides host:port from args
-                capability_url = os.getenv("CAPABILITY_URL") or f"http://{args.host}:{args.port}"
-
+                # Set environment variables from command line arguments for RegisterCapability
                 os.environ.update({
-                    "CAPABILITY_NAME": args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream",
-                    "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
-                    "CAPABILITY_URL": capability_url,
-                    "CAPABILITY_CAPACITY": "1",
+                    "CAPABILITY_NAME": args.capability_name,
+                    "CAPABILITY_DESCRIPTION": args.capability_description,
+                    "CAPABILITY_URL": args.capability_url,
+                    "CAPABILITY_PRICE_PER_UNIT": args.capability_price_per_unit,
+                    "CAPABILITY_PRICE_SCALING": args.capability_price_scaling,
+                    "CAPABILITY_CAPACITY": args.capability_capacity,
                     "ORCH_URL": orch_url,
                     "ORCH_SECRET": orch_secret
                 })

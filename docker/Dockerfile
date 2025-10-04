@@ -26,6 +26,7 @@ ENV	NODE_PATH="$NVM_DIR/v$NODE_VERSION/lib/node_modules" \
 # Create the supervisor configuration file for ComfyUI and ComfyStream
 COPY	docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY    --chmod=0755	docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+COPY    --chmod=0755	docker/entrypoint-byoc.sh /workspace/comfystream/docker/entrypoint-byoc.sh
 
 WORKDIR	/workspace/comfystream/ui
 RUN npm install
@@ -36,7 +37,7 @@ RUN touch /workspace/comfystream/nodes/web/static/.gitkeep
 
 WORKDIR	/workspace/comfystream
 
-EXPOSE	8188	8889	3000
+EXPOSE	8188	8889	3000	8000
 EXPOSE	1024-65535/udp
 
 ENTRYPOINT	[ "/workspace/comfystream/docker/entrypoint.sh" ]
