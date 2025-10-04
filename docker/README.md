@@ -46,7 +46,7 @@ docker run --gpus all livepeer/comfystream --server
 
 ### Run in BYOC Mode
 
-To start ComfyStream in BYOC (Bring Your Own Compute) mode, you can use the dedicated BYOC entrypoint:
+To start ComfyStream in BYOC (Bring Your Own Container) mode, you can use the dedicated BYOC entrypoint:
 
 ```bash
 docker run --gpus all -e ORCH_SECRET=your-secret-here \

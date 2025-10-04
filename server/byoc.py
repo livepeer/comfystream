@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run comfystream server in BYOC (Bring Your Own Compute) mode using pytrickle."
+        description="Run comfystream server in BYOC mode (for Livepeer Orchestrators)"
     )
     parser.add_argument("--port", default=8000, help="Set the server port")
     parser.add_argument("--host", default="0.0.0.0", help="Set the host")
