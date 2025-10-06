@@ -11,6 +11,8 @@ class WorkflowModality(TypedDict):
     video: ModalityIO
     audio: ModalityIO
     text: ModalityIO
+    # Batch processing information
+    max_batch_size: int
 
 # Centralized node type definitions
 NODE_TYPES = {
@@ -88,13 +90,18 @@ def create_empty_workflow_modality() -> WorkflowModality:
         "video": {"input": False, "output": False},
         "audio": {"input": False, "output": False},
         "text":  {"input": False, "output": False},
+        "max_batch_size": 1,
     }
 
 def _merge_workflow_modalities(base: WorkflowModality, other: WorkflowModality) -> WorkflowModality:
     """Merge two WorkflowModality objects using logical OR for all capabilities."""
     for modality in base:
-        for direction in base[modality]:
-            base[modality][direction] = base[modality][direction] or other[modality][direction]
+        if modality == "max_batch_size":
+            # For batch size, take the maximum
+            base[modality] = max(base[modality], other[modality])
+        elif isinstance(base[modality], dict):
+            for direction in base[modality]:
+                base[modality][direction] = base[modality][direction] or other[modality][direction]
     return base
 
 def detect_io_points(prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]) -> WorkflowModality:
@@ -117,6 +124,12 @@ def detect_io_points(prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]) -> Wo
     # Scan nodes and detect modality I/O points using centralized mappings
     for node in prompts.values():
         class_type = node.get("class_type", "")
+        
+        # Parse batch_size from LoadTensor nodes
+        if class_type == "LoadTensor":
+            inputs = node.get("inputs", {})
+            batch_size = inputs.get("batch_size", 1)
+            result["max_batch_size"] = max(result["max_batch_size"], batch_size)
         
         for modality, directions in MODALITY_MAPPINGS.items():
             if class_type in directions["input"]:
