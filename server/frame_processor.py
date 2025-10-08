@@ -185,6 +185,25 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
 
+    async def on_stream_start(self):
+        """Called when a new stream starts - prepare resources per stream."""
+        logger.info("Stream started, initializing per-stream resources")
+        try:
+            # Reset stop event so background tasks can run
+            self._reset_stop_event()
+
+            # Ensure pipeline/model are available
+            if self.pipeline is None:
+                await self.load_model()
+
+            # Best-effort: start text forwarder if workflow supports text
+            self._setup_text_monitoring()
+
+            # Warm up in the background (no-op if no prompts/capabilities yet)
+            self._schedule_warmup()
+        except Exception as e:
+            logger.error(f"on_stream_start failed: {e}")
+
     def _schedule_warmup(self) -> None:
         """Schedule warmup in background if not already running."""
         try:
