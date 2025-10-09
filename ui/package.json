@@ -1,6 +1,6 @@
 {
   "name": "ui",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "scripts": {
     "dev": "cross-env NEXT_PUBLIC_DEV=true next dev",
@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",
-    "prepare": "cd .. && husky && husky install ui/.husky"
+    "prepare": "cd .. && husky ui/.husky"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
