@@ -1,0 +1,16 @@
+# Development Dockerfile for comfystream:uv
+# This extends the production image and only overrides development-specific changes
+# Build: docker build -f Dockerfile.uv.dev -t comfystream:uv-dev .
+
+FROM comfystream:uv
+
+# Override entrypoint script for development
+# This is the only layer that rebuilds when you modify the entrypoint
+COPY ./docker/entrypoint-byow.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Development-friendly settings
+ENV COMFYUI_DEV_MODE=1
+
+WORKDIR /workspace/ComfyUI/custom_nodes/comfystream
+

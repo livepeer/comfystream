@@ -1,0 +1,158 @@
+ARG BASE_IMAGE=nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04 \
+    PYTHON_VERSION=3.12 \
+    INSTALL_EXTRA_PACKAGES=false \
+    INSTALL_NODES=false
+
+FROM "${BASE_IMAGE}"
+
+ARG PYTHON_VERSION \
+    INSTALL_EXTRA_PACKAGES \
+    INSTALL_NODES
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TensorRT_ROOT=/opt/TensorRT-10.12.0.36 \
+    PYTHON_VERSION="${PYTHON_VERSION}" \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_CACHE=0 \
+    UV_SYSTEM_PYTHON=0 \
+    UV_BREAK_SYSTEM_PACKAGES=0 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# System dependencies
+RUN apt update && apt install -yqq --no-install-recommends \
+    git wget curl nano socat \
+    libsndfile1 build-essential llvm tk-dev \
+    libglvnd-dev cmake swig libprotobuf-dev \
+    protobuf-compiler libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev \
+    libffi-dev libgirepository1.0-dev pkg-config libgflags-dev \
+    libgoogle-glog-dev libjpeg-dev libavcodec-dev libavformat-dev \
+    libavutil-dev libswscale-dev \
+    python3.12 python3.12-dev python3.12-venv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable opengl support with nvidia gpu
+RUN printf '%s\n' \
+  '{' \
+  '    "file_format_version" : "1.0.0",' \
+  '    "ICD" : {' \
+  '        "library_path" : "libEGL_nvidia.so.0"' \
+  '    }' \
+  '}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    . $HOME/.local/bin/env && \
+    uv --version
+ENV PATH="/root/.local/bin:$PATH"
+
+# Clone ComfyUI and Manager
+RUN git clone --branch v0.3.60 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
+RUN git clone https://github.com/Comfy-Org/ComfyUI-Manager.git /workspace/ComfyUI/custom_nodes/ComfyUI-Manager
+
+# Create venv in ComfyUI workspace
+WORKDIR /workspace/ComfyUI
+RUN uv venv .venv --python /usr/bin/python${PYTHON_VERSION}
+ENV VIRTUAL_ENV=/workspace/ComfyUI/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Conditional TensorRT SDK installation
+RUN if [ "$INSTALL_EXTRA_PACKAGES" = "true" ]; then \
+    cd /opt && \
+    wget --progress=dot:giga \
+        https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.12.0/tars/TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz && \
+    tar -xzf TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz && \
+    rm TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz && \
+    echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf && \
+    ldconfig && \
+    uv pip install --no-cache-dir \
+        ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp312-none-linux_x86_64.whl; \
+    fi
+
+# Create comfystream directory for constraints and lock file
+RUN mkdir -p /tmp/comfystream
+
+# Copy constraints file and comfy lock file for dependency installation
+COPY ./src/comfystream/scripts/constraints.txt /tmp/comfystream/constraints.txt
+COPY ./configs/comfy-lock.yaml /tmp/comfystream/comfy-lock.yaml
+
+# Install constraints (cached unless constraints.txt changes)
+RUN uv pip install -r /tmp/comfystream/constraints.txt
+
+# Copy workflows and test files early (less frequently changed)
+COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
+COPY ./test/example-512x512.png /workspace/ComfyUI/input
+
+# Conditional OpenCV CUDA installation
+RUN if [ "$INSTALL_EXTRA_PACKAGES" = "true" ]; then \
+    cd /tmp && \
+    DOWNLOAD_NAME="opencv-cuda-release.tar.gz" && \
+    wget -q -O "$DOWNLOAD_NAME" https://github.com/JJassonn69/ComfyUI-Stream-Pack/releases/download/v2.1/opencv-cuda-release.tar.gz && \
+    tar -xzf "$DOWNLOAD_NAME" -C /tmp/ && \
+    rm "$DOWNLOAD_NAME" && \
+    SITE_PACKAGES_DIR="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages" && \
+    rm -rf "${SITE_PACKAGES_DIR}/cv2"* && \
+    cp -r /tmp/cv2 "${SITE_PACKAGES_DIR}/" && \
+    VENV_LIB="${VIRTUAL_ENV}/lib" && \
+    rm -f "${VENV_LIB}/libstdc++.so"* && \
+    cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${VENV_LIB}/" && \
+    cp /tmp/opencv/build/lib/libopencv_* /usr/lib/x86_64-linux-gnu/ && \
+    rm -rf /tmp/opencv_contrib /tmp/opencv /tmp/cv2 && \
+    echo "OpenCV CUDA installation completed"; \
+    fi
+
+# Install ComfyUI requirements (cached unless ComfyUI version changes)
+# RUN uv pip install -r /workspace/ComfyUI/requirements.txt
+RUN uv pip install -r /workspace/ComfyUI/custom_nodes/ComfyUI-Manager/requirements.txt
+
+# Copy full comfystream source directly into custom_nodes (done late to maximize cache hits)
+COPY . /workspace/ComfyUI/custom_nodes/comfystream
+
+# Install ComfyStream
+RUN cd /workspace/ComfyUI/custom_nodes/comfystream && uv pip install -e .
+
+# Run install.py (will use uv pip automatically when available)
+RUN cd /workspace/ComfyUI/custom_nodes/comfystream && python install.py --workspace /workspace/ComfyUI
+
+# Accept a build-arg that lets CI force-invalidate cache
+ARG CACHEBUST=static
+ENV CACHEBUST=${CACHEBUST}
+
+# Note: setup_nodes.py is intentionally skipped
+
+# Install comfy-cli for workspace management
+RUN uv pip install comfy-cli
+RUN comfy --skip-prompt set-default "/workspace/ComfyUI"
+RUN comfy tracking disable
+
+# Conditionally install custom nodes from snapshot
+RUN if [ "$INSTALL_NODES" = "true" ]; then \
+    cd /workspace/ComfyUI && \
+    comfy node restore-snapshot /workspace/ComfyUI/custom_nodes/comfystream/configs/comfy-lock.yaml; \
+    fi
+
+# Install numpy and xformers
+#RUN uv pip install "numpy<2.0.0"
+RUN uv pip install --no-cache-dir xformers==0.0.32.post2 --no-deps
+
+# Create marker file to identify this as a built-in workspace
+RUN touch /workspace/ComfyUI/.comfystream_builtin_workspace
+
+WORKDIR /workspace/ComfyUI/custom_nodes/comfystream
+
+# Expose ComfyUI port
+EXPOSE 8188
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8188/system_stats || exit 1
+
+# Copy and set up entrypoint script (last for optimal caching)
+COPY ./docker/entrypoint-byow.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD []
+
