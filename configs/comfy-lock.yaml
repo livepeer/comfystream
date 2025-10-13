@@ -1,0 +1,212 @@
+basic:
+
+models:
+  # Base models
+  - model: "Dreamshaper v8"
+    url: "https://civitai.com/api/download/models/128713?type=Model&format=SafeTensor&size=pruned&fp=fp16"
+    paths:
+      - path: "checkpoints/SD1.5/dreamshaper-8.safetensors"
+    type: "checkpoint"
+
+  - model: "SD-Turbo"
+    url: "https://huggingface.co/stabilityai/sd-turbo/resolve/main/sd_turbo.safetensors"
+    paths:
+      - path: "checkpoints/SD1.5/sd_turbo.safetensors"
+    type: "checkpoint"
+
+  # DMD models
+  - model: "Dreamshaper DMD"
+    url: "https://huggingface.co/aaronb/dreamshaper-8-dmd-1kstep/resolve/main/diffusion_pytorch_model.safetensors"
+    paths:
+      - path: "unet/dreamshaper-8-dmd-1kstep.safetensors"
+      - path: "unet/dreamshaper-8-dmd-1kstep.json"
+    type: "unet"
+
+  # Depth Anything V2 ONNX models
+  - model: "DepthAnything ONNX"
+    url: "https://huggingface.co/yuvraj108c/Depth-Anything-2-Onnx/resolve/main/depth_anything_v2_vitb.onnx?download=true"
+    paths:
+      - path: "tensorrt/depth-anything/depth_anything_vitl14.onnx"
+    type: "onnx"
+
+  - model: "DepthAnything V2 Large ONNX"
+    url: "https://huggingface.co/yuvraj108c/Depth-Anything-2-Onnx/resolve/main/depth_anything_v2_vitl.onnx?download=true"
+    paths:
+      - path: "tensorrt/depth-anything/depth_anything_v2_vitl.onnx"
+    type: "onnx"
+
+  # TAESD models
+  - model: "TAESD"
+    url: "https://huggingface.co/madebyollin/taesd/resolve/main/taesd_decoder.safetensors"
+    paths:
+      - path: "vae_approx/taesd_decoder.safetensors"
+      - path: "vae_approx/taesd_encoder.safetensors"
+    type: "vae_approx"
+
+  # ControlNet models
+  - model: "ControlNet Depth"
+    url: "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/main/control_v11f1p_sd15_depth_fp16.safetensors"
+    paths:
+      - path: "controlnet/control_v11f1p_sd15_depth_fp16.safetensors"
+    type: "controlnet"
+
+  - model: "ControlNet MediaPipe Face"
+    url: "https://huggingface.co/CrucibleAI/ControlNetMediaPipeFace/resolve/main/control_v2p_sd15_mediapipe_face.safetensors"
+    paths:
+      - path: "controlnet/control_v2p_sd15_mediapipe_face.safetensors"
+    type: "controlnet"
+
+  - model: "outfitToOutfit_v20"
+    url: "https://huggingface.co/EmmaJohnson311/outfitToOutfit/resolve/main/outfitToOutfit_v20_sd15.safetensors"
+    paths:
+      - path: "controlnet/outfitToOutfit_v20.safetensors"
+    type: "controlnet"
+
+  # Lora models
+  - model: "ral-polygon-sd15"
+    url: "https://huggingface.co/Livepeer-Studio/comfystream_loras/resolve/main/ral-polygon-sd15.safetensors"
+    paths:
+      - path: "loras/SD1.5/ral-polygon-sd15.safetensors"
+    type: "lora"
+
+  - model: "ral-chrome-sd15"
+    url: "https://civitai.com/api/download/models/276570?type=Model&format=SafeTensor"
+    paths:
+      - path: "loras/SD1.5/ral-chrome-sd15.safetensors"
+    type: "lora"
+
+  # Text encoder
+  - model: "ClipTextModel"
+    url: "https://huggingface.co/Lykon/dreamshaper-8/resolve/main/text_encoder/model.fp16.safetensors"
+    paths:
+      - path: "text_encoders/CLIPText/model.fp16.safetensors"
+    type: "text_encoder"
+
+  # JoyVASA models for ComfyUI-FasterLivePortrait
+  - model: "JoyVASA Motion Generator"
+    url: "https://huggingface.co/jdh-algo/JoyVASA/resolve/main/motion_generator/motion_generator_hubert_chinese.pt?download=true"
+    paths:
+      - path: "liveportrait_onnx/joyvasa_models/motion_generator_hubert_chinese.pt"
+    type: "torch"
+
+  - model: "JoyVASA Hubert Chinese"
+    url: "https://huggingface.co/TencentGameMate/chinese-hubert-base/resolve/main/chinese-hubert-base-fairseq-ckpt.pt?download=true"
+    paths:
+      - path: "liveportrait_onnx/joyvasa_models/chinese-hubert-base-fairseq-ckpt.pt"
+    type: "torch"
+
+  - model: "JoyVASA Motion Template"
+    url: "https://huggingface.co/jdh-algo/JoyVASA/resolve/main/motion_template/motion_template.pkl?download=true"
+    paths:
+      - path: "liveportrait_onnx/joyvasa_models/motion_template.pkl"
+    type: "pickle"
+
+  # LivePortrait ONNX models
+  - model: "WarpingSpadeModel"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/warping_spade-fix.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/warping_spade-fix.onnx"
+    type: "onnx"
+
+  - model: "MotionExtractorModel"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/motion_extractor.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/motion_extractor.onnx"
+    type: "onnx"
+
+  - model: "LandmarkModel"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/landmark.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/landmark.onnx"
+    type: "onnx"
+
+  - model: "FaceAnalysisModel - RetinaFace"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/retinaface_det_static.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/retinaface_det_static.onnx"
+    type: "onnx"
+
+  - model: "FaceAnalysisModel - 2DPose"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/face_2dpose_106_static.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/face_2dpose_106_static.onnx"
+    type: "onnx"
+
+  - model: "AppearanceFeatureExtractorModel"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/appearance_feature_extractor.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/appearance_feature_extractor.onnx"
+    type: "onnx"
+
+  - model: "StitchingModel"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/stitching.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/stitching.onnx"
+    type: "onnx"
+
+  - model: "StitchingModel (Eye Retargeting)"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/stitching_eye.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/stitching_eye.onnx"
+    type: "onnx"
+
+  - model: "StitchingModel (Lip Retargeting)"
+    url: "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/stitching_lip.onnx?download=true"
+    paths:
+      - path: "liveportrait_onnx/stitching_lip.onnx"
+    type: "onnx"
+
+  # LLM/Vision models
+  - model: "Florence-2-base-ft"
+    url: "https://huggingface.co/microsoft/Florence-2-base-ft"
+    paths:
+      - path: "LLM/Florence-2-base-ft"
+    type: "llm"
+
+  # SAM2 models
+  - model: "SAM2 Hiera Tiny"
+    url: "https://huggingface.co/facebook/sam2-hiera-tiny/resolve/main/sam2_hiera_tiny.pt"
+    paths:
+      - path: "sam2/sam2_hiera_tiny.pt"
+    type: "sam2"
+
+# compatible with ComfyUI-Manager's .yaml snapshot
+custom_nodes:
+  git_custom_nodes:
+    "https://github.com/livepeer/comfystream.git":
+      disabled: false
+    "https://github.com/eliteprox/ComfyUI_TensorRT.git":
+      disabled: false
+      hash: "patch-1"
+    "https://github.com/yuvraj108c/ComfyUI-Depth-Anything-Tensorrt":
+      disabled: false
+    "https://github.com/pschroedl/ComfyUI-StreamDiffusion":
+      disabled: false
+      hash: "main"
+    "https://github.com/pschroedl/ComfyUI-FasterLivePortrait.git":
+      disabled: false
+      hash: "main"
+    "https://github.com/pschroedl/ComfyUI_RyanOnTheInside.git":
+      disabled: false
+    "https://github.com/ryanontheinside/ComfyUI-Misc-Effects.git":
+      disabled: false
+    "https://github.com/ryanontheinside/ComfyUI_RealTimeNodes.git":
+      disabled: false
+    "https://github.com/ad-astra-video/ComfyUI-Florence2-Vision.git":
+      disabled: false
+    "https://github.com/pschroedl/ComfyUI-SAM2-Realtime.git":
+      disabled: false
+      hash: "main"
+    "https://github.com/tsogzark/ComfyUI-load-image-from-url.git":
+      disabled: false
+    "https://github.com/yondonfu/ComfyUI-Torch-Compile":
+      disabled: false
+    "https://github.com/rgthree/rgthree-comfy.git":
+      disabled: false
+    "https://github.com/yondonfu/ComfyUI-Background-Edit":
+      disabled: false
+    "https://github.com/Fannovel16/comfyui_controlnet_aux":
+      disabled: false
+    "https://github.com/livepeer/ComfyUI-Stream-Pack":
+      disabled: false
+      hash: "main"

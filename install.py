@@ -9,6 +9,7 @@ import tempfile
 import urllib.request
 import toml
 import zipfile
+import shutil
 from comfy_compatibility.workspace import auto_patch_workspace_and_restart
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,12 +33,12 @@ def download_and_extract_ui_files(version: str):
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
     base_url = urllib.parse.urljoin("https://github.com/livepeer/comfystream/releases/download/", f"v{version}/comfystream-uikit.zip")
     fallback_url = "https://github.com/livepeer/comfystream/releases/latest/download/comfystream-uikit.zip"
-    
+
     # Create a temporary directory instead of a temporary file
     with tempfile.TemporaryDirectory() as temp_dir:
         # Define the path for the downloaded file
         download_path = os.path.join(temp_dir, "comfystream-uikit.zip")
-        
+
         # Download zip file
         logger.info(f"Downloading {base_url}")
         try:
@@ -53,7 +54,7 @@ def download_and_extract_ui_files(version: str):
             else:
                 logger.error(f"Error downloading package: {e}")
                 raise
-        
+
         # Extract contents
         try:
             logger.info(f"Extracting files to {output_dir}")
@@ -69,7 +70,7 @@ if __name__ == "__main__":
         "--workspace", default=os.environ.get('COMFY_UI_WORKSPACE', None), required=False, help="Set Comfy workspace"
     )
     args = parser.parse_args()
-    
+
     workspace = args.workspace
     if workspace is None:
         # Look up to 3 directories up for ComfyUI
@@ -90,15 +91,21 @@ if __name__ == "__main__":
             current = os.path.dirname(current)
 
     logger.info("Installing comfystream package...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
+    # Use uv pip if available, otherwise fall back to pip
+    if shutil.which("uv"):
+        logger.info("Using uv pip for installation")
+        subprocess.check_call(["uv", "pip", "install", "-e", "."])
+    else:
+        logger.info("Using pip for installation")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
 
     if workspace is None:
         logger.warning("No ComfyUI workspace found. Please specify a valid workspace path to fully install")
-    
+
     if workspace is not None:
         logger.info("Patching ComfyUI workspace...")
         auto_patch_workspace_and_restart(workspace)
-    
+
     logger.info("Downloading and extracting UI files...")
     version = get_project_version(os.getcwd())
     download_and_extract_ui_files(version)
