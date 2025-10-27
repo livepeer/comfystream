@@ -2,14 +2,13 @@ import asyncio
 import json
 import logging
 import os
-from typing import List, Optional
+from typing import List
 
+import numpy as np
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
-from pytrickle.video_utils import create_loading_frame
 from comfystream.pipeline import Pipeline
 from comfystream.utils import convert_prompt, ComfyStreamParamsUpdateRequest
-import av
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +35,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._text_forward_task = None
         self._background_tasks = []
         self._stop_event = asyncio.Event()
-        # Loading overlay / warmup gating
-        self._loading_active: bool = False
-        self._warmup_done: asyncio.Event = asyncio.Event()
-        self._loading_message: str = "Loading..."
-        self._loading_progress: Optional[float] = None
-        self._frame_counter: int = 0
         super().__init__()
 
     def set_stream_processor(self, stream_processor):
@@ -131,19 +124,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         # Stop text forwarder
         await self._stop_text_forwarder()
 
-        # Cancel warmup if running and reset overlay state
-        try:
-            if self._warmup_task and not self._warmup_task.done():
-                self._warmup_task.cancel()
-                await self._warmup_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.debug("Warmup task cancellation error", exc_info=True)
-        finally:
-            self._loading_active = False
-            self._warmup_done.set()
-
         # Cancel any other background tasks started by this processor
         for task in list(self._background_tasks):
             try:
@@ -207,46 +187,23 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             logger.error(f"Warmup failed: {e}")
 
     async def on_stream_start(self):
-        """Called when a new stream starts - enable loading overlay and queue warmup."""
-        logger.info("Stream started, enabling loading overlay and scheduling warmup")
+        """Called when a new stream starts - prepare resources per stream."""
+        logger.info("Stream started, initializing per-stream resources")
         try:
+            # Reset stop event so background tasks can run
             self._reset_stop_event()
-            self._frame_counter = 0
-            self._loading_active = True
-            self._warmup_done.clear()
 
             # Ensure pipeline/model are available
             if self.pipeline is None:
                 await self.load_model()
 
-            # Start text forwarder best-effort
+            # Best-effort: start text forwarder if workflow supports text
             self._setup_text_monitoring()
 
-            # Run warmup in background; swap off overlay when done
-            async def _warmup_and_finish():
-                try:
-                    await self.warmup()
-                except Exception as e:
-                    logger.error(f"Warmup failed in on_stream_start: {e}")
-                finally:
-                    self._loading_active = False
-                    self._warmup_done.set()
-
-            # Cancel any prior warmup task defensively
-            if self._warmup_task and not self._warmup_task.done():
-                try:
-                    self._warmup_task.cancel()
-                    await self._warmup_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    logger.debug("Previous warmup task cleanup error", exc_info=True)
-
-            self._warmup_task = asyncio.create_task(_warmup_and_finish())
+            # Warm up in the background (no-op if no prompts/capabilities yet)
+            self._schedule_warmup()
         except Exception as e:
             logger.error(f"on_stream_start failed: {e}")
-            self._loading_active = False
-            self._warmup_done.set()
 
     def _schedule_warmup(self) -> None:
         """Schedule warmup in background if not already running."""
@@ -261,38 +218,22 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             logger.warning("Failed to schedule warmup", exc_info=True)
 
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
-        """Process video frame through ComfyStream Pipeline or emit a loading overlay during warmup."""
+        """Process video frame through ComfyStream Pipeline."""
         try:
-            # While warming up: discard incoming video, emit animated loading overlay
-            if self._loading_active and not self._warmup_done.is_set():
-                width = int(getattr(self.pipeline, "width", 512)) if self.pipeline else 512
-                height = int(getattr(self.pipeline, "height", 512)) if self.pipeline else 512
-
-                overlay_bgr = create_loading_frame(
-                    width=width,
-                    height=height,
-                    message=self._loading_message,
-                    frame_counter=self._frame_counter,
-                    progress=self._loading_progress,
-                )
-                self._frame_counter += 1
-
-                overlay_av = av.VideoFrame.from_ndarray(overlay_bgr, format="bgr24")
-                overlay_av.pts = frame.timestamp
-                overlay_av.time_base = frame.time_base
-
-                return VideoFrame.from_av_frame_with_timing(overlay_av, frame)
-
-            # Normal processing after warmup
+            
+            # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
             av_frame.pts = frame.timestamp
             av_frame.time_base = frame.time_base
-
+            
+            # Process through pipeline
             await self.pipeline.put_video_frame(av_frame)
             processed_av_frame = await self.pipeline.get_processed_video_frame()
-
-            return VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
-
+            
+            # Convert back to pytrickle VideoFrame
+            processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
+            return processed_frame
+            
         except Exception as e:
             logger.error(f"Video processing failed: {e}")
             return frame
