@@ -8,7 +8,7 @@ import numpy as np
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import VideoFrame, AudioFrame
 from comfystream.pipeline import Pipeline
-from comfystream.utils import convert_prompt, ComfyStreamParamsUpdateRequest
+from comfystream.utils import convert_prompt, ComfyStreamParamsUpdateRequest, get_default_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +150,9 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._stop_event.clear()
 
     async def load_model(self, **kwargs):
-        """Load model and initialize the pipeline."""
+        """Load model, initialize pipeline, set default workflow once, and warm up."""
         params = {**self._load_params, **kwargs}
-        
+
         if self.pipeline is None:
             self.pipeline = Pipeline(
                 width=int(params.get('width', 512)),
@@ -164,6 +164,20 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 comfyui_inference_log_level=params.get('comfyui_inference_log_level'),
                 blacklist_nodes=["ComfyUI-Manager"]
             )
+
+        # Only set the default workflow if no prompts are currently configured
+        has_prompts = False
+        try:
+            has_prompts = bool(getattr(self.pipeline.client, "current_prompts", []))
+        except Exception:
+            has_prompts = False
+
+        if not has_prompts:
+            default_workflow = get_default_workflow()
+            await self.update_params({"prompts": default_workflow, "warmup": True})
+        else:
+            # If prompts already exist, just warm up
+            await self.update_params({"warmup": True})
 
     async def warmup(self):
         """Warm up the pipeline."""
