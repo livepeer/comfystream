@@ -110,3 +110,8 @@ RUN conda config --set auto_activate_base false && \
 RUN echo "conda activate comfystream" >> ~/.bashrc
 
 WORKDIR /workspace/comfystream
+
+# Run ComfyStream BYOC server from /workspace/ComfyUI within the comfystream conda env
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "comfystream", "--cwd", "/workspace/ComfyUI", "python", "/workspace/comfystream/server/byoc.py"]
+# Default args; can be overridden/appended at runtime
+CMD ["--workspace", "/workspace/ComfyUI", "--host", "0.0.0.0", "--port", "8000"]
