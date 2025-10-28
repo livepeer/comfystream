@@ -126,6 +126,7 @@ def main():
         audio_processor=frame_processor.process_audio_async,
         model_loader=frame_processor.load_model,
         param_updater=frame_processor.update_params,
+        on_stream_start=frame_processor.on_stream_start,
         on_stream_stop=frame_processor.on_stream_stop,
         # Align processor name with capability for consistent logs
         name=(args.capability_name or os.getenv("CAPABILITY_NAME") or "comfystream"),
