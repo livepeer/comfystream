@@ -1,0 +1,49 @@
+.PHONY: help build build-dev build-install-nodes build-no-extras run run-dev run-dev-live clean
+
+COMFYUI_PATH ?= ~/ComfyUI
+PORT ?= 8188
+
+help: ## Show this help message
+	@echo "ComfyStream Docker Development Commands"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build production image with TensorRT and OpenCV CUDA
+	docker build -f Dockerfile.uv -t comfystream:uv .
+
+build-install-nodes: ## Build production image with nodes installed
+	docker build -f Dockerfile.uv --build-arg INSTALL_NODES=true -t comfystream:uv-nodes .
+
+build-no-extras: ## Build production image without TensorRT and OpenCV CUDA (faster)
+	docker build -f Dockerfile.uv --build-arg INSTALL_EXTRA_PACKAGES=false -t comfystream:uv-lite .
+
+build-dev: ## Build development image (extends production, only rebuilds entrypoint layer)
+	docker build -f Dockerfile.uv.dev -t comfystream:uv-dev .
+
+build-dev-nodes: ## Build development image (extends production, only rebuilds entrypoint layer)
+	docker build -f Dockerfile.uv-nodes -t comfystream:uv-dev .
+
+run: ## Run built-in workspace (no mount)
+	docker run --gpus all -p $(PORT):8188 comfystream:uv
+
+run-dev: ## Run with mounted workspace using docker-compose
+	docker compose -f docker-compose.dev.yml up
+
+run-dev-live: ## Run with live entrypoint mounting (instant updates, no rebuild!)
+	docker run --gpus all -p $(PORT):8188 \
+		-v $(COMFYUI_PATH):/workspace/ComfyUI \
+		-v $$(pwd)/docker/entrypoint-byow.sh:/usr/local/bin/entrypoint.sh:ro \
+		comfystream:uv
+
+run-dev-shell: ## Run with mounted workspace and drop into bash shell
+	docker run -it --gpus all \
+		-v $(COMFYUI_PATH):/workspace/ComfyUI \
+		-v $$(pwd)/docker/entrypoint-byow.sh:/usr/local/bin/entrypoint.sh:ro \
+		comfystream:uv bash
+
+clean: ## Remove all comfystream images
+	docker rmi comfystream:uv comfystream:uv-dev comfystream:uv-lite || true
+
+# Override ComfyUI path: make run-dev-live COMFYUI_PATH=/path/to/ComfyUI
+# Override port: make run PORT=8189
+
