@@ -117,7 +117,9 @@ def main():
         audio_processor=frame_processor.process_audio_async,
         model_loader=frame_processor.load_model,
         param_updater=frame_processor.update_params,
+        on_stream_start=frame_processor.on_stream_start,
         on_stream_stop=frame_processor.on_stream_stop,
+        warmup_handler=frame_processor.warmup,
         # Align processor name with capability for consistent logs
         name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
         port=int(args.port),
@@ -131,10 +133,6 @@ def main():
 
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
-
-    # Create async startup function to load model
-    async def load_model_on_startup(app):
-        await processor._frame_processor.load_model()
 
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
@@ -157,7 +155,8 @@ def main():
                 )
 
                 result = await RegisterCapability.register(
-                    logger=logger, capability_name=os.getenv("CAPABILITY_NAME") or "comfystream"
+                    logger=logger,
+                    capability_name=os.getenv("CAPABILITY_NAME") or "comfystream"
                 )
                 if result:
                     logger.info(f"Registered capability: {result.geturl()}")
@@ -168,8 +167,7 @@ def main():
             # Clear ORCH_SECRET from environment even on error
             os.environ.pop("ORCH_SECRET", None)
 
-    # Add model loading and registration to startup hooks
-    processor.server.app.on_startup.append(load_model_on_startup)
+    # Add registration to startup hooks
     processor.server.app.on_startup.append(register_orchestrator_startup)
 
     # Add warmup endpoint: accepts same body as prompts update
