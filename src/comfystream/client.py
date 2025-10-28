@@ -62,6 +62,15 @@ class ComfyStreamClient:
                 except Exception as e:
                     raise Exception(f"Prompt update failed: {str(e)}") from e
 
+    async def ensure_prompt_tasks_running(self):
+        # Start the prompt loop only if we have prompts and nothing is running
+        if self.running_prompts or not self.current_prompts:
+            return
+        self._stop_event.clear()
+        for idx in range(len(self.current_prompts)):
+            task = asyncio.create_task(self.run_prompt(idx))
+            self.running_prompts[idx] = task
+
     async def run_prompt(self, prompt_index: int):
         while not self._stop_event.is_set():
             async with self._prompt_update_lock:

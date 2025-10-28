@@ -137,6 +137,9 @@ class Pipeline:
             await self.video_incoming_frames.put(frame)
             return
 
+        # Ensure the prompt loop is running when real input arrives
+        await self.client.ensure_prompt_tasks_running()
+
         # Process and send to client only if input is accepted
         frame.side_data.input = self.video_preprocess(frame)
         frame.side_data.skipped = True
@@ -157,6 +160,9 @@ class Pipeline:
             frame.side_data.passthrough = True
             await self.audio_incoming_frames.put(frame)
             return
+
+        # Ensure the prompt loop is running when real input arrives
+        await self.client.ensure_prompt_tasks_running()
 
         # Process and send to client when input is accepted
         frame.side_data.input = self.audio_preprocess(frame) if preprocess else frame.to_ndarray()

@@ -174,10 +174,12 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         if not has_prompts:
             default_workflow = get_default_workflow()
-            await self.update_params({"prompts": default_workflow, "warmup": True})
+            # Apply default prompt first (starts prompt task), then perform warmup synchronously
+            await self.update_params({"prompts": default_workflow})
+            await self.warmup()
         else:
-            # If prompts already exist, just warm up
-            await self.update_params({"warmup": True})
+            # Prompts exist; perform warmup synchronously
+            await self.warmup()
 
     async def warmup(self):
         """Warm up the pipeline."""
@@ -198,6 +200,12 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
+        finally:
+            # Stop continuous prompt loop after warmup; will restart on next real input
+            try:
+                await self.pipeline.client.cancel_running_prompts()
+            except Exception:
+                logger.debug("Failed to stop prompt loop after warmup", exc_info=True)
 
     def _schedule_warmup(self) -> None:
         """Schedule warmup in background if not already running."""
