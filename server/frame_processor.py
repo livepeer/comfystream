@@ -145,7 +145,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         finally:
             self._loading_active = False
             self._warmup_done.set()
-            self._set_warmup_passthrough(False)
 
         # Cancel any other background tasks started by this processor
         for task in list(self._background_tasks):
@@ -172,15 +171,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """Reset the stop event for a new stream."""
         self._stop_event.clear()
 
-    def _set_warmup_passthrough(self, enabled: bool) -> None:
-        """Toggle forced passthrough on the pipeline during warmup."""
-        if not self.pipeline:
-            return
-        try:
-            self.pipeline.set_force_video_passthrough(enabled)
-            self.pipeline.set_force_audio_passthrough(enabled)
-        except Exception:
-            logger.debug("Failed to toggle warmup passthrough", exc_info=True)
 
     async def _start_warmup_sequence(self) -> None:
         """Start (or restart) the warmup routine with loading overlay management."""
@@ -199,7 +189,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._frame_counter = 0
         self._loading_active = True
         self._warmup_done.clear()
-        self._set_warmup_passthrough(True)
 
         async def _warmup_and_finish():
             try:
@@ -207,7 +196,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             except Exception:
                 logger.debug("Warmup failed while running warmup sequence", exc_info=True)
             finally:
-                self._set_warmup_passthrough(False)
                 self._loading_active = False
                 self._warmup_done.set()
 
