@@ -145,6 +145,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         finally:
             self._loading_active = False
             self._warmup_done.set()
+            self._set_warmup_passthrough(False)
 
         # Cancel any other background tasks started by this processor
         for task in list(self._background_tasks):
@@ -170,6 +171,84 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     def _reset_stop_event(self):
         """Reset the stop event for a new stream."""
         self._stop_event.clear()
+
+    def _set_warmup_passthrough(self, enabled: bool) -> None:
+        """Toggle forced passthrough on the pipeline during warmup."""
+        if not self.pipeline:
+            return
+        try:
+            self.pipeline.set_force_video_passthrough(enabled)
+            self.pipeline.set_force_audio_passthrough(enabled)
+        except Exception:
+            logger.debug("Failed to toggle warmup passthrough", exc_info=True)
+
+    async def _start_warmup_sequence(self) -> None:
+        """Start (or restart) the warmup routine with loading overlay management."""
+        try:
+            if self._warmup_task and not self._warmup_task.done():
+                self._warmup_task.cancel()
+                try:
+                    await self._warmup_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.debug("Previous warmup task cleanup error", exc_info=True)
+        except Exception:
+            logger.debug("Error cancelling prior warmup task", exc_info=True)
+
+        self._frame_counter = 0
+        self._loading_active = True
+        self._warmup_done.clear()
+        self._set_warmup_passthrough(True)
+
+        async def _warmup_and_finish():
+            try:
+                await self.warmup()
+            except Exception:
+                logger.debug("Warmup failed while running warmup sequence", exc_info=True)
+            finally:
+                self._set_warmup_passthrough(False)
+                self._loading_active = False
+                self._warmup_done.set()
+
+        self._warmup_task = asyncio.create_task(_warmup_and_finish())
+
+    async def _ensure_runner_active(self) -> None:
+        """Ensure the prompt runner is active when real frames arrive."""
+        if not self.pipeline or not getattr(self.pipeline, "client", None):
+            return
+        if not self._runner_active:
+            await self.pipeline.client.ensure_prompt_tasks_running()
+            self.pipeline.client.resume()
+            self._runner_active = True
+
+    def _build_loading_overlay_frame(self, frame: VideoFrame) -> VideoFrame:
+        """Render a loading overlay frame while warmup is in progress."""
+        try:
+            self._frame_counter += 1
+            # Determine output dimensions—prefer pipeline target size when available
+            width = getattr(self.pipeline, "width", None) or frame.tensor.shape[-2]
+            height = getattr(self.pipeline, "height", None) or frame.tensor.shape[-3]
+
+            overlay_np = create_loading_frame(
+                width,
+                height,
+                message=self._loading_message,
+                frame_counter=self._frame_counter,
+                progress=self._loading_progress,
+                color_format="RGB",
+            )
+
+            overlay_av = av.VideoFrame.from_ndarray(overlay_np, format="rgb24")
+            overlay_av.pts = frame.timestamp
+            overlay_av.time_base = frame.time_base
+
+            overlay_frame = VideoFrame.from_av_frame_with_timing(overlay_av, frame)
+            overlay_frame.side_data = frame.side_data
+            return overlay_frame
+        except Exception:
+            logger.debug("Failed to generate loading overlay frame", exc_info=True)
+            return frame
 
     async def load_model(self, **kwargs):
         """Load model, initialize pipeline, set default workflow once, and warm up."""
@@ -198,10 +277,12 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             default_workflow = get_default_workflow()
             # Apply default prompt first (starts prompt task), then perform warmup synchronously
             await self.update_params({"prompts": default_workflow})
-            await self.warmup()
+            if not self._loading_active:
+                await self.warmup()
         else:
             # Prompts exist; perform warmup synchronously
-            await self.warmup()
+            if not self._loading_active:
+                await self.warmup()
 
     async def warmup(self):
         """Warm up the pipeline."""
@@ -232,6 +313,9 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 self.pipeline.client.pause()
             except Exception:
                 logger.debug("Failed to stop prompt loop after warmup", exc_info=True)
+            self._runner_active = False
+            if not self._loading_active:
+                self._set_warmup_passthrough(False)
 
     async def on_stream_start(self):
         """Called when a new stream starts - enable loading overlay and queue warmup."""
@@ -249,27 +333,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             # Start text forwarder best-effort
             self._setup_text_monitoring()
 
-            # Run warmup in background; swap off overlay when done
-            async def _warmup_and_finish():
-                try:
-                    await self.warmup()
-                except Exception as e:
-                    logger.error(f"Warmup failed in on_stream_start: {e}")
-                finally:
-                    self._loading_active = False
-                    self._warmup_done.set()
-
-            # Cancel any prior warmup task defensively
-            if self._warmup_task and not self._warmup_task.done():
-                try:
-                    self._warmup_task.cancel()
-                    await self._warmup_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    logger.debug("Previous warmup task cleanup error", exc_info=True)
-
-            self._warmup_task = asyncio.create_task(_warmup_and_finish())
+            await self._start_warmup_sequence()
         except Exception as e:
             logger.error(f"on_stream_start failed: {e}")
             self._loading_active = False
@@ -282,7 +346,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 logger.info("Warmup already in progress, skipping new warmup request")
                 return
 
-            self._warmup_task = asyncio.create_task(self.warmup())
+            self._frame_counter = 0
+            self._loading_active = True
+            self._warmup_done.clear()
+            asyncio.get_running_loop().create_task(self._start_warmup_sequence())
             logger.info("Warmup scheduled in background")
         except Exception:
             logger.warning("Failed to schedule warmup", exc_info=True)
@@ -290,6 +357,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline or emit a loading overlay during warmup."""
         try:
+            if not self.pipeline:
+                return frame
+
+            if self._loading_active and not self._warmup_done.is_set():
+                return self._build_loading_overlay_frame(frame)
+
+            await self._ensure_runner_active()
 
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
@@ -310,11 +384,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             if not self.pipeline:
                 return [frame]
+            if self._loading_active and not self._warmup_done.is_set():
+                return [frame]
             # On first frame of an active stream, start/resume runner
-            if not self._runner_active and self.pipeline and self.pipeline.client:
-                await self.pipeline.client.ensure_prompt_tasks_running()
-                self.pipeline.client.resume()
-                self._runner_active = True
+            await self._ensure_runner_active()
 
             # Audio processing needed - use pipeline
             av_frame = frame.to_av_frame()
@@ -363,6 +436,12 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             # Set prompts in pipeline
             await self.pipeline.set_prompts([converted])
             logger.info(f"Prompts set successfully: {list(prompts.keys())}")
+
+            # Trigger loading overlay and warmup sequence for new prompts
+            try:
+                await self._start_warmup_sequence()
+            except Exception:
+                logger.debug("Failed to start warmup sequence after prompt update", exc_info=True)
 
             # Update text monitoring based on workflow capabilities
             if self.pipeline.produces_text_output():
