@@ -139,10 +139,6 @@ def main():
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
     
-    # Create async startup function to load model
-    async def load_model_on_startup(app):
-        await processor._frame_processor.load_model()
-	
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
         try:
@@ -171,8 +167,7 @@ def main():
         except Exception as e:
             logger.error(f"Orchestrator registration failed: {e}")
 
-    # Add model loading and registration to startup hooks
-    processor.server.app.on_startup.append(load_model_on_startup)
+    # Add registration to startup hooks
     processor.server.app.on_startup.append(register_orchestrator_startup)
 
     # Add warmup endpoint: accepts same body as prompts update
