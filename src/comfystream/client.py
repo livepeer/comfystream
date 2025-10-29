@@ -1,6 +1,7 @@
 import asyncio
-from typing import List
 import logging
+from typing import List
+import contextlib
 
 from comfystream import tensor_cache
 from comfystream.utils import convert_prompt
@@ -17,11 +18,16 @@ class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
         config = Configuration(**kwargs)
         self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
-        self.running_prompts = {} # To be used for cancelling tasks
+        self.running_prompts = {}
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
+
+        # PromptRunner state
+        self._shutdown_event = asyncio.Event()
+        self._run_enabled_event = asyncio.Event()
+        self._runner_task = None
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         """Set new prompts, replacing any existing ones.
@@ -36,15 +42,15 @@ class ComfyStreamClient:
         if not prompts:
             raise ValueError("Cannot set empty prompts list")
             
-        # Cancel existing prompts first to avoid conflicts
-        await self.cancel_running_prompts()
-        # Reset stop event for new prompts
-        self._stop_event.clear()
+        # Pause runner while swapping prompts to avoid interleaving
+        was_running = self._run_enabled_event.is_set()
+        self._run_enabled_event.clear()
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
-        logger.info(f"Queuing {len(self.current_prompts)} prompt(s) for execution")
-        for idx in range(len(self.current_prompts)):
-            task = asyncio.create_task(self.run_prompt(idx))
-            self.running_prompts[idx] = task
+        logger.info(f"Configured {len(self.current_prompts)} prompt(s)")
+        # Ensure runner exists (IDLE until resumed)
+        await self.ensure_prompt_tasks_running()
+        if was_running:
+            self._run_enabled_event.set()
 
     async def update_prompts(self, prompts: List[PromptDictInput]):
         async with self._prompt_update_lock:
@@ -57,43 +63,61 @@ class ComfyStreamClient:
             for idx, prompt in enumerate(prompts):
                 converted_prompt = convert_prompt(prompt)
                 try:
+                    # Lightweight validation by queueing is retained for compatibility
                     await self.comfy_client.queue_prompt(converted_prompt)
                     self.current_prompts[idx] = converted_prompt
                 except Exception as e:
                     raise Exception(f"Prompt update failed: {str(e)}") from e
 
     async def ensure_prompt_tasks_running(self):
-        # Start the prompt loop only if we have prompts and nothing is running
-        if self.running_prompts or not self.current_prompts:
+        # Ensure the single runner task exists (does not force running)
+        if self._runner_task and not self._runner_task.done():
             return
-        self._stop_event.clear()
-        for idx in range(len(self.current_prompts)):
-            task = asyncio.create_task(self.run_prompt(idx))
-            self.running_prompts[idx] = task
+        if not self.current_prompts:
+            return
+        self._shutdown_event.clear()
+        self._runner_task = asyncio.create_task(self._runner_loop())
 
-    async def run_prompt(self, prompt_index: int):
-        while not self._stop_event.is_set():
-            async with self._prompt_update_lock:
-                try:
-                    await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
-                except asyncio.CancelledError:
-                    raise
-                except ComfyStreamInputTimeoutError:
-                    # Timeout errors are expected during stream switching - just continue
-                    logger.info(f"Input for prompt {prompt_index} timed out, continuing")
-                    continue
-                except Exception as e:
-                    await self.cleanup()
-                    logger.error(f"Error running prompt: {str(e)}")
-                    raise
+    async def _runner_loop(self):
+        try:
+            while not self._shutdown_event.is_set():
+                # IDLE until running is enabled
+                await self._run_enabled_event.wait()
+                # Snapshot prompts without holding the lock during network I/O
+                async with self._prompt_update_lock:
+                    prompts_snapshot = list(self.current_prompts)
+                for prompt_index, prompt in enumerate(prompts_snapshot):
+                    if self._shutdown_event.is_set() or not self._run_enabled_event.is_set():
+                        break
+                    try:
+                        await self.comfy_client.queue_prompt(prompt)
+                    except asyncio.CancelledError:
+                        raise
+                    except ComfyStreamInputTimeoutError:
+                        logger.info(f"Input for prompt {prompt_index} timed out, continuing")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error running prompt: {str(e)}")
+                        await asyncio.sleep(0.05)
+                        continue
+        except asyncio.CancelledError:
+            pass
 
     async def cleanup(self):
-        # Set stop event to signal prompt loops to exit
+        # Signal runner to shutdown
         self._stop_event.set()
-        
-        await self.cancel_running_prompts()
+        self._shutdown_event.set()
+        if self._runner_task:
+            self._runner_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._runner_task
+            self._runner_task = None
+
+        # Pause running
+        self._run_enabled_event.clear()
+
         async with self._cleanup_lock:
-            if self.comfy_client.is_running:
+            if getattr(self.comfy_client, "is_running", False):
                 try:
                     await self.comfy_client.__aexit__()
                 except Exception as e:
@@ -103,15 +127,8 @@ class ComfyStreamClient:
             logger.info("Client cleanup complete")
 
     async def cancel_running_prompts(self):
-        async with self._cleanup_lock:
-            tasks_to_cancel = list(self.running_prompts.values())
-            for task in tasks_to_cancel:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            self.running_prompts.clear()
+        """Compatibility: pause the runner without destroying it."""
+        self._run_enabled_event.clear()
 
         
     async def cleanup_queues(self):
@@ -129,6 +146,22 @@ class ComfyStreamClient:
 
         while not tensor_cache.text_outputs.empty():
             await tensor_cache.text_outputs.get()
+
+    # Explicit lifecycle helpers for external controllers (FrameProcessor)
+    def resume(self):
+        self._run_enabled_event.set()
+
+    def pause(self):
+        self._run_enabled_event.clear()
+
+    async def stop_prompts_immediately(self):
+        """Cancel the runner task to immediately stop any in-flight prompt execution."""
+        self._run_enabled_event.clear()
+        if self._runner_task:
+            self._runner_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._runner_task
+            self._runner_task = None
 
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():

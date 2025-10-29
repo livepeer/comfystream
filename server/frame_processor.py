@@ -35,6 +35,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._text_forward_task = None
         self._background_tasks = []
         self._stop_event = asyncio.Event()
+        self._runner_active = False
         super().__init__()
 
     def set_stream_processor(self, stream_processor):
@@ -113,13 +114,14 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         # Set stop event to signal all background tasks to stop
         self._stop_event.set()
 
-        # Stop the ComfyStream client's prompt execution
+        # Stop the ComfyStream client's prompt execution immediately to avoid no-input logs
         if self.pipeline and self.pipeline.client:
             logger.info("Stopping ComfyStream client prompt execution")
             try:
-                await self.pipeline.client.cleanup()
+                await self.pipeline.client.stop_prompts_immediately()
             except Exception as e:
                 logger.error(f"Error stopping ComfyStream client: {e}")
+        self._runner_active = False
 
         # Stop text forwarder
         await self._stop_text_forwarder()
@@ -189,6 +191,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         
         logger.info("Running pipeline warmup...")
         try:
+            # Ensure runner exists and is enabled for warmup
+            await self.pipeline.client.ensure_prompt_tasks_running()
+            self.pipeline.client.resume()
+
             capabilities = self.pipeline.get_workflow_io_capabilities()
             logger.info(f"Detected I/O capabilities: {capabilities}")
             
@@ -201,9 +207,9 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
         finally:
-            # Stop continuous prompt loop after warmup; will restart on next real input
+            # Pause prompt loop after warmup; will resume on first real input
             try:
-                await self.pipeline.client.cancel_running_prompts()
+                self.pipeline.client.pause()
             except Exception:
                 logger.debug("Failed to stop prompt loop after warmup", exc_info=True)
 
@@ -222,6 +228,11 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline."""
         try:
+            # On first frame of an active stream, start/resume runner
+            if not self._runner_active and self.pipeline and self.pipeline.client:
+                await self.pipeline.client.ensure_prompt_tasks_running()
+                self.pipeline.client.resume()
+                self._runner_active = True
             
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
@@ -245,6 +256,11 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             if not self.pipeline:
                 return [frame]
+            # On first frame of an active stream, start/resume runner
+            if not self._runner_active and self.pipeline and self.pipeline.client:
+                await self.pipeline.client.ensure_prompt_tasks_running()
+                self.pipeline.client.resume()
+                self._runner_active = True
             
             # Audio processing needed - use pipeline
             av_frame = frame.to_av_frame()
