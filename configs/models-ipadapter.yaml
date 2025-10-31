@@ -2,19 +2,23 @@ models:
   # Example: IP-Adapter setup with directory download
   
   # Single file download (regular)
-  ip-adapter-sd15:
+  ip-adapter-plus-sd15:
     name: "IP Adapter SD15"
-    url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.safetensors"
-    path: "ipadapter/ip-adapter_sd15.safetensors"
+    url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.safetensors"
+    path: "ipadapter/ip-adapter-plus_sd15.safetensors"
     type: "ip_adapter"
+    extra_files:
+      - url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.bin"
+        path: "ip_adapter/ip-adapter-plus_sd15.bin"
 
-  # Directory download (requires is_directory: true)
   clip-image-encoder:
     name: "CLIP Image Encoder"
-    url: "https://huggingface.co/h94/IP-Adapter/tree/main/models/image_encoder"
-    path: "ipadapter/models/image_encoder"
+    url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors"
+    path: "image_encoder/model.safetensors"
     type: "image_encoder"
-    is_directory: true
+    extra_files:
+      - url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/config.json"
+        path: "image_encoder/config.json"
 
   # Base model
   sd-turbo:
@@ -22,6 +26,12 @@ models:
     url: "https://huggingface.co/stabilityai/sd-turbo/resolve/main/sd_turbo.safetensors"
     path: "checkpoints/SD1.5/sd_turbo.safetensors"
     type: "checkpoint"
+
+  PixelArtRedmond15V-PixelArt-PIXARFK.safetensors:
+    name: "PixelArtRedmond15V-PixelArt-PIXARFK"
+    url: "https://huggingface.co/artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5/resolve/ab43d9e2cf8c9240189f01e9cdc4ca341362500c/PixelArtRedmond15V-PixelArt-PIXARFK.safetensors"
+    path: "loras/SD1.5/PixelArtRedmond15V-PixelArt-PIXARFK.safetensors"
+    type: "lora"
 
   # TAESD for fast VAE
   taesd:
