@@ -24,7 +24,7 @@ python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui
 
 #### Using a custom nodes configuration
 ```bash
-python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui --config nodes-minimal.yaml
+python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui --config nodes-streamdiffusion.yaml
 ```
 > The `--config` flag accepts a filename (searches in `configs/`), relative path, or absolute path to a custom nodes configuration file
 
