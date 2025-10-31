@@ -21,8 +21,8 @@ docker build -t livepeer/comfyui-base -f docker/Dockerfile .
 #### Build with custom config from configs directory
 ```bash
 docker build -f docker/Dockerfile.base \
-  --build-arg NODES_CONFIG=nodes-minimal.yaml \
-  -t comfyui-base:minimal .
+  --build-arg NODES_CONFIG=nodes-streamdiffusion.yaml \
+  -t comfyui-base:streamdiffusion .
 ```
 
 #### Build with config from absolute path
@@ -45,7 +45,7 @@ docker build -f docker/Dockerfile.base \
 ### Configuration Files in configs/
 
 - **`nodes.yaml`** - Full node configuration (default)
-- **`nodes-minimal.yaml`** - Minimal set of nodes for faster builds
+- **`nodes-streamdiffusion.yaml`** - Minimal set of nodes for faster builds
 
 ### Examples
 

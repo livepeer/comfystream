@@ -18,6 +18,11 @@ nodes:
     name: "ComfyUI Torch Compile"
     url: "https://github.com/yondonfu/ComfyUI-Torch-Compile"
     type: "tensorrt"
+  
+  comfyui_controlnet_aux:
+    name: "ComfyUI ControlNet Auxiliary"
+    url: "https://github.com/Fannovel16/comfyui_controlnet_aux"
+    type: "controlnet"
 
   comfyui-stream-pack:
     name: "ComfyUI Stream Pack"
@@ -25,8 +30,8 @@ nodes:
     branch: "main"
     type: "utility"
 
-
   rgthree-comfy:
     name: "rgthree Comfy"
     url: "https://github.com/rgthree/rgthree-comfy.git"
     type: "utility"
+
