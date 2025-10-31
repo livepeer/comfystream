@@ -1,0 +1,35 @@
+models:
+  # Example: IP-Adapter setup with directory download
+  
+  # Single file download (regular)
+  ip-adapter-sd15:
+    name: "IP Adapter SD15"
+    url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.safetensors"
+    path: "ipadapter/ip-adapter_sd15.safetensors"
+    type: "ip_adapter"
+
+  # Directory download (requires is_directory: true)
+  clip-image-encoder:
+    name: "CLIP Image Encoder"
+    url: "https://huggingface.co/h94/IP-Adapter/tree/main/models/image_encoder"
+    path: "ipadapter/models/image_encoder"
+    type: "image_encoder"
+    is_directory: true
+
+  # Base model
+  sd-turbo:
+    name: "SD-Turbo"
+    url: "https://huggingface.co/stabilityai/sd-turbo/resolve/main/sd_turbo.safetensors"
+    path: "checkpoints/SD1.5/sd_turbo.safetensors"
+    type: "checkpoint"
+
+  # TAESD for fast VAE
+  taesd:
+    name: "TAESD"
+    url: "https://huggingface.co/madebyollin/taesd/resolve/main/taesd_decoder.safetensors"
+    path: "vae_approx/taesd_decoder.safetensors"
+    type: "vae_approx"
+    extra_files:
+      - url: "https://huggingface.co/madebyollin/taesd/resolve/main/taesd_encoder.safetensors"
+        path: "vae_approx/taesd_encoder.safetensors"
+
