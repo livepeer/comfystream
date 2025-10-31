@@ -22,6 +22,12 @@ python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui
 ```
 > The optional flag `--pull-branches` can be used to ensure the latest git changes are pulled for any custom nodes defined with a `branch` in nodes.yaml
 
+#### Using a custom nodes configuration
+```bash
+python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui --config nodes-minimal.yaml
+```
+> The `--config` flag accepts a filename (searches in `configs/`), relative path, or absolute path to a custom nodes configuration file
+
 ### Download models and compile tensorrt engines
 ```bash
 python src/comfystream/scripts/setup_models.py --workspace /path/to/comfyui
