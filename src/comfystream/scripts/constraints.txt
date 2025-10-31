@@ -12,3 +12,4 @@ onnxruntime==1.22.0
 onnxruntime-gpu==1.22.0
 onnxmltools==1.14.0
 cuda-python<13.0
+huggingface-hub>=0.20.0

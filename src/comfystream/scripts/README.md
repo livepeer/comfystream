@@ -33,6 +33,12 @@ python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui --con
 python src/comfystream/scripts/setup_models.py --workspace /path/to/comfyui
 ```
 
+#### Using a custom models configuration
+```bash
+python src/comfystream/scripts/setup_models.py --workspace /path/to/comfyui --config models-minimal.yaml
+```
+> The `--config` flag accepts a filename (searches in `configs/`), relative path, or absolute path to a custom models configuration file
+
 ## Configuration Examples
 
 ### Custom Nodes (nodes.yaml)
@@ -60,6 +66,10 @@ models:
     path: "checkpoints/SD1.5/dreamshaper-8.safetensors"
     type: "checkpoint"
 ```
+
+> You can create custom model configurations for different use cases. See `configs/models-minimal.yaml` and `configs/models-pixelart.yaml` for examples.
+
+**Directory Downloads:** The script now supports downloading entire directories from HuggingFace! Add `is_directory: true` to your config. See `configs/models-ipadapter-example.yaml` for examples or read [DIRECTORY_DOWNLOADS.md](../../../DIRECTORY_DOWNLOADS.md) for the full guide.
 
 ## Directory Structure
 
