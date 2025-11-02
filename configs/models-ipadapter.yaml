@@ -6,19 +6,19 @@ models:
     name: "IP Adapter SD15"
     url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.safetensors"
     path: "ipadapter/ip-adapter-plus_sd15.safetensors"
-    type: "ip_adapter"
+    type: "ipadapter"
     extra_files:
       - url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.bin"
-        path: "ip_adapter/ip-adapter-plus_sd15.bin"
+        path: "ipadapter/ip-adapter-plus_sd15.bin"
 
   clip-image-encoder:
     name: "CLIP Image Encoder"
     url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors"
-    path: "image_encoder/model.safetensors"
+    path: "ipadapter/image_encoder/model.safetensors"
     type: "image_encoder"
     extra_files:
       - url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/config.json"
-        path: "image_encoder/config.json"
+        path: "ipadapter/image_encoder/config.json"
 
   # Base model
   sd-turbo:
