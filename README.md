@@ -57,7 +57,47 @@ Refer to [scripts/README.md](src/comfystream/scripts/README.md) for instructions
 
 **Prerequisites**
 
-- [Miniconda](https://docs.anaconda.com/miniconda/index.html#latest-miniconda-installer-links)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (recommended) or [Miniconda](https://docs.anaconda.com/miniconda/index.html#latest-miniconda-installer-links)
+
+### Using uv (Recommended)
+
+[uv](https://docs.astral.sh/uv/) is a fast Python package manager that automatically handles virtual environments and dependencies.
+
+Install `comfystream` from GitHub:
+
+```bash
+uv pip install git+https://github.com/livepeer/comfystream.git
+```
+
+Install from a local repo:
+
+```bash
+# Regular install
+uv pip install .
+
+# Editable install for development
+uv pip install -e .
+```
+
+Build the UI (if needed):
+
+```bash
+uv run build
+```
+
+**Managing Dependencies**
+
+Dependencies are defined in both `pyproject.toml` and `requirements.txt`. To keep them in sync:
+
+```bash
+# Update pyproject.toml from requirements.txt
+python sync_requirements.py --from-requirements
+
+# Update requirements.txt from pyproject.toml
+python sync_requirements.py --from-pyproject
+```
+
+### Using Conda
 
 A separate environment can be used to avoid any dependency issues with an existing ComfyUI installation.
 

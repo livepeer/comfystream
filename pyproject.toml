@@ -1,12 +1,35 @@
 [build-system]
-requires = ["setuptools>=64.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "editables"]
+build-backend = "hatchling.build"
 
 [project]
 name = "comfystream"
 description = "Build Live AI Video with ComfyUI"
 version = "0.1.6"
+readme = "README.md"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
+authors = [
+    {name = "Yondon Fu", email = "yondon@livepeer.org"},
+]
+maintainers = [
+    {name = "Yondon Fu", email = "yondon@livepeer.org"},
+]
+keywords = ["ai", "video", "streaming", "webrtc", "comfyui", "real-time"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# Dependencies from requirements.txt
 dependencies = [
     "asyncio",
     "pytrickle @ git+https://github.com/livepeer/pytrickle.git@v0.1.4",
@@ -17,11 +40,15 @@ dependencies = [
     "toml",
     "twilio",
     "prometheus_client",
-    "librosa"
+    "librosa",
+    "huggingface_hub>=0.20.0",
 ]
 
+[project.scripts]
+build = "build:main"
+
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "ruff>=0.8.0"]
 
 [project.urls]
 Repository = "https://github.com/yondonfu/comfystream"
@@ -31,9 +58,85 @@ PublisherId = "livepeer-comfystream"
 DisplayName = "ComfyStream"
 Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/icon-light-120px.svg" # SVG, PNG, JPG or GIF (MAX. 800x400px)
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-packages = {find = {where = ["src", "nodes"]}}
+[tool.hatch.build]
+include = [
+    "ui/.next/**/*",
+    "ui/out/**/*",
+    "ui/public/**/*",
+    "ui/package.json",
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+    "src/**/*",
+    "nodes/**/*",
+    "server/**/*",
+    "configs/**/*",
+    "workflows/**/*",
+    "settings/**/*",
+    "scripts/**/*",
+    "*.py",
+
+    "./README.md",
+    "./LICENSE",
+    "*.toml",
+
+    "./*.yaml",
+    "./*.yml",
+    "./*.json",
+]
+
+exclude = [
+    "__pycache__/**/*",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    ".pytest_cache/**/*",
+    ".coverage",
+    "htmlcov/**/*",
+    ".tox/**/*",
+    ".venv/**/*",
+    "venv/**/*",
+    "env/**/*",
+    ".env",
+    ".env.*",
+    "*.egg-info/**/*",
+    "dist/**/*",
+    "build/**/*",
+    "ui/node_modules/**/*",
+    ".git/**/*",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/comfystream", "nodes"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+exclude = [
+    ".venv",
+    "__pycache__",
+    "ui/node_modules",
+    ".git",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long, handled by formatter
+    "B008", # function call in argument defaults
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+known-first-party = ["comfystream"]
