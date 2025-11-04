@@ -153,7 +153,14 @@ class LocalComfyStreamServer(ComfyStreamServerBase):
             logging.info(f"Server script: {server_script}")
             
             # Get ComfyUI workspace path (which is where we'll run from)
-            comfyui_workspace = Path(__file__).parent.parent.parent.parent
+            # Prefer explicit env var COMFYUI_PATH, then sibling /ComfyUI next to this repo, then fallback
+            comfyui_workspace_env = os.environ.get("COMFYUI_PATH")
+            if comfyui_workspace_env:
+                comfyui_workspace = Path(comfyui_workspace_env)
+            else:
+                repo_root = Path(__file__).resolve().parents[2]  # /workspace/comfystream
+                sibling_comfyui = repo_root.parent / "ComfyUI"
+                comfyui_workspace = sibling_comfyui if sibling_comfyui.exists() else repo_root.parent
             logging.info(f"ComfyUI workspace: {comfyui_workspace}")
             
             # Use the system Python (which should have ComfyStream installed)

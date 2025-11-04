@@ -1,0 +1,144 @@
+{
+  "1": {
+    "inputs": {
+      "image": "Chinese Woman.jpeg"
+    },
+    "class_type": "PrimaryInputLoadImage",
+    "_meta": {
+      "title": "Primary Input Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "images": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "6": {
+    "inputs": {
+      "image": "style1.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "47": {
+    "inputs": {
+      "config": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "ControlNetTRTModelLoader",
+    "_meta": {
+      "title": "ControlNet + TRT Model Loader"
+    }
+  },
+  "52": {
+    "inputs": {
+      "model_id": "Lykon/dreamshaper-8",
+      "controlnet_model_id": "lllyasviel/control_v11p_sd15_canny",
+      "conditioning_scale": 0,
+      "preprocessor": "canny",
+      "low_threshold": 100,
+      "high_threshold": 200,
+      "height": 512,
+      "width": 512,
+      "t_index_list": "20,35,45",
+      "frame_buffer_size": 1,
+      "warmup": 10,
+      "acceleration": "tensorrt",
+      "use_denoising_batch": true,
+      "seed": 412,
+      "num_inference_steps": 50,
+      "use_lcm_lora": true,
+      "lora_dict_str": "{\"/workspace/ComfyUI/models/loras/SD1.5/PixelArt.safetensors\":1.2}  ",
+      "prompt": "",
+      "negative_prompt": "blurry, low quality, distorted, 3d render",
+      "guidance_scale": 1.1000000000000003,
+      "ipadapter_model_path": "/workspace/ComfyUI/models/ipadapter/ip-adapter-plus_sd15.bin",
+      "image_encoder_path": "/workspace/ComfyUI/models/ipadapter/image_encoder",
+      "ipadapter_scale": 0.7000000000000002,
+      "ipadapter_enabled": true,
+      "use_controlnet": true,
+      "num_image_tokens": 16,
+      "engine_dir": "/workspace/ComfyUI/engines/",
+      "device": "cuda",
+      "dtype": "float16",
+      "use_tiny_vae": true,
+      "cfg_type": "self",
+      "delta": 0.7000000000000002,
+      "style_image": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "ControlNetTRTConfig",
+    "_meta": {
+      "title": "ControlNet + TRT Config"
+    }
+  },
+  "59": {
+    "inputs": {
+      "prompt": "an anime render of a girl with purple hair, masterpiece, pixel art, PixArFK",
+      "negative_prompt": "blurry, low quality, distorted, 3d render",
+      "guidance_scale": 1.1,
+      "num_inference_steps": 50,
+      "delta": 0.7000000000000001,
+      "t_index_list": "20,35,45",
+      "controlnet_model_id": "lllyasviel/control_v11p_sd15_canny",
+      "conditioning_scale": 0.30000000000000004,
+      "controlnet_enabled": true,
+      "preprocessor": "canny",
+      "conditioning_channels": 0,
+      "weight_type": "",
+      "image_path": "",
+      "ipadapter_enabled": true,
+      "ipadapter_scale": 0.7000000000000001,
+      "ipadapter_model_path": "/workspace/ComfyUI/models/ipadapter/ip-adapter-plus_sd15.bin",
+      "image_encoder_path": "/workspace/ComfyUI/models/ipadapter/image_encoder",
+      "num_image_tokens": 16,
+      "style_image_path": "",
+      "ipadapter_weight_type": "",
+      "normalize_prompt_weights": false,
+      "normalize_seed_weights": false,
+      "image_preprocessing_config": "",
+      "image_postprocessing_config": "",
+      "latent_preprocessing_config": "",
+      "latent_postprocessing_config": "",
+      "canny_low_threshold": 0,
+      "canny_high_threshold": 0,
+      "depth_model_name": "",
+      "depth_detect_resolution": 0,
+      "depth_image_resolution": 0,
+      "hed_safe": false,
+      "lineart_coarse": false,
+      "lineart_anime_style": false,
+      "sharpen_intensity": 0,
+      "sharpen_unsharp_radius": 0,
+      "sharpen_edge_enhancement": 0,
+      "sharpen_detail_boost": 0,
+      "sharpen_noise_reduction": 0,
+      "sharpen_multi_scale": false,
+      "model": [
+        "47",
+        0
+      ],
+      "input_image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ControlNetTRTStreamingSampler",
+    "_meta": {
+      "title": "ControlNet + TRT Streaming Sampler"
+    }
+  }
+}

@@ -16,6 +16,9 @@
                 "--disable-cuda-malloc",
                 "--front-end-version", "Comfy-Org/ComfyUI_frontend@v1.24.2"
             ],
+            "env": {
+              "COMFYUI_PATH": "/workspace/ComfyUI"
+            },
             "python": "/workspace/miniconda3/envs/comfystream/bin/python",
             "justMyCode": true
         },
@@ -52,7 +55,7 @@
                 "--comfyui-inference-log-level=DEBUG",
                 "--width=512",
                 "--height=512"
-            ],            
+            ],
             "env": {
                 "ORCH_URL": "https://172.17.0.1:9995",
                 "ORCH_SECRET": "orch-secret",
