@@ -162,7 +162,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 gpu_only=params.get('gpu_only', True),
                 preview_method=params.get('preview_method', 'none'),
                 comfyui_inference_log_level=params.get('comfyui_inference_log_level'),
-                blacklist_nodes=["ComfyUI-Manager"]
+                blacklist_custom_nodes=["ComfyUI-Manager"]
             )
 
     async def warmup(self):
