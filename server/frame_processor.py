@@ -43,6 +43,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._loading_message: str = "Loading..."
         self._loading_progress: Optional[float] = None
         self._frame_counter: int = 0
+        self._warmup_passthrough_enabled: bool = False
         super().__init__()
 
     def set_stream_processor(self, stream_processor):
@@ -264,8 +265,9 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         if not has_prompts:
             default_workflow = get_default_workflow()
-            # Apply default prompt first (starts prompt task), then perform warmup synchronously
-            await self.update_params({"prompts": default_workflow})
+            # Apply default prompt without scheduling background warmup,
+            # then perform warmup synchronously so server state remains LOADING
+            await self._process_prompts(default_workflow, skip_warmup=True)
             if not self._loading_active:
                 await self.warmup()
         else:
@@ -328,6 +330,21 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             self._loading_active = False
             self._warmup_done.set()
 
+    def _set_warmup_passthrough(self, enabled: bool) -> None:
+        """Enable/disable passthrough during warmup (video only).
+
+        When enabled, raw frames are passed through during warmup.
+        When disabled, a loading overlay is rendered for video during warmup.
+        """
+        try:
+            self._warmup_passthrough_enabled = bool(enabled)
+            logger.info(
+                "Warmup passthrough %s",
+                "enabled" if self._warmup_passthrough_enabled else "disabled",
+            )
+        except Exception:
+            logger.debug("Failed to set warmup passthrough flag", exc_info=True)
+
     def _schedule_warmup(self) -> None:
         """Schedule warmup in background if not already running."""
         try:
@@ -350,6 +367,8 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 return frame
 
             if self._loading_active and not self._warmup_done.is_set():
+                if self._warmup_passthrough_enabled:
+                    return frame
                 return self._build_loading_overlay_frame(frame)
 
             await self._ensure_runner_active()
@@ -417,7 +436,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             self._schedule_warmup()
 
 
-    async def _process_prompts(self, prompts):
+    async def _process_prompts(self, prompts, *, skip_warmup: bool = False):
         """Process and set prompts in the pipeline."""
         try:
             converted = convert_prompt(prompts, return_dict=True)
@@ -426,11 +445,12 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             await self.pipeline.set_prompts([converted])
             logger.info(f"Prompts set successfully: {list(prompts.keys())}")
 
-            # Trigger loading overlay and warmup sequence for new prompts
-            try:
-                await self._start_warmup_sequence()
-            except Exception:
-                logger.debug("Failed to start warmup sequence after prompt update", exc_info=True)
+            # Trigger loading overlay and warmup sequence for new prompts unless suppressed
+            if not skip_warmup:
+                try:
+                    await self._start_warmup_sequence()
+                except Exception:
+                    logger.debug("Failed to start warmup sequence after prompt update", exc_info=True)
 
             # Update text monitoring based on workflow capabilities
             if self.pipeline.produces_text_output():
