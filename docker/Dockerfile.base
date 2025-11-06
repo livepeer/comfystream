@@ -46,6 +46,16 @@ RUN mkdir -p /workspace/comfystream && \
 RUN conda run -n comfystream --no-capture-output pip install --upgrade pip && \
 conda run -n comfystream --no-capture-output pip install wheel
 
+# Remove system cuDNN to avoid version conflicts with PyTorch-bundled cuDNN
+# The base image includes cuDNN 9.8, but PyTorch 2.7+ bundles cuDNN 9.7.1
+# Mixed versions cause CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH errors
+RUN apt-get remove --purge -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12 || true && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install cuDNN 9.7.1 via conda to match PyTorch's bundled version
+RUN conda install -n comfystream -y -c nvidia -c conda-forge cudnn=9.7.1 cuda-version=12.8
+
 # Copy only files needed for setup
 COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
 COPY ./configs /workspace/comfystream/configs
