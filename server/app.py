@@ -556,12 +556,12 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
+        cwd=app["workspace"],
+        disable_cuda_malloc=True,
+        gpu_only=True,
         preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
-		blacklist_nodes=["ComfyUI-Manager"]
+        comfyui_inference_log_level=app.get("comfyui_inference_log_level", None),
+        blacklist_custom_nodes=["ComfyUI-Manager"],
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
@@ -671,6 +671,6 @@ if __name__ == "__main__":
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
     if args.comfyui_inference_log_level:
-        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+        app["comfyui_inference_log_level"] = args.comfyui_inference_log_level
 
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)
