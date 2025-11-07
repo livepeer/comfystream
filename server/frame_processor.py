@@ -29,7 +29,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """
         # Import here to avoid circular dependency
         from pytrickle.warmup_config import WarmupConfig, WarmupMode
-        
+
         # Initialize base class with warmup config
         warmup_config = WarmupConfig(
             mode=WarmupMode.OVERLAY,
@@ -38,7 +38,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             enabled=True
         )
         super().__init__(warmup_config=warmup_config)
-        
+
         # ComfyStream-specific attributes
         self.pipeline = None
         self._load_params = load_params
@@ -48,7 +48,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._background_tasks = []
         self._stop_event = asyncio.Event()
         self._runner_active = False
-        
+
         # Custom comfystream warmup passthrough toggle
         self._warmup_passthrough_enabled: bool = False
 
@@ -183,7 +183,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def _ensure_runner_active(self) -> None:
         """
         Ensure the prompt runner is active when real frames arrive.
-        
+
         This is called on the first real input frame after warmup completes.
         The pipeline was paused after warmup, so we resume it here.
         """
@@ -197,13 +197,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     def _build_loading_overlay_frame(self, frame: VideoFrame) -> VideoFrame:
         """
         Render a loading overlay frame while warmup is in progress.
-        
+
         Uses pytrickle's build_loading_overlay_frame to create an animated overlay
         that preserves timing information from the original frame.
         """
         try:
             self._frame_counter += 1
-            
+
             # Use pytrickle's helper with base class config
             overlay_frame = build_loading_overlay_frame(
                 original_frame=frame,
@@ -211,7 +211,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 frame_counter=self._frame_counter,
                 progress=self.warmup_config.progress if self.warmup_config else None
             )
-            
+
             # Preserve application-specific side_data
             overlay_frame.side_data = frame.side_data
             return overlay_frame
@@ -221,60 +221,42 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
     async def load_model(self, **kwargs):
         """
-        Load model, initialize pipeline, set default workflow, and run warmup.
+        Load model, initialize pipeline, and set default workflow.
         
-        For initial startup, warmup runs synchronously so pytrickle's state management
-        works correctly (state stays LOADING until this completes).
+        Warmup is automatically called by pytrickle's base class after load_model completes
+        (synchronously for initial startup to ensure pytrickle's state management works correctly).
         
         For runtime updates (from parameter updates), warmup runs asynchronously
         via _start_warmup_sequence() so the loading overlay can animate.
         """
         params = {**self._load_params, **kwargs}
 
-        if self.pipeline is None:
-            self.pipeline = Pipeline(
-                width=int(params.get('width', 512)),
-                height=int(params.get('height', 512)),
-                cwd=params.get('workspace', os.getcwd()),
-                disable_cuda_malloc=params.get('disable_cuda_malloc', True),
-                gpu_only=params.get('gpu_only', True),
-                preview_method=params.get('preview_method', 'none'),
-                comfyui_inference_log_level=params.get('comfyui_inference_log_level', "INFO"),
-                logging_level=params.get('comfyui_inference_log_level', "INFO"),
-                blacklist_custom_nodes=["ComfyUI-Manager"],
-            )
+        # Initialize pipeline if needed
+        await self._initialize_pipeline(params)
 
         # Only set the default workflow if no prompts are currently configured
-        has_prompts = False
-        try:
-            has_prompts = bool(getattr(self.pipeline.client, "current_prompts", []))
-        except Exception:
-            has_prompts = False
+        has_prompts = bool(getattr(self.pipeline.client, "current_prompts", None))
 
         if not has_prompts:
             default_workflow = get_default_workflow()
-            # Apply default prompt
-            await self._process_prompts(default_workflow, skip_warmup=True)
+            # Process prompts - if warmup is triggered here, base class will wait for it
+            await self._process_prompts(default_workflow, skip_warmup=False)
         
-        # Run warmup synchronously for initial load
-        # This ensures pytrickle's state management works correctly
-        # (state stays LOADING until load_model completes)
-        if not self._is_warmup_active():
-            logger.info("load_model: running warmup synchronously for initial startup")
-            await self.warmup()
-            logger.info("load_model: warmup completed")
-        else:
-            logger.info("load_model: warmup already active, not re-running")
+        # Warmup will be automatically called by pytrickle's base class after load_model completes
+        logger.debug("load_model completed - warmup will be handled by base class")
 
     async def warmup(self):
         """
-        Warm up the pipeline.
-        
-        CRITICAL: This method manages the pipeline pause/resume lifecycle:
+        Warm up the pipeline by sending frames through it.
+
+        This method manages the pipeline pause/resume lifecycle:
         1. Resume the pipeline to process warm frames
         2. Warm up video/audio as needed
         3. Pause the pipeline after warmup to save resources
-        4. Will be resumed again on first real input frame
+        4. Pipeline will be resumed again on first real input frame
+        
+        The base class handles warmup state coordination and ensures the state
+        stays LOADING until this method completes.
         """
         if not self.pipeline:
             logger.warning("Warmup requested before pipeline initialization")
@@ -282,7 +264,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         logger.info("Running pipeline warmup...")
         try:
-            # CRITICAL: Resume pipeline for warmup processing
+            # Resume pipeline for warmup processing
             await self.pipeline.client.ensure_prompt_tasks_running()
             self.pipeline.client.resume()
 
@@ -298,26 +280,23 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
         finally:
-            # CRITICAL: Pause pipeline after warmup to save resources
+            # Pause pipeline after warmup to save resources
             # Will be resumed again on first real input frame
             try:
                 self.pipeline.client.pause()
             except Exception:
-                logger.debug("Failed to stop prompt loop after warmup", exc_info=True)
+                logger.debug("Failed to pause prompt loop after warmup", exc_info=True)
             self._runner_active = False
-            logger.info(f"Warmup finished - loading_active={self._loading_active}, warmup_done={self._warmup_done.is_set()}")
-            if not self._loading_active:
-                self._set_warmup_passthrough(False)
+            logger.info("Pipeline warmup finished")
 
     async def on_stream_start(self):
-        """Called when a new stream starts - enable loading overlay and queue warmup."""
-        logger.info("Stream started, enabling loading overlay and scheduling warmup")
+        """Called when a new stream starts - prepare for streaming."""
+        logger.info("Stream started, setting up monitoring and scheduling warmup")
         try:
             self._reset_stop_event()
 
-            # Initialize pipeline without warmup (fast, non-blocking)
-            if self.pipeline is None:
-                await self._init_pipeline_without_warmup()
+            # Ensure pipeline is initialized (fast, no warmup)
+            await self._initialize_pipeline()
 
             # Start text forwarder best-effort
             self._setup_text_monitoring()
@@ -325,46 +304,44 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             # Only start warmup if not already active
             # (load_model may have already triggered it via parameter update)
             if not self._is_warmup_active():
-                logger.info(f"Starting warmup from on_stream_start (warmup_active={self._loading_active}, warmup_done={self._warmup_done.is_set()})")
+                logger.info("Starting warmup from on_stream_start")
                 self._start_warmup_sequence(self.warmup())
             else:
-                logger.info(f"Warmup already active, not restarting (warmup_active={self._loading_active}, warmup_done={self._warmup_done.is_set()})")
+                logger.info("Warmup already active, not restarting")
         except Exception as e:
             logger.error(f"on_stream_start failed: {e}")
-    
-    async def _init_pipeline_without_warmup(self):
-        """Initialize pipeline and set default workflow without running warmup."""
-        params = self._load_params
 
-        if self.pipeline is None:
-            self.pipeline = Pipeline(
-                width=int(params.get('width', 512)),
-                height=int(params.get('height', 512)),
-                cwd=params.get('workspace', os.getcwd()),
-                disable_cuda_malloc=params.get('disable_cuda_malloc', True),
-                gpu_only=params.get('gpu_only', True),
-                preview_method=params.get('preview_method', 'none'),
-                comfyui_inference_log_level=params.get('comfyui_inference_log_level', "INFO"),
-                logging_level=params.get('comfyui_inference_log_level', "INFO"),
-                blacklist_custom_nodes=["ComfyUI-Manager"],
-            )
-
-        # Only set the default workflow if no prompts are currently configured
-        has_prompts = False
-        try:
-            has_prompts = bool(getattr(self.pipeline.client, "current_prompts", []))
-        except Exception:
-            has_prompts = False
-
-        if not has_prompts:
-            default_workflow = get_default_workflow()
-            # Apply default prompt without warmup
-            await self._process_prompts(default_workflow, skip_warmup=True)
+    async def _initialize_pipeline(self, params: dict = None):
+        """
+        Ensure pipeline is initialized with the given parameters.
+        
+        Args:
+            params: Optional parameters for pipeline creation. If None, uses self._load_params.
+        """
+        if self.pipeline is not None:
+            logger.debug("Pipeline already exists")
+            return
+        
+        if params is None:
+            params = self._load_params
+        
+        logger.info("Initializing pipeline")
+        self.pipeline = Pipeline(
+            width=int(params.get('width', 512)),
+            height=int(params.get('height', 512)),
+            cwd=params.get('workspace', os.getcwd()),
+            disable_cuda_malloc=params.get('disable_cuda_malloc', True),
+            gpu_only=params.get('gpu_only', True),
+            preview_method=params.get('preview_method', 'none'),
+            comfyui_inference_log_level=params.get('comfyui_inference_log_level', "INFO"),
+            logging_level=params.get('comfyui_inference_log_level', "INFO"),
+            blacklist_custom_nodes=["ComfyUI-Manager"],
+        )
 
     def _set_warmup_passthrough(self, enabled: bool) -> None:
         """
         Enable/disable passthrough during warmup (video only).
-        
+
         Updates the warmup config mode between OVERLAY and PASSTHROUGH.
         """
         try:
@@ -386,7 +363,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
             # Use base class helper to check warmup state
             if self._is_warmup_active():
-                # Check if we should show overlay or passthrough  
+                # Check if we should show overlay or passthrough
                 if self._should_show_loading_overlay():
                     if self._frame_counter % 30 == 1:  # Log every ~1 second at 30fps
                         logger.debug(f"Warmup active: showing loading overlay (frame {self._frame_counter})")
@@ -395,7 +372,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     if self._frame_counter % 30 == 1:
                         logger.debug(f"Warmup active: passthrough mode (frame {self._frame_counter})")
                     return frame
-            
+
             # Log transition from warmup to normal processing
             if self._warmup_done.is_set() and not self._runner_active:
                 logger.info("First frame after warmup complete - resuming runner for normal processing")
