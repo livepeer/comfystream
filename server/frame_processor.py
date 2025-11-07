@@ -140,15 +140,19 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         # Stop text forwarder
         await self._stop_text_forwarder()
 
-        # Cancel warmup if running - base class handles state
+        # Cancel warmup if running and properly await it
         try:
             if self._warmup_task and not self._warmup_task.done():
                 self._warmup_task.cancel()
-                await self._warmup_task
-        except asyncio.CancelledError:
-            pass
+                try:
+                    await self._warmup_task
+                    logger.debug("Warmup task cancelled successfully")
+                except asyncio.CancelledError:
+                    logger.debug("Warmup task cancelled")
+                except Exception:
+                    logger.debug("Warmup task cancellation error", exc_info=True)
         except Exception:
-            logger.debug("Warmup task cancellation error", exc_info=True)
+            logger.debug("Error during warmup task cancellation", exc_info=True)
 
         # Cancel any other background tasks started by this processor
         for task in list(self._background_tasks):
@@ -217,10 +221,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
     async def load_model(self, **kwargs):
         """
-        Load model, initialize pipeline, set default workflow, and schedule warmup.
+        Load model, initialize pipeline, set default workflow, and run warmup.
         
-        This method returns quickly to allow frames to flow. Warmup runs in background
-        so the loading overlay can animate while warmup is in progress.
+        For initial startup, warmup runs synchronously so pytrickle's state management
+        works correctly (state stays LOADING until this completes).
+        
+        For runtime updates (from parameter updates), warmup runs asynchronously
+        via _start_warmup_sequence() so the loading overlay can animate.
         """
         params = {**self._load_params, **kwargs}
 
@@ -246,13 +253,18 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         if not has_prompts:
             default_workflow = get_default_workflow()
-            # Apply default prompt without warmup
+            # Apply default prompt
             await self._process_prompts(default_workflow, skip_warmup=True)
         
-        # Don't automatically warmup from load_model
-        # Warmup will be triggered by on_stream_start when stream actually connects
-        # This ensures frames are flowing when warmup overlay needs to animate
-        logger.info("load_model completed - warmup will be triggered by on_stream_start")
+        # Run warmup synchronously for initial load
+        # This ensures pytrickle's state management works correctly
+        # (state stays LOADING until load_model completes)
+        if not self._is_warmup_active():
+            logger.info("load_model: running warmup synchronously for initial startup")
+            await self.warmup()
+            logger.info("load_model: warmup completed")
+        else:
+            logger.info("load_model: warmup already active, not re-running")
 
     async def warmup(self):
         """
@@ -439,8 +451,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
         logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
 
-        # Process prompts if provided
+        # Clear pipeline queues when prompts change to avoid processing stale frames with new params
         if "prompts" in validated and validated["prompts"]:
+            logger.info("Prompts changing - clearing pipeline queues to avoid stale frames")
+            await self.pipeline._clear_pipeline_queues()
             await self._process_prompts(validated["prompts"])
 
         # Update pipeline dimensions
