@@ -22,6 +22,8 @@ class ComfyStreamClient:
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
+        self._pause_event = asyncio.Event()  # Separate event for pause/resume
+        self._pause_event.set()  # Start in "not paused" state (event is set)
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         """Set new prompts, replacing any existing ones.
@@ -40,6 +42,8 @@ class ComfyStreamClient:
         await self.cancel_running_prompts()
         # Reset stop event for new prompts
         self._stop_event.clear()
+        # Ensure prompts start unpaused
+        self._pause_event.set()
         self.current_prompts = [convert_prompt(prompt) for prompt in prompts]
         logger.info(f"Queuing {len(self.current_prompts)} prompt(s) for execution")
         for idx in range(len(self.current_prompts)):
@@ -64,6 +68,13 @@ class ComfyStreamClient:
 
     async def run_prompt(self, prompt_index: int):
         while not self._stop_event.is_set():
+            # Wait for unpause before continuing
+            await self._pause_event.wait()
+            
+            # Check stop event again after waking from pause
+            if self._stop_event.is_set():
+                break
+                
             async with self._prompt_update_lock:
                 try:
                     await self.comfy_client.queue_prompt(self.current_prompts[prompt_index])
@@ -92,6 +103,53 @@ class ComfyStreamClient:
 
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
+
+    async def pause_prompts(self):
+        """Pause prompt execution loops without canceling tasks.
+        
+        Clears the pause event, causing prompt loops to wait. Prompts remain
+        in memory and tasks keep running, they just wait before queueing new prompts.
+        Can be resumed with resume_prompts().
+        """
+        self._pause_event.clear()
+        logger.info("Prompts paused")
+
+    async def resume_prompts(self):
+        """Resume paused prompt execution loops.
+        
+        Sets the pause event, allowing prompt loops to continue running.
+        If prompts are not currently running, this will have no effect until
+        prompts are set via set_prompts().
+        """
+        self._pause_event.set()
+        logger.info("Prompts resumed")
+
+    async def stop_prompts(self, cleanup: bool = False):
+        """Stop running prompts by canceling their tasks.
+        
+        Args:
+            cleanup: If True, perform full cleanup including queue clearing
+                     and client shutdown. If False, only cancel prompt tasks.
+        """
+        # Set stop event to signal prompt loops to exit
+        self._stop_event.set()
+        
+        # Cancel running prompt tasks
+        await self.cancel_running_prompts()
+        
+        if cleanup:
+            # Perform full cleanup
+            async with self._cleanup_lock:
+                if self.comfy_client.is_running:
+                    try:
+                        await self.comfy_client.__aexit__()
+                    except Exception as e:
+                        logger.error(f"Error during ComfyClient cleanup: {e}")
+
+                await self.cleanup_queues()
+                logger.info("Prompts stopped with full cleanup")
+        else:
+            logger.debug("Prompts stopped (tasks cancelled)")
 
     async def cancel_running_prompts(self):
         async with self._cleanup_lock:

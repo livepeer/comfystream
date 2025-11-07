@@ -98,7 +98,7 @@ class VideoStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            await self.pipeline.stop_prompts(cleanup=True)
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
@@ -256,8 +256,9 @@ async def offer(request):
         logger.info("[Offer] No prompts provided - entering noop passthrough mode")
     else:
         await pipeline.set_prompts(prompts)
-        logger.info("[Offer] Set workflow prompts")
-
+        await pipeline.resume_prompts()
+        logger.info("[Offer] Set workflow prompts and resumed execution")
+    
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
     if resolution:
@@ -355,11 +356,54 @@ async def offer(request):
                             logger.info("[Control] Noop mode - no warmup needed")
                         else:
                             # Note: Video warmup now happens during offer, not here
-                            logger.info(
-                                "[Control] Resolution updated - warmup was already performed during offer"
-                            )
-
-                        response = {"type": "resolution_updated", "success": True}
+                            logger.info("[Control] Resolution updated - warmup was already performed during offer")
+                            
+                        response = {
+                            "type": "resolution_updated",
+                            "success": True
+                        }
+                        channel.send(json.dumps(response))
+                    elif params.get("type") == "pause_prompts":
+                        if is_noop_mode:
+                            logger.info("[Control] Noop mode - no prompts to pause")
+                        else:
+                            try:
+                                await pipeline.pause_prompts()
+                                logger.info("[Control] Paused prompt execution")
+                            except Exception as e:
+                                logger.error(f"[Control] Error pausing prompts: {str(e)}")
+                        response = {
+                            "type": "prompts_paused",
+                            "success": True
+                        }
+                        channel.send(json.dumps(response))
+                    elif params.get("type") == "resume_prompts":
+                        if is_noop_mode:
+                            logger.info("[Control] Noop mode - no prompts to resume")
+                        else:
+                            try:
+                                await pipeline.resume_prompts()
+                                logger.info("[Control] Resumed prompt execution")
+                            except Exception as e:
+                                logger.error(f"[Control] Error resuming prompts: {str(e)}")
+                        response = {
+                            "type": "prompts_resumed",
+                            "success": True
+                        }
+                        channel.send(json.dumps(response))
+                    elif params.get("type") == "stop_prompts":
+                        if is_noop_mode:
+                            logger.info("[Control] Noop mode - no prompts to stop")
+                        else:
+                            try:
+                                await pipeline.stop_prompts(cleanup=False)
+                                logger.info("[Control] Stopped prompt execution")
+                            except Exception as e:
+                                logger.error(f"[Control] Error stopping prompts: {str(e)}")
+                        response = {
+                            "type": "prompts_stopped",
+                            "success": True
+                        }
                         channel.send(json.dumps(response))
                     else:
                         logger.warning("[Server] Invalid message format - missing required fields")

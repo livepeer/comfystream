@@ -136,6 +136,37 @@ class Pipeline:
         self._cached_modalities = None
         self._cached_io_capabilities = None
 
+    async def pause_prompts(self):
+        """Pause prompt execution loops without canceling tasks.
+        
+        Prompts remain in memory and can be resumed with resume_prompts().
+        """
+        await self.client.pause_prompts()
+
+    async def resume_prompts(self):
+        """Resume paused prompt execution loops.
+        
+        If prompts are not currently running, this will have no effect until
+        prompts are set via set_prompts().
+        """
+        await self.client.resume_prompts()
+
+    async def stop_prompts(self, cleanup: bool = False):
+        """Stop running prompts by canceling their tasks.
+        
+        Args:
+            cleanup: If True, perform full cleanup including queue clearing
+                     and client shutdown. If False, only cancel prompt tasks.
+        """
+        await self.client.stop_prompts(cleanup=cleanup)
+        
+        # Clear cached modalities and I/O capabilities when prompts are stopped
+        if cleanup:
+            self._cached_modalities = None
+            self._cached_io_capabilities = None
+            # Clear pipeline queues for full cleanup
+            await self._clear_pipeline_queues()
+
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
 
