@@ -187,8 +187,30 @@ def main():
             logger.error(f"Warmup failed: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    # Add pause endpoint
+    async def pause_handler(request):
+        try:
+            # Fire-and-forget: do not await pause
+            asyncio.get_running_loop().create_task(frame_processor.pause_prompts())
+            return web.json_response({"status": "paused"})
+        except Exception as e:
+            logger.error(f"Pause failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Add resume endpoint
+    async def resume_handler(request):
+        try:
+            # Fire-and-forget: do not await resume
+            asyncio.get_running_loop().create_task(frame_processor.resume_prompts())
+            return web.json_response({"status": "resumed"})
+        except Exception as e:
+            logger.error(f"Resume failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
     # Mount at same API namespace as StreamProcessor defaults
     processor.server.add_route("POST", "/api/stream/warmup", warmup_handler)
+    processor.server.add_route("POST", "/api/stream/pause", pause_handler)
+    processor.server.add_route("POST", "/api/stream/resume", resume_handler)
     
     # Run the processor
     processor.run()

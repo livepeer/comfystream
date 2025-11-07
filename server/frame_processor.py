@@ -114,10 +114,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._stop_event.set()
 
         # Stop the ComfyStream client's prompt execution
-        if self.pipeline and self.pipeline.client:
+        if self.pipeline:
             logger.info("Stopping ComfyStream client prompt execution")
             try:
-                await self.pipeline.client.cleanup()
+                await self.pipeline.stop_prompts(cleanup=True)
             except Exception as e:
                 logger.error(f"Error stopping ComfyStream client: {e}")
 
@@ -271,6 +271,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                  
             # Set prompts in pipeline
             await self.pipeline.set_prompts([converted])
+            await self.pipeline.resume_prompts()
             logger.info(f"Prompts set successfully: {list(prompts.keys())}")
             
             # Update text monitoring based on workflow capabilities
