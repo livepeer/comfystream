@@ -94,7 +94,7 @@ def main():
         disable_cuda_malloc=True,
         gpu_only=True,
         preview_method='none',
-        blacklist_nodes=["ComfyUI-Manager"],
+        blacklist_custom_nodes=["ComfyUI-Manager"],
         logging_level=args.comfyui_log_level,
         comfyui_inference_log_level=args.comfyui_inference_log_level
     )
