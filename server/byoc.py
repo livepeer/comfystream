@@ -134,9 +134,8 @@ def main():
     async def register_orchestrator_startup(app):
         try:
             orch_url = os.getenv("ORCH_URL")
-            orch_secret = os.getenv("ORCH_SECRET")
 
-            if orch_url and orch_secret:
+            if orch_url and os.getenv("ORCH_SECRET", None):
                 # CAPABILITY_URL always overrides host:port from args
                 capability_url = os.getenv("CAPABILITY_URL") or f"http://{args.host}:{args.port}"
 
@@ -146,7 +145,7 @@ def main():
                     "CAPABILITY_URL": capability_url,
                     "CAPABILITY_CAPACITY": "1",
                     "ORCH_URL": orch_url,
-                    "ORCH_SECRET": orch_secret
+                    "ORCH_SECRET": os.getenv("ORCH_SECRET", None)
                 })
 
                 result = await RegisterCapability.register(
@@ -155,8 +154,12 @@ def main():
                 )
                 if result:
                     logger.info(f"Registered capability: {result.geturl()}")
+                # Clear ORCH_SECRET from environment after use for security
+                os.environ.pop("ORCH_SECRET", None)
         except Exception as e:
             logger.error(f"Orchestrator registration failed: {e}")
+            # Clear ORCH_SECRET from environment even on error
+            os.environ.pop("ORCH_SECRET", None)
 
     # Add registration to startup hooks
     processor.server.app.on_startup.append(register_orchestrator_startup)

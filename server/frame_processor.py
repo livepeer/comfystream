@@ -222,10 +222,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def load_model(self, **kwargs):
         """
         Load model, initialize pipeline, and set default workflow.
-        
+
         Warmup is automatically called by pytrickle's base class after load_model completes
         (synchronously for initial startup to ensure pytrickle's state management works correctly).
-        
+
         For runtime updates (from parameter updates), warmup runs asynchronously
         via _start_warmup_sequence() so the loading overlay can animate.
         """
@@ -241,7 +241,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             default_workflow = get_default_workflow()
             # Process prompts - if warmup is triggered here, base class will wait for it
             await self._process_prompts(default_workflow, skip_warmup=False)
-        
+
         # Warmup will be automatically called by pytrickle's base class after load_model completes
         logger.debug("load_model completed - warmup will be handled by base class")
 
@@ -254,7 +254,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         2. Warm up video/audio as needed
         3. Pause the pipeline after warmup to save resources
         4. Pipeline will be resumed again on first real input frame
-        
+
         The base class handles warmup state coordination and ensures the state
         stays LOADING until this method completes.
         """
@@ -314,17 +314,17 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def _initialize_pipeline(self, params: dict = None):
         """
         Ensure pipeline is initialized with the given parameters.
-        
+
         Args:
             params: Optional parameters for pipeline creation. If None, uses self._load_params.
         """
         if self.pipeline is not None:
             logger.debug("Pipeline already exists")
             return
-        
+
         if params is None:
             params = self._load_params
-        
+
         logger.info("Initializing pipeline")
         self.pipeline = Pipeline(
             width=int(params.get('width', 512)),
