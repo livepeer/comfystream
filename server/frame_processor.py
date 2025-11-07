@@ -406,15 +406,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             converted = convert_prompt(prompts, return_dict=True)
 
-            await self.pipeline.apply_prompts(
-                [converted],
-                skip_warmup=skip_warmup,
-            )
-
-            if self.pipeline.state_manager.can_stream():
-                await self.pipeline.start_streaming()
-
-            logger.info(f"Prompts applied successfully: {list(prompts.keys())}")
+            # Set prompts in pipeline
+            await self.pipeline.set_prompts([converted])
+            await self.pipeline.resume_prompts()
+            logger.info(f"Prompts set successfully: {list(prompts.keys())}")
 
             if self.pipeline.produces_text_output():
                 self._setup_text_monitoring()
