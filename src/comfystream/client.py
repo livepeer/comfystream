@@ -4,7 +4,7 @@ from typing import List
 import contextlib
 
 from comfystream import tensor_cache
-from comfystream.utils import convert_prompt
+from comfystream.utils import convert_prompt, get_default_workflow
 from comfystream.exceptions import ComfyStreamInputTimeoutError
 
 from comfy.api.components.schema.prompt import PromptDictInput
@@ -98,8 +98,11 @@ class ComfyStreamClient:
                         continue
                     except Exception as e:
                         logger.error(f"Error running prompt: {str(e)}")
-                        await asyncio.sleep(0.05)
-                        continue
+                        logger.info("Stopping prompt execution and returning to passthrough mode")
+                        
+                        # Stop running and switch to default passthrough workflow
+                        await self._fallback_to_passthrough()
+                        break
         except asyncio.CancelledError:
             pass
 
@@ -162,6 +165,27 @@ class ComfyStreamClient:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._runner_task
             self._runner_task = None
+
+    async def _fallback_to_passthrough(self):
+        """Switch to default passthrough workflow when an error occurs."""
+        try:
+            # Pause the runner
+            self._run_enabled_event.clear()
+            
+            # Set to default passthrough workflow
+            default_workflow = get_default_workflow()
+            async with self._prompt_update_lock:
+                self.current_prompts = [convert_prompt(default_workflow)]
+            
+            logger.info("Switched to default passthrough workflow")
+            
+            # Resume the runner with passthrough workflow
+            self._run_enabled_event.set()
+            
+        except Exception as e:
+            logger.error(f"Failed to fallback to passthrough: {str(e)}")
+            # If fallback fails, just pause execution
+            self._run_enabled_event.clear()
 
     def put_video_input(self, frame):
         if tensor_cache.image_inputs.full():
