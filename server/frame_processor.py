@@ -221,13 +221,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
     async def load_model(self, **kwargs):
         """
-        Load model, initialize pipeline, and set default workflow.
+        Load model and initialize pipeline with default workflow only.
 
-        Warmup is automatically called by pytrickle's base class after load_model completes
-        (synchronously for initial startup to ensure pytrickle's state management works correctly).
-
-        For runtime updates (from parameter updates), warmup runs asynchronously
-        via _start_warmup_sequence() so the loading overlay can animate.
+        This method ONLY initializes the pipeline - no warmup is performed here.
+        Warmup is handled separately by pytrickle's base class after load_model completes.
         """
         params = {**self._load_params, **kwargs}
 
@@ -239,21 +236,25 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         if not has_prompts:
             default_workflow = get_default_workflow()
-            # Process prompts - if warmup is triggered here, base class will wait for it
-            await self._process_prompts(default_workflow, skip_warmup=False)
+            # Process prompts but skip warmup - warmup will be called separately by pytrickle
+            await self._process_prompts(default_workflow, skip_warmup=True)
 
-        # Warmup will be automatically called by pytrickle's base class after load_model completes
-        logger.debug("load_model completed - warmup will be handled by base class")
+        logger.debug("load_model completed - pipeline initialized with default workflow")
 
-    async def warmup(self):
+    async def warmup(self, **kwargs):
         """
         Warm up the pipeline by sending frames through it.
 
         This method manages the pipeline pause/resume lifecycle:
-        1. Resume the pipeline to process warm frames
-        2. Warm up video/audio as needed
-        3. Pause the pipeline after warmup to save resources
-        4. Pipeline will be resumed again on first real input frame
+        1. Process prompts if provided in kwargs
+        2. Resume the pipeline to process warm frames
+        3. Warm up video/audio as needed
+        4. Pause the pipeline after warmup to save resources
+        5. Pipeline will be resumed again on first real input frame
+
+        Args:
+            **kwargs: Optional parameters, including:
+                - prompts: Workflow prompts to process before warmup
 
         The base class handles warmup state coordination and ensures the state
         stays LOADING until this method completes.
@@ -261,6 +262,11 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if not self.pipeline:
             logger.warning("Warmup requested before pipeline initialization")
             return
+
+        # Process prompts if provided (e.g., from parameter update)
+        if "prompts" in kwargs:
+            logger.info("Processing prompts during warmup")
+            await self._process_prompts(kwargs["prompts"], skip_warmup=True)
 
         logger.info("Running pipeline warmup...")
         try:
@@ -428,22 +434,30 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
         logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
 
-        # Clear pipeline queues when prompts change to avoid processing stale frames with new params
-        if "prompts" in validated and validated["prompts"]:
-            logger.info("Prompts changing - clearing pipeline queues to avoid stale frames")
-            await self.pipeline._clear_pipeline_queues()
-            await self._process_prompts(validated["prompts"])
-
         # Update pipeline dimensions
         if "width" in validated:
             self.pipeline.width = int(validated["width"])
         if "height" in validated:
             self.pipeline.height = int(validated["height"])
 
-        # Schedule warmup if requested
-        if validated.get("warmup", False):
+        # Handle warmup - if prompts are provided, pass them to warmup
+        # If warmup is explicitly requested OR prompts are changing, trigger warmup
+        should_warmup = validated.get("warmup", False) or ("prompts" in validated and validated["prompts"])
+        
+        if should_warmup:
             if not self._is_warmup_active():
-                self._start_warmup_sequence(self.warmup())
+                # Clear pipeline queues before warmup to avoid processing stale frames
+                logger.info("Clearing pipeline queues before warmup")
+                await self.pipeline._clear_pipeline_queues()
+                
+                # Pass prompts to warmup if they exist
+                warmup_kwargs = {}
+                if "prompts" in validated and validated["prompts"]:
+                    warmup_kwargs["prompts"] = validated["prompts"]
+                
+                self._start_warmup_sequence(self.warmup(**warmup_kwargs))
+            else:
+                logger.info("Warmup already active, ignoring warmup request")
 
 
     async def _process_prompts(self, prompts, *, skip_warmup: bool = False):
