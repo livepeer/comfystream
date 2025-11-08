@@ -101,7 +101,7 @@ jobs:
           rm -rf test-extract
 
       - name: Upload OpenCV CUDA Release Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: opencv-cuda-release-python${{ env.PYTHON_VERSION }}-cuda${{ env.CUDA_VERSION }}-${{ github.sha }}
           path: |
@@ -141,7 +141,7 @@ jobs:
           EOF
 
       - name: Upload Release Info
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-info-python${{ env.PYTHON_VERSION }}-cuda${{ env.CUDA_VERSION }}-${{ github.sha }}
           path: release-info.txt
