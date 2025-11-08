@@ -115,7 +115,7 @@ def main():
         param_updater=frame_processor.update_params,
         on_stream_start=frame_processor.on_stream_start,
         on_stream_stop=frame_processor.on_stream_stop,
-        warmup_callback=frame_processor.warmup,
+        warmup_handler=frame_processor.warmup,
         # Align processor name with capability for consistent logs
         name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
         port=int(args.port),
