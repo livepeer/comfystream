@@ -5,7 +5,8 @@ import os
 from typing import List, Optional
 
 from pytrickle.frame_processor import FrameProcessor
-from pytrickle.frames import VideoFrame, AudioFrame, build_loading_overlay_frame
+from pytrickle.frames import VideoFrame, AudioFrame
+from pytrickle.utils.loading_overlay import build_loading_overlay_frame
 from pytrickle.warmup_config import WarmupMode
 from comfystream.pipeline import Pipeline
 from comfystream.utils import convert_prompt, ComfyStreamParamsUpdateRequest, get_default_workflow
