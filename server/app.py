@@ -98,7 +98,7 @@ class VideoStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            await self.pipeline.stop_prompts(cleanup=True)
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
@@ -196,7 +196,7 @@ class AudioStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            await self.pipeline.stop_prompts(cleanup=True)
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
@@ -254,10 +254,15 @@ async def offer(request):
 
     if is_noop_mode:
         logger.info("[Offer] No prompts provided - entering noop passthrough mode")
+        # Initialize with default workflow for warmup purposes, but use noop tracks for processing
+        from comfystream.utils import get_default_workflow
+        await pipeline.set_prompts([get_default_workflow()])
+        logger.info("[Offer] Initialized pipeline with default workflow for warmup")
     else:
         await pipeline.set_prompts(prompts)
-        logger.info("[Offer] Set workflow prompts")
-
+        await pipeline.resume_prompts()
+        logger.info("[Offer] Set workflow prompts and resumed execution")
+    
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
     if resolution:
@@ -355,11 +360,46 @@ async def offer(request):
                             logger.info("[Control] Noop mode - no warmup needed")
                         else:
                             # Note: Video warmup now happens during offer, not here
-                            logger.info(
-                                "[Control] Resolution updated - warmup was already performed during offer"
-                            )
-
-                        response = {"type": "resolution_updated", "success": True}
+                            logger.info("[Control] Resolution updated - warmup was already performed during offer")
+                            
+                        response = {
+                            "type": "resolution_updated",
+                            "success": True
+                        }
+                        channel.send(json.dumps(response))
+                    elif params.get("type") == "pause_prompts":
+                        if is_noop_mode:
+                            logger.info("[Control] Noop mode - no prompts to pause")
+                            response = {"type": "prompts_paused", "success": True}
+                        else:
+                            try:
+                                await pipeline.pause_prompts()
+                                logger.info("[Control] Paused prompt execution")
+                                response = {"type": "prompts_paused", "success": True}
+                            except Exception as e:
+                                logger.error(f"[Control] Error pausing prompts: {str(e)}")
+                                response = {
+                                    "type": "prompts_paused",
+                                    "success": False,
+                                    "error": str(e),
+                                }
+                        channel.send(json.dumps(response))
+                    elif params.get("type") == "resume_prompts":
+                        if is_noop_mode:
+                            logger.info("[Control] Noop mode - no prompts to resume")
+                            response = {"type": "prompts_resumed", "success": True}
+                        else:
+                            try:
+                                await pipeline.resume_prompts()
+                                logger.info("[Control] Resumed prompt execution")
+                                response = {"type": "prompts_resumed", "success": True}
+                            except Exception as e:
+                                logger.error(f"[Control] Error resuming prompts: {str(e)}")
+                                response = {
+                                    "type": "prompts_resumed",
+                                    "success": False,
+                                    "error": str(e),
+                                }
                         channel.send(json.dumps(response))
                     else:
                         logger.warning("[Server] Invalid message format - missing required fields")
@@ -446,7 +486,8 @@ async def offer(request):
 
         if track.kind == "video":
             if is_noop_mode:
-                # Use simple passthrough track that bypasses pipeline
+                # Use simple passthrough track that bypasses pipeline entirely
+                # Note: Pipeline was initialized with default workflow for warmup, but noop tracks bypass it
                 videoTrack = NoopVideoStreamTrack(track)
                 logger.info("[Noop] Using noop video passthrough")
             else:
@@ -469,7 +510,8 @@ async def offer(request):
             logger.info(f"Creating audio track for track {track.id}")
 
             if is_noop_mode:
-                # Use simple passthrough track that bypasses pipeline
+                # Use simple passthrough track that bypasses pipeline entirely
+                # Note: Pipeline was initialized with default workflow for warmup, but noop tracks bypass it
                 audioTrack = NoopAudioStreamTrack(track)
                 logger.info("[Noop] Using noop audio passthrough")
             else:
@@ -520,13 +562,28 @@ async def offer(request):
 
     # Warm up the pipeline based on detected modalities and SDP content (skip in noop mode)
     if not is_noop_mode:
-        if "m=video" in pc.remoteDescription.sdp and pipeline.accepts_video_input():
+        # Ensure the client has fully processed prompts before checking capabilities
+        await pipeline.client.ensure_prompt_tasks_running()
+        
+        # Debug logging for warmup conditions
+        has_video_sdp = "m=video" in pc.remoteDescription.sdp
+        accepts_video = pipeline.accepts_video_input()
+        has_audio_sdp = "m=audio" in pc.remoteDescription.sdp
+        accepts_audio = pipeline.accepts_audio_input()
+        
+        logger.debug(f"[Offer] Warmup conditions - Video SDP: {has_video_sdp}, Accepts video: {accepts_video}, Audio SDP: {has_audio_sdp}, Accepts audio: {accepts_audio}")
+        
+        if has_video_sdp and accepts_video:
             logger.info("[Offer] Warming up video pipeline")
             await pipeline.warm_video()
-
-        if "m=audio" in pc.remoteDescription.sdp and pipeline.accepts_audio_input():
+        elif has_video_sdp and not accepts_video:
+            logger.info("[Offer] Video in SDP but workflow doesn't accept video input - skipping video warmup")
+            
+        if has_audio_sdp and accepts_audio:
             logger.info("[Offer] Warming up audio pipeline")
             await pipeline.warm_audio()
+        elif has_audio_sdp and not accepts_audio:
+            logger.info("[Offer] Audio in SDP but workflow doesn't accept audio input - skipping audio warmup")
     else:
         logger.debug("[Offer] Skipping pipeline warmup in noop mode")
 

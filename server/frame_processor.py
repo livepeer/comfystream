@@ -192,8 +192,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if not self.pipeline or not getattr(self.pipeline, "client", None):
             return
         if not self._runner_active:
-            await self.pipeline.client.ensure_prompt_tasks_running()
-            self.pipeline.client.resume()
+            await self.pipeline.resume_prompts()
             self._runner_active = True
 
     def _build_loading_overlay_frame(self, frame: VideoFrame) -> VideoFrame:
@@ -273,8 +272,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         logger.info("Running pipeline warmup...")
         try:
             # Resume pipeline for warmup processing
-            await self.pipeline.client.ensure_prompt_tasks_running()
-            self.pipeline.client.resume()
+            await self.pipeline.resume_prompts()
 
             capabilities = self.pipeline.get_workflow_io_capabilities()
             logger.info(f"Detected I/O capabilities: {capabilities}")
@@ -295,7 +293,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             # Pause pipeline after warmup to save resources
             # Will be resumed again on first real input frame
             try:
-                self.pipeline.client.pause()
+                await self.pipeline.pause_prompts()
             except Exception:
                 logger.debug("Failed to pause prompt loop after warmup", exc_info=True)
             self._runner_active = False

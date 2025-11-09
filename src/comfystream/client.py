@@ -130,9 +130,39 @@ class ComfyStreamClient:
             logger.info("Client cleanup complete")
 
     async def cancel_running_prompts(self):
-        """Compatibility: pause the runner without destroying it."""
+        """Pause the runner without tearing down the client."""
         self._run_enabled_event.clear()
 
+    async def pause_prompts(self):
+        """Pause prompt execution loops without canceling underlying tasks."""
+        self._run_enabled_event.clear()
+        logger.debug("Prompt execution paused")
+
+    async def resume_prompts(self):
+        """Resume prompt execution loops."""
+        await self.ensure_prompt_tasks_running()
+        self._stop_event.clear()
+        self._run_enabled_event.set()
+        logger.debug("Prompt execution resumed")
+
+    async def stop_prompts(self, cleanup: bool = False):
+        """Stop running prompts by canceling their tasks.
+
+        Args:
+            cleanup: If True, perform full cleanup including queue clearing and
+                client shutdown. If False, only cancel prompt tasks.
+        """
+        self._stop_event.set()
+
+        await self.cancel_running_prompts()
+
+        if cleanup:
+            await self.cleanup()
+            logger.info("Prompts stopped with full cleanup")
+        else:
+            logger.debug("Prompts stopped (tasks cancelled)")
+
+        
     async def cleanup_queues(self):
         while not tensor_cache.image_inputs.empty():
             tensor_cache.image_inputs.get()
