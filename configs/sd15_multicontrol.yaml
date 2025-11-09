@@ -1,0 +1,84 @@
+# StreamDiffusion SD1.5 Multi-ControlNet + IPAdapter Configuration
+# Demonstrates: TensorRT depth processing, tile with feedback, and IPAdapter integration
+
+# Base model configuration (use HuggingFace model or local path)
+# model_id: "KBlueLeaf/kohaku-v2.1"
+model_id: "Lykon/dreamshaper-8"
+# model_id: "C:\\_dev\\models\\your_sd15_model.safetensors"
+
+# StreamDiffusion core parameters
+t_index_list: [16, 32]      # Denoising timesteps - lower values = less denoising
+width: 512
+height: 512
+device: "cuda"
+dtype: "float16"
+
+# Generation parameters
+# prompt: "masterpiece, high quality, detailed, cinematic lighting"  # Overridden by prompt_blending below
+
+# Prompt blending configuration - interpolates between multiple prompts
+prompt_blending:
+  prompt_list:
+    - ["masterpiece, studio ghibli style, detailed anime artwork", 1.0]
+    - ["cyberpunk aesthetic, neon lights, futuristic", 0.3]
+  interpolation_method: "slerp"  # or "linear"
+  enable_caching: true
+
+negative_prompt: "blurry, low quality, distorted, 3d render"
+guidance_scale: 1.1
+num_inference_steps: 50
+seed: 789
+
+# Temporal consistency and optimization
+frame_buffer_size: 1
+delta: 0.7
+use_denoising_batch: true
+use_lcm_lora: true
+use_tiny_vae: true
+acceleration: "tensorrt"   # "xformers" for non-TensorRT setups
+cfg_type: "self"
+
+# Engine directory for TensorRT (engines will be built here if not found)
+engine_dir: "/workspace/ComfyUI/output/tensorrt/sd15"
+
+# Enable multi-modal conditioning
+use_controlnet: true
+use_ipadapter: true
+
+#IPAdapter configuration for style conditioning
+ipadapters:
+  - ipadapter_model_path: "h94/IP-Adapter/models/ip-adapter_sd15.bin"
+    image_encoder_path: "h94/IP-Adapter/models/image_encoder"
+    style_image: "https://raw.githubusercontent.com/livepeer/comfystream/refs/heads/main/test/example-512x512.png"
+    scale: 0.7
+    enabled: true
+
+#ipadapters:
+#  - type: "faceid"
+#    ipadapter_model_path: "h94/IP-Adapter-FaceID/ip-adapter-faceid_sd15.bin"
+#    image_encoder_path: "h94/IP-Adapter/models/image_encoder"
+#    insightface_model_name: "buffalo_l"
+#    style_image: "path/to/your/style/image.jpg"
+#    scale: 0.5
+#    enabled: false
+
+# ControlNet configurations
+controlnets:
+  # TensorRT Depth ControlNet (requires TensorRT engine)
+  - model_id: "/workspace/ComfyUI/models/controlnet/control_v11f1p_sd15_depth_fp16.safetensors"
+    conditioning_scale: 0.3
+    preprocessor: "depth_tensorrt"
+    preprocessor_params:
+      engine_path: "/workspace/ComfyUI/models/tensorrt/depth-anything/depth_anything_v2_vitl-fp16.engine"  # REQUIRED: Path to TensorRT engine
+      detect_resolution: 512    # Must match engine input size
+      image_resolution: 512
+    enabled: true
+
+  # Tile ControlNet with feedback processor for temporal consistency
+  - model_id: "/workspace/ComfyUI/models/controlnet/control_v11f1e_sd15_tile_fp16.safetensors"
+    conditioning_scale: 0.2
+    preprocessor: "feedback"
+    preprocessor_params:
+      image_resolution: 512
+      feedback_strength: 0.15   # Controls temporal feedback intensity
+    enabled: true

@@ -4,8 +4,8 @@ models:
   # Single file download (regular)
   ip-adapter-plus-sd15:
     name: "IP Adapter SD15"
-    url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.safetensors"
-    path: "ipadapter/ip-adapter-plus_sd15.safetensors"
+    url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.bin"
+    path: "ipadapter/ip-adapter_sd15.bin"
     type: "ipadapter"
     extra_files:
       - url: "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.bin"

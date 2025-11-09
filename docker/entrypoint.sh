@@ -94,12 +94,6 @@ if [ "$1" = "--build-engines" ]; then
   # Build Static Engine for Dreamshaper - Square (512x512)
   python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-512-w-512_00001_.engine --width 512 --height 512
 
-  # Build Static Engine for Dreamshaper - Portrait (384x704)
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-704-w-384_00001_.engine --width 384 --height 704
-
-  # Build Static Engine for Dreamshaper - Landscape (704x384)
-  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-384-w-704_00001_.engine --width 704 --height 384
-
   # Build Dynamic Engine for Dreamshaper
   python src/comfystream/scripts/build_trt.py \
                 --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors \
@@ -111,17 +105,6 @@ if [ "$1" = "--build-engines" ]; then
                 --max-width 448 \
                 --max-height 704
 
-  # Build Engine for Depth Anything V2
-  if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE" ]; then
-    if [ ! -d "$DEPTH_ANYTHING_DIR" ]; then
-      mkdir -p "$DEPTH_ANYTHING_DIR"
-    fi
-    cd "$DEPTH_ANYTHING_DIR"
-    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py
-  else
-    echo "Engine for DepthAnything2 already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE}, skipping..."
-  fi
-
   # Build Engine for Depth Anything2 (large)
   if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE_LARGE" ]; then
     cd "$DEPTH_ANYTHING_DIR"
@@ -130,6 +113,16 @@ if [ "$1" = "--build-engines" ]; then
     echo "Engine for DepthAnything2 (large) already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}, skipping..."
   fi
 
+  # Build Static Engine for StreamDiffusion SD1.5 Multi-ControlNet + IPAdapter
+  if [ ! -f "/workspace/ComfyUI/output/tensorrt/sd15/stabilityai/sd-turbo--lcm_lora-True--tiny_vae-True--max_batch-3--min_batch-3--mode-img2img/unet.engine.opt.onnx" ]; then
+    if [ ! -f "/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion" ]; then
+      python /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/scripts/build_tensorrt_engines.py  --config=/workspace/comfystream/configs/sd15_multicontrol.yaml
+      echo "Engine for StreamDiffusion SD1.5 Multi-ControlNet + IPAdapter built successfully"
+    else
+      echo "Engine for StreamDiffusion SD1.5 Multi-ControlNet + IPAdapter already exists, skipping..."
+    fi
+  fi
+  
   # Build Engines for FasterLivePortrait
   if [ ! -f "$FASTERLIVEPORTRAIT_DIR/warping_spade-fix.trt" ]; then
     cd "$FASTERLIVEPORTRAIT_DIR"
@@ -138,23 +131,6 @@ if [ "$1" = "--build-engines" ]; then
     echo "Engines for FasterLivePortrait already exists, skipping..."
   fi
 
-  # Build Engine for StreamDiffusion
-  if [ ! -f "$TENSORRT_DIR/StreamDiffusion-engines/stabilityai/sd-turbo--lcm_lora-True--tiny_vae-True--max_batch-3--min_batch-3--mode-img2img/unet.engine.opt.onnx" ]; then
-    cd /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion
-    MODELS="stabilityai/sd-turbo KBlueLeaf/kohaku-v2.1"
-    TIMESTEPS="3"
-    for model in $MODELS; do
-      for timestep in $TIMESTEPS; do
-        echo "Building model=$model with timestep=$timestep"
-        python build_tensorrt.py \
-          --model-id "$model" \
-          --timesteps "$timestep" \
-          --engine-dir $TENSORRT_DIR/StreamDiffusion-engines
-      done
-    done
-  else
-    echo "Engine for StreamDiffusion already exists, skipping..."
-  fi
   shift
 fi
 
