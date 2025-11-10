@@ -1,5 +1,7 @@
 # comfystream
 
+> ⚠️ **NOTICE:** Active development of this project has moved to [the Livepeer fork](https://github.com/livepeer/comfystream).
+
 comfystream is a package for running img2img [Comfy](https://www.comfy.org/) workflows on video streams.
 
 This repo also includes a WebRTC server and UI that uses comfystream to support streaming from a webcam and processing the stream with a workflow JSON file (API format) created in ComfyUI. If you have an existing ComfyUI installation, the same custom nodes used to create the workflow in ComfyUI will be re-used when processing the video stream.
@@ -27,7 +29,7 @@ This repo also includes a WebRTC server and UI that uses comfystream to support 
 
 Refer to [.devcontainer/README.md](.devcontainer/README.md) to setup ComfyStream in a devcontainer using a pre-configured ComfyUI docker environment.
 
-For other installation options, refer to [Install ComfyUI and ComfyStream](https://docs.comfystream.org/technical/get-started/install) in the ComfyStream documentation.
+For other installation options, refer to [Install ComfyUI and ComfyStream](https://pipelines.livepeer.org/docs/technical/install/local-testing) in the Livepeer pipelines documentation.
 
 For additional information, refer to the remaining sections below.
 
@@ -35,7 +37,7 @@ For additional information, refer to the remaining sections below.
 
 You can quickly deploy ComfyStream using the docker image `livepeer/comfystream`
 
-Refer to the documentation at [https://docs.comfystream.org/technical/get-started/install](https://docs.comfystream.org/technical/get-started/install) for instructions to run locally or on a remote server.
+Refer to the documentation at [https://pipelines.livepeer.org/docs/technical/getting-started/install-comfystream](https://pipelines.livepeer.org/docs/technical/getting-started/install-comfystream) for instructions to run locally or on a remote server.
 
 #### RunPod
 

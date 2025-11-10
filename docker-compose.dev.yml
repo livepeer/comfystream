@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  comfyui-dev:
+    image: comfystream:uv
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - COMFYUI_DEV_MODE=1
+    volumes:
+      # Mount your local ComfyUI workspace
+      - ~/ComfyUI:/workspace/ComfyUI
+      # Mount entrypoint for live editing (no rebuild needed!)
+      - ./docker/entrypoint-byow.sh:/usr/local/bin/entrypoint.sh:ro
+      # Optional: mount comfystream source for live development
+      # - ./src:/workspace/ComfyUI/custom_nodes/comfystream/src:ro
+    ports:
+      - "8188:8188"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+

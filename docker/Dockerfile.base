@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
-    
+
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
     git wget nano socat \
