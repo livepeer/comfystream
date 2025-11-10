@@ -15,6 +15,7 @@ logging.basicConfig(
 DEFAULT_SETTINGS = {
     "host": "0.0.0.0",
     "port": 8889,
+    "enableMetrics": False,
     "configurations": [],
     "selectedConfigIndex": -1
 }
@@ -78,12 +79,17 @@ def update_settings(new_settings):
     
     return save_settings(current_settings)
 
-def add_configuration(name, host, port):
+def add_configuration(name, host, port, enable_metrics):
     """Add a new configuration"""
     settings = load_settings()
     
     # Create the new configuration
-    config = {"name": name, "host": host, "port": port}
+    config = {
+        "name": name,
+        "host": host,
+        "port": port,
+        "enableMetrics": enable_metrics
+    }
     
     # Add to configurations list
     settings["configurations"].append(config)
@@ -125,6 +131,7 @@ def select_configuration(index):
             config = settings["configurations"][index]
             settings["host"] = config["host"]
             settings["port"] = config["port"]
+            settings["enableMetrics"] = config["enableMetrics"]
         
         # Save updated settings
         return save_settings(settings)
