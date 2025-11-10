@@ -5,15 +5,17 @@ import os
 import sys
 
 import torch
+
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
 
 from aiohttp import web
+from frame_processor import ComfyStreamFrameProcessor
+from pytrickle.frame_skipper import FrameSkipConfig
 from pytrickle.stream_processor import StreamProcessor
 from pytrickle.utils.register import RegisterCapability
-from pytrickle.frame_skipper import FrameSkipConfig
-from frame_processor import ComfyStreamFrameProcessor
+
 from comfystream.exceptions import ComfyStreamTimeoutFilter
 
 logger = logging.getLogger(__name__)
@@ -26,7 +28,9 @@ def main():
     parser.add_argument("--port", default=8000, help="Set the server port")
     parser.add_argument("--host", default="0.0.0.0", help="Set the host")
     parser.add_argument(
-        "--workspace", default=os.getcwd() + "/../ComfyUI", help="Set Comfy workspace (Default: ../ComfyUI)"
+        "--workspace",
+        default=os.getcwd() + "/../ComfyUI",
+        help="Set Comfy workspace (Default: ../ComfyUI)",
     )
     parser.add_argument(
         "--log-level",
@@ -76,7 +80,7 @@ def main():
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
-    
+
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
 
@@ -85,7 +89,7 @@ def main():
         sys.stdout.flush()
 
     logger.info("Starting ComfyStream BYOC server with pytrickle StreamProcessor...")
-    
+
     # Create frame processor with configuration
     frame_processor = ComfyStreamFrameProcessor(
         width=args.width,
@@ -93,12 +97,12 @@ def main():
         workspace=args.workspace,
         disable_cuda_malloc=True,
         gpu_only=True,
-        preview_method='none',
+        preview_method="none",
         blacklist_custom_nodes=["ComfyUI-Manager"],
         logging_level=args.comfyui_log_level,
-        comfyui_inference_log_level=args.comfyui_inference_log_level
+        comfyui_inference_log_level=args.comfyui_inference_log_level,
     )
-    
+
     # Create frame skip configuration only if enabled
     frame_skip_config = None
     if args.disable_frame_skip:
@@ -106,7 +110,7 @@ def main():
     else:
         frame_skip_config = FrameSkipConfig()
         logger.info("Frame skipping enabled: adaptive skipping based on queue sizes")
-    
+
     # Create StreamProcessor with frame processor
     processor = StreamProcessor(
         video_processor=frame_processor.process_video_async,
@@ -121,17 +125,17 @@ def main():
         frame_skip_config=frame_skip_config,
         # Ensure server metadata reflects the desired capability name
         capability_name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
-        #server_kwargs...
+        # server_kwargs...
         route_prefix="/",
     )
 
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
-    
+
     # Create async startup function to load model
     async def load_model_on_startup(app):
         await processor._frame_processor.load_model()
-	
+
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
         try:
@@ -141,18 +145,19 @@ def main():
                 # CAPABILITY_URL always overrides host:port from args
                 capability_url = os.getenv("CAPABILITY_URL") or f"http://{args.host}:{args.port}"
 
-                os.environ.update({
-                    "CAPABILITY_NAME": os.getenv("CAPABILITY_NAME") or "comfystream",
-                    "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
-                    "CAPABILITY_URL": capability_url,
-                    "CAPABILITY_CAPACITY": "1",
-                    "ORCH_URL": orch_url,
-                    "ORCH_SECRET": os.getenv("ORCH_SECRET", None)
-                })
+                os.environ.update(
+                    {
+                        "CAPABILITY_NAME": os.getenv("CAPABILITY_NAME") or "comfystream",
+                        "CAPABILITY_DESCRIPTION": "ComfyUI streaming processor",
+                        "CAPABILITY_URL": capability_url,
+                        "CAPABILITY_CAPACITY": "1",
+                        "ORCH_URL": orch_url,
+                        "ORCH_SECRET": os.getenv("ORCH_SECRET", None),
+                    }
+                )
 
                 result = await RegisterCapability.register(
-                    logger=logger,
-                    capability_name=os.getenv("CAPABILITY_NAME") or "comfystream"
+                    logger=logger, capability_name=os.getenv("CAPABILITY_NAME") or "comfystream"
                 )
                 if result:
                     logger.info(f"Registered capability: {result.geturl()}")
@@ -189,7 +194,7 @@ def main():
 
     # Mount at same API namespace as StreamProcessor defaults
     processor.server.add_route("POST", "/api/stream/warmup", warmup_handler)
-    
+
     # Run the processor
     processor.run()
 
