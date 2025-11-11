@@ -1,14 +1,14 @@
 import asyncio
-from typing import List
 import logging
-
-from comfystream import tensor_cache
-from comfystream.utils import convert_prompt
-from comfystream.exceptions import ComfyStreamInputTimeoutError
+from typing import List
 
 from comfy.api.components.schema.prompt import PromptDictInput
 from comfy.cli_args_types import Configuration
 from comfy.client.embedded_comfy_client import EmbeddedComfyClient
+
+from comfystream import tensor_cache
+from comfystream.exceptions import ComfyStreamInputTimeoutError
+from comfystream.utils import convert_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class ComfyStreamClient:
     def __init__(self, max_workers: int = 1, **kwargs):
         config = Configuration(**kwargs)
         self.comfy_client = EmbeddedComfyClient(config, max_workers=max_workers)
-        self.running_prompts = {} # To be used for cancelling tasks
+        self.running_prompts = {}  # To be used for cancelling tasks
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
@@ -25,17 +25,17 @@ class ComfyStreamClient:
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
         """Set new prompts, replacing any existing ones.
-        
+
         Args:
             prompts: List of prompt dictionaries to set
-            
+
         Raises:
             ValueError: If prompts list is empty
             Exception: If prompt conversion or validation fails
         """
         if not prompts:
             raise ValueError("Cannot set empty prompts list")
-            
+
         # Cancel existing prompts first to avoid conflicts
         await self.cancel_running_prompts()
         # Reset stop event for new prompts
@@ -81,7 +81,7 @@ class ComfyStreamClient:
     async def cleanup(self):
         # Set stop event to signal prompt loops to exit
         self._stop_event.set()
-        
+
         await self.cancel_running_prompts()
         async with self._cleanup_lock:
             if self.comfy_client.is_running:
@@ -104,7 +104,6 @@ class ComfyStreamClient:
                     pass
             self.running_prompts.clear()
 
-        
     async def cleanup_queues(self):
         while not tensor_cache.image_inputs.empty():
             tensor_cache.image_inputs.get()
@@ -125,16 +124,16 @@ class ComfyStreamClient:
         if tensor_cache.image_inputs.full():
             tensor_cache.image_inputs.get(block=True)
         tensor_cache.image_inputs.put(frame)
-    
+
     def put_audio_input(self, frame):
         tensor_cache.audio_inputs.put(frame)
 
     async def get_video_output(self):
         return await tensor_cache.image_outputs.get()
-    
+
     async def get_audio_output(self):
         return await tensor_cache.audio_outputs.get()
-    
+
     async def get_text_output(self):
         try:
             return tensor_cache.text_outputs.get_nowait()
@@ -154,20 +153,15 @@ class ComfyStreamClient:
 
         try:
             from comfy.nodes.package import import_all_nodes_in_workspace
+
             nodes = import_all_nodes_in_workspace()
 
             all_prompts_nodes_info = {}
-            
+
             for prompt_index, prompt in enumerate(self.current_prompts):
                 # Get set of class types we need metadata for, excluding LoadTensor and SaveTensor
-                needed_class_types = {
-                    node.get('class_type') 
-                    for node in prompt.values()
-                }
-                remaining_nodes = {
-                    node_id 
-                    for node_id, node in prompt.items() 
-                }
+                needed_class_types = {node.get("class_type") for node in prompt.values()}
+                remaining_nodes = {node_id for node_id, node in prompt.items()}
                 nodes_info = {}
 
                 # Only process nodes until we've found all the ones we need
@@ -179,87 +173,88 @@ class ComfyStreamClient:
                         continue
 
                     # Get metadata for this node type (same as original get_node_metadata)
-                    input_data = node_class.INPUT_TYPES() if hasattr(node_class, 'INPUT_TYPES') else {}
+                    input_data = (
+                        node_class.INPUT_TYPES() if hasattr(node_class, "INPUT_TYPES") else {}
+                    )
                     input_info = {}
 
                     # Process required inputs
-                    if 'required' in input_data:
-                        for name, value in input_data['required'].items():
+                    if "required" in input_data:
+                        for name, value in input_data["required"].items():
                             if isinstance(value, tuple):
                                 if len(value) == 1 and isinstance(value[0], list):
                                     # Handle combo box case where value is ([option1, option2, ...],)
                                     input_info[name] = {
-                                        'type': 'combo',
-                                        'value': value[0],  # The list of options becomes the value
+                                        "type": "combo",
+                                        "value": value[0],  # The list of options becomes the value
                                     }
                                 elif len(value) == 2:
                                     input_type, config = value
                                     input_info[name] = {
-                                        'type': input_type,
-                                        'required': True,
-                                        'min': config.get('min', None),
-                                        'max': config.get('max', None),
-                                        'widget': config.get('widget', None)
+                                        "type": input_type,
+                                        "required": True,
+                                        "min": config.get("min", None),
+                                        "max": config.get("max", None),
+                                        "widget": config.get("widget", None),
                                     }
                                 elif len(value) == 1:
                                     # Handle simple type case like ('IMAGE',)
-                                    input_info[name] = {
-                                        'type': value[0]
-                                    }
+                                    input_info[name] = {"type": value[0]}
                             else:
-                                logger.error(f"Unexpected structure for required input {name}: {value}")
+                                logger.error(
+                                    f"Unexpected structure for required input {name}: {value}"
+                                )
 
                     # Process optional inputs with same logic
-                    if 'optional' in input_data:
-                        for name, value in input_data['optional'].items():
+                    if "optional" in input_data:
+                        for name, value in input_data["optional"].items():
                             if isinstance(value, tuple):
                                 if len(value) == 1 and isinstance(value[0], list):
                                     # Handle combo box case where value is ([option1, option2, ...],)
                                     input_info[name] = {
-                                        'type': 'combo',
-                                        'value': value[0],  # The list of options becomes the value
+                                        "type": "combo",
+                                        "value": value[0],  # The list of options becomes the value
                                     }
                                 elif len(value) == 2:
                                     input_type, config = value
                                     input_info[name] = {
-                                        'type': input_type,
-                                        'required': False,
-                                        'min': config.get('min', None),
-                                        'max': config.get('max', None),
-                                        'widget': config.get('widget', None)
+                                        "type": input_type,
+                                        "required": False,
+                                        "min": config.get("min", None),
+                                        "max": config.get("max", None),
+                                        "widget": config.get("widget", None),
                                     }
                                 elif len(value) == 1:
                                     # Handle simple type case like ('IMAGE',)
-                                    input_info[name] = {
-                                        'type': value[0]
-                                    }
+                                    input_info[name] = {"type": value[0]}
                             else:
-                                logger.error(f"Unexpected structure for optional input {name}: {value}")
+                                logger.error(
+                                    f"Unexpected structure for optional input {name}: {value}"
+                                )
 
                     # Now process any nodes in our prompt that use this class_type
                     for node_id in list(remaining_nodes):
                         node = prompt[node_id]
-                        if node.get('class_type') != class_type:
+                        if node.get("class_type") != class_type:
                             continue
 
-                        node_info = {
-                            'class_type': class_type,
-                            'inputs': {}
-                        }
+                        node_info = {"class_type": class_type, "inputs": {}}
 
-                        if 'inputs' in node:
-                            for input_name, input_value in node['inputs'].items():
+                        if "inputs" in node:
+                            for input_name, input_value in node["inputs"].items():
                                 input_metadata = input_info.get(input_name, {})
-                                node_info['inputs'][input_name] = {
-                                    'value': input_value,
-                                    'type': input_metadata.get('type', 'unknown'),
-                                    'min': input_metadata.get('min', None),
-                                    'max': input_metadata.get('max', None),
-                                    'widget': input_metadata.get('widget', None)
+                                node_info["inputs"][input_name] = {
+                                    "value": input_value,
+                                    "type": input_metadata.get("type", "unknown"),
+                                    "min": input_metadata.get("min", None),
+                                    "max": input_metadata.get("max", None),
+                                    "widget": input_metadata.get("widget", None),
                                 }
                                 # For combo type inputs, include the list of options
-                                if input_metadata.get('type') == 'combo':
-                                    node_info['inputs'][input_name]['value'] = input_metadata.get('value', [])
+                                if input_metadata.get("type") == "combo":
+                                    node_info["inputs"][input_name]["value"] = input_metadata.get(
+                                        "value", []
+                                    )
 
                         nodes_info[node_id] = node_info
                         remaining_nodes.remove(node_id)
