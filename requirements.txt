@@ -8,3 +8,4 @@ toml
 twilio
 prometheus_client
 librosa
+huggingface_hub>=0.20.0
