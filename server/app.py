@@ -196,7 +196,7 @@ class AudioStreamTrack(MediaStreamTrack):
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
         finally:
-            await self.pipeline.cleanup()
+            await self.pipeline.stop_prompts(cleanup=True)
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
@@ -625,7 +625,7 @@ async def offer(request):
 
 async def cancel_collect_frames(track):
     track.running = False
-    if hasattr(track, "collect_task") is not None and not track.collect_task.done():
+    if track.collect_task and not track.collect_task.done():
         try:
             track.collect_task.cancel()
             await track.collect_task

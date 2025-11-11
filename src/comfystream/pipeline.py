@@ -137,26 +137,19 @@ class Pipeline:
         self._cached_io_capabilities = None
 
     async def pause_prompts(self):
-        """Pause prompt execution loops without canceling tasks.
-
-        Prompts remain in memory and can be resumed with resume_prompts().
-        """
+        """Pause prompt execution loops without canceling tasks."""
         await self.client.pause_prompts()
 
     async def resume_prompts(self):
-        """Resume paused prompt execution loops.
-
-        If prompts are not currently running, this will have no effect until
-        prompts are set via set_prompts().
-        """
+        """Resume paused prompt execution loops."""
         await self.client.resume_prompts()
 
     async def stop_prompts(self, cleanup: bool = False):
         """Stop running prompts by canceling their tasks.
 
         Args:
-            cleanup: If True, perform full cleanup including queue clearing
-                     and client shutdown. If False, only cancel prompt tasks.
+            cleanup: If True, perform full cleanup including queue clearing and
+                client shutdown. If False, only cancel prompt tasks.
         """
         await self.client.stop_prompts(cleanup=cleanup)
 
@@ -166,6 +159,10 @@ class Pipeline:
             self._cached_io_capabilities = None
             # Clear pipeline queues for full cleanup
             await self._clear_pipeline_queues()
+
+    async def stop_prompts_immediately(self):
+        """Cancel prompt execution tasks without full cleanup."""
+        await self.client.stop_prompts_immediately()
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -381,10 +378,10 @@ class Pipeline:
         """
         if self._cached_io_capabilities is None:
             if not hasattr(self.client, "current_prompts") or not self.client.current_prompts:
-                # Return empty capabilities if no prompts
-                return create_empty_workflow_modality()
-
-            self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
+                # Cache empty capabilities if no prompts to avoid repeated checks
+                self._cached_io_capabilities = create_empty_workflow_modality()
+            else:
+                self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
 
         return self._cached_io_capabilities
 
@@ -396,9 +393,10 @@ class Pipeline:
         """
         if self._cached_modalities is None:
             if not hasattr(self.client, "current_prompts") or not self.client.current_prompts:
-                return set()
-
-            self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+                # Cache empty set if no prompts to avoid repeated checks
+                self._cached_modalities = set()
+            else:
+                self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
 
         return self._cached_modalities
 

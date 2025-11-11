@@ -272,6 +272,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             converted = convert_prompt(prompts, return_dict=True)
 
+            # Stop any running prompts before updating to avoid overlap
+            if self.pipeline:
+                try:
+                    await self.pipeline.stop_prompts_immediately()
+                except Exception:
+                    logger.debug("Failed to stop prompts immediately before update", exc_info=True)
+
             # Set prompts in pipeline
             await self.pipeline.set_prompts([converted])
             await self.pipeline.resume_prompts()
