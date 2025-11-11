@@ -313,90 +313,116 @@ async def offer(request):
 
             @channel.on("message")
             async def on_message(message):
+                def send_json(payload):
+                    channel.send(json.dumps(payload))
+
+                def send_success_response(response_type, **extra):
+                    payload = {"type": response_type, "success": True}
+                    payload.update(extra)
+                    send_json(payload)
+
+                async def handle_get_nodes(_params):
+                    nodes_info = await pipeline.get_nodes_info()
+                    send_json({"type": "nodes_info", "nodes": nodes_info})
+
+                async def handle_update_prompts(_params):
+                    if "prompts" not in _params:
+                        logger.warning("[Control] Missing prompt in update_prompt message")
+                        return
+                    try:
+                        await pipeline.update_prompts(_params["prompts"])
+                    except Exception as e:
+                        logger.error(f"Error updating prompt: {str(e)}")
+                    send_success_response("prompts_updated")
+
+                async def handle_update_resolution(_params):
+                    width = _params.get("width")
+                    height = _params.get("height")
+                    if width is None or height is None:
+                        logger.warning(
+                            "[Control] Missing width or height in update_resolution message"
+                        )
+                        return
+
+                    if is_noop_mode:
+                        logger.info(
+                            f"[Control] Noop mode - resolution update to {width}x{height} (no pipeline involved)"
+                        )
+                    else:
+                        # Update pipeline resolution for future frames
+                        pipeline.width = width
+                        pipeline.height = height
+                        logger.info(f"[Control] Updated resolution to {width}x{height}")
+
+                    # Mark that we've received resolution
+                    resolution_received["value"] = True
+
+                    if is_noop_mode:
+                        logger.info("[Control] Noop mode - no warmup needed")
+                    else:
+                        # Note: Video warmup now happens during offer, not here
+                        logger.info(
+                            "[Control] Resolution updated - warmup was already performed during offer"
+                        )
+
+                    send_success_response("resolution_updated")
+
+                async def handle_pause_prompts(_params):
+                    if is_noop_mode:
+                        logger.info("[Control] Noop mode - no prompts to pause")
+                    else:
+                        try:
+                            await pipeline.pause_prompts()
+                            logger.info("[Control] Paused prompt execution")
+                        except Exception as e:
+                            logger.error(f"[Control] Error pausing prompts: {str(e)}")
+                    send_success_response("prompts_paused")
+
+                async def handle_resume_prompts(_params):
+                    if is_noop_mode:
+                        logger.info("[Control] Noop mode - no prompts to resume")
+                    else:
+                        try:
+                            await pipeline.resume_prompts()
+                            logger.info("[Control] Resumed prompt execution")
+                        except Exception as e:
+                            logger.error(f"[Control] Error resuming prompts: {str(e)}")
+                    send_success_response("prompts_resumed")
+
+                async def handle_stop_prompts(_params):
+                    if is_noop_mode:
+                        logger.info("[Control] Noop mode - no prompts to stop")
+                    else:
+                        try:
+                            await pipeline.stop_prompts(cleanup=False)
+                            logger.info("[Control] Stopped prompt execution")
+                        except Exception as e:
+                            logger.error(f"[Control] Error stopping prompts: {str(e)}")
+                    send_success_response("prompts_stopped")
+
+                handlers = {
+                    "get_nodes": handle_get_nodes,
+                    "update_prompts": handle_update_prompts,
+                    "update_resolution": handle_update_resolution,
+                    "pause_prompts": handle_pause_prompts,
+                    "resume_prompts": handle_resume_prompts,
+                    "stop_prompts": handle_stop_prompts,
+                }
+
                 try:
                     params = json.loads(message)
+                    message_type = params.get("type")
 
-                    if params.get("type") == "get_nodes":
-                        nodes_info = await pipeline.get_nodes_info()
-                        response = {"type": "nodes_info", "nodes": nodes_info}
-                        channel.send(json.dumps(response))
-                    elif params.get("type") == "update_prompts":
-                        if "prompts" not in params:
-                            logger.warning("[Control] Missing prompt in update_prompt message")
-                            return
-                        try:
-                            await pipeline.update_prompts(params["prompts"])
-                        except Exception as e:
-                            logger.error(f"Error updating prompt: {str(e)}")
-                        response = {"type": "prompts_updated", "success": True}
-                        channel.send(json.dumps(response))
-                    elif params.get("type") == "update_resolution":
-                        if "width" not in params or "height" not in params:
-                            logger.warning(
-                                "[Control] Missing width or height in update_resolution message"
-                            )
-                            return
+                    if not message_type:
+                        logger.warning("[Server] Control message missing 'type'")
+                        return
 
-                        if is_noop_mode:
-                            logger.info(
-                                f"[Control] Noop mode - resolution update to {params['width']}x{params['height']} (no pipeline involved)"
-                            )
-                        else:
-                            # Update pipeline resolution for future frames
-                            pipeline.width = params["width"]
-                            pipeline.height = params["height"]
-                            logger.info(
-                                f"[Control] Updated resolution to {params['width']}x{params['height']}"
-                            )
+                    handler = handlers.get(message_type)
+                    if handler is None:
+                        logger.warning(f"[Server] Unsupported control message: {message_type}")
+                        return
 
-                        # Mark that we've received resolution
-                        resolution_received["value"] = True
-
-                        if is_noop_mode:
-                            logger.info("[Control] Noop mode - no warmup needed")
-                        else:
-                            # Note: Video warmup now happens during offer, not here
-                            logger.info(
-                                "[Control] Resolution updated - warmup was already performed during offer"
-                            )
-
-                        response = {"type": "resolution_updated", "success": True}
-                        channel.send(json.dumps(response))
-                    elif params.get("type") == "pause_prompts":
-                        if is_noop_mode:
-                            logger.info("[Control] Noop mode - no prompts to pause")
-                        else:
-                            try:
-                                await pipeline.pause_prompts()
-                                logger.info("[Control] Paused prompt execution")
-                            except Exception as e:
-                                logger.error(f"[Control] Error pausing prompts: {str(e)}")
-                        response = {"type": "prompts_paused", "success": True}
-                        channel.send(json.dumps(response))
-                    elif params.get("type") == "resume_prompts":
-                        if is_noop_mode:
-                            logger.info("[Control] Noop mode - no prompts to resume")
-                        else:
-                            try:
-                                await pipeline.resume_prompts()
-                                logger.info("[Control] Resumed prompt execution")
-                            except Exception as e:
-                                logger.error(f"[Control] Error resuming prompts: {str(e)}")
-                        response = {"type": "prompts_resumed", "success": True}
-                        channel.send(json.dumps(response))
-                    elif params.get("type") == "stop_prompts":
-                        if is_noop_mode:
-                            logger.info("[Control] Noop mode - no prompts to stop")
-                        else:
-                            try:
-                                await pipeline.stop_prompts(cleanup=False)
-                                logger.info("[Control] Stopped prompt execution")
-                            except Exception as e:
-                                logger.error(f"[Control] Error stopping prompts: {str(e)}")
-                        response = {"type": "prompts_stopped", "success": True}
-                        channel.send(json.dumps(response))
-                    else:
-                        logger.warning("[Server] Invalid message format - missing required fields")
+                    await handler(params)
                 except json.JSONDecodeError:
                     logger.error("[Server] Invalid JSON received")
                 except Exception as e:
