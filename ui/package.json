@@ -52,6 +52,14 @@
   },
   "lint-staged": {
     "*.{js,ts,tsx}": "eslint --cache --fix",
-    "*.{js,ts,tsx,css,md}": "prettier --write"
+    "*.{js,ts,tsx,css,md}": "prettier --write",
+    "../*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ],
+    "../{src,server,nodes,scripts}/**/*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ]
   }
 }
