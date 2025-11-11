@@ -5,6 +5,7 @@ from pathlib import Path
 
 import requests
 import yaml
+from huggingface_hub import hf_hub_download, snapshot_download
 from tqdm import tqdm
 from utils import get_config_path, load_model_config
 
@@ -57,10 +58,6 @@ def download_file(url, destination, description=None):
 
 def download_hf_directory(repo_id, subfolder, destination, description=None):
     """Download an entire directory from HuggingFace Hub"""
-    if not HF_HUB_AVAILABLE:
-        raise RuntimeError(
-            "huggingface_hub is required for directory downloads. Install with: pip install huggingface_hub"
-        )
 
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
