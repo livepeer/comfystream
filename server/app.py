@@ -321,6 +321,15 @@ async def offer(request):
                     payload.update(extra)
                     send_json(payload)
 
+                def send_error_response(response_type, error_message, **extra):
+                    payload = {
+                        "type": response_type,
+                        "success": False,
+                        "error": error_message,
+                    }
+                    payload.update(extra)
+                    send_json(payload)
+
                 async def handle_get_nodes(_params):
                     nodes_info = await pipeline.get_nodes_info()
                     send_json({"type": "nodes_info", "nodes": nodes_info})
@@ -328,11 +337,16 @@ async def offer(request):
                 async def handle_update_prompts(_params):
                     if "prompts" not in _params:
                         logger.warning("[Control] Missing prompt in update_prompt message")
+                        send_error_response(
+                            "prompts_updated", "Missing 'prompts' in control message"
+                        )
                         return
                     try:
                         await pipeline.update_prompts(_params["prompts"])
                     except Exception as e:
                         logger.error(f"Error updating prompt: {str(e)}")
+                        send_error_response("prompts_updated", str(e))
+                        return
                     send_success_response("prompts_updated")
 
                 async def handle_update_resolution(_params):
@@ -341,6 +355,10 @@ async def offer(request):
                     if width is None or height is None:
                         logger.warning(
                             "[Control] Missing width or height in update_resolution message"
+                        )
+                        send_error_response(
+                            "resolution_updated",
+                            "Missing 'width' or 'height' in control message",
                         )
                         return
 
@@ -376,6 +394,8 @@ async def offer(request):
                             logger.info("[Control] Paused prompt execution")
                         except Exception as e:
                             logger.error(f"[Control] Error pausing prompts: {str(e)}")
+                            send_error_response("prompts_paused", str(e))
+                            return
                     send_success_response("prompts_paused")
 
                 async def handle_resume_prompts(_params):
@@ -387,6 +407,8 @@ async def offer(request):
                             logger.info("[Control] Resumed prompt execution")
                         except Exception as e:
                             logger.error(f"[Control] Error resuming prompts: {str(e)}")
+                            send_error_response("prompts_resumed", str(e))
+                            return
                     send_success_response("prompts_resumed")
 
                 async def handle_stop_prompts(_params):
@@ -398,6 +420,8 @@ async def offer(request):
                             logger.info("[Control] Stopped prompt execution")
                         except Exception as e:
                             logger.error(f"[Control] Error stopping prompts: {str(e)}")
+                            send_error_response("prompts_stopped", str(e))
+                            return
                     send_success_response("prompts_stopped")
 
                 handlers = {
