@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import os
 from typing import List, Optional
@@ -8,6 +9,7 @@ from pytrickle.frames import AudioFrame, VideoFrame
 from pytrickle.utils.loading_overlay import build_loading_overlay_frame
 from pytrickle.warmup_config import WarmupMode
 
+from comfystream.modalities import WorkflowModality
 from comfystream.pipeline import Pipeline
 from comfystream.utils import ComfyStreamParamsUpdateRequest, convert_prompt, get_default_workflow
 
@@ -43,9 +45,11 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._text_poll_interval = text_poll_interval
         self._stream_processor = None
         self._text_forward_task = None
+        self._runner_activation_task = None
         self._background_tasks = []
         self._stop_event = asyncio.Event()
         self._runner_active = False
+        self._active_capabilities: Optional[WorkflowModality] = None
 
         # Custom comfystream warmup passthrough toggle
         self._warmup_passthrough_enabled: bool = False
@@ -136,6 +140,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             except Exception as e:
                 logger.error(f"Error stopping ComfyStream client: {e}")
         self._runner_active = False
+        self._active_capabilities = None
 
         # Stop text forwarder
         await self._stop_text_forwarder()
@@ -191,6 +196,57 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if not self._runner_active:
             await self.pipeline.resume_prompts()
             self._runner_active = True
+
+    def _update_modality_state(self, capabilities: Optional[WorkflowModality]) -> None:
+        """
+        Update cached modality capabilities and adjust warmup overlay behavior.
+        """
+        if capabilities is None:
+            return
+
+        capabilities_copy: WorkflowModality = copy.deepcopy(capabilities)
+        previous = self._active_capabilities
+        self._active_capabilities = capabilities_copy
+
+        has_video_output = bool(capabilities_copy.get("video", {}).get("output", False))
+        self._set_warmup_passthrough(not has_video_output)
+
+        if previous != capabilities_copy:
+            logger.info("Workflow capabilities updated: %s", capabilities_copy)
+
+    def _schedule_runner_activation(self) -> None:
+        """
+        Schedule runner activation so it happens once warmup completes.
+        """
+        if self._runner_activation_task and not self._runner_activation_task.done():
+            return
+
+        async def _activate_when_ready():
+            try:
+                if not self._warmup_done.is_set():
+                    await self._warmup_done.wait()
+                if self._stop_event.is_set():
+                    return
+                if not self._runner_active:
+                    logger.info("Warmup complete - resuming runner for normal processing")
+                await self._ensure_runner_active()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("Runner activation task failed", exc_info=True)
+            finally:
+                self._runner_activation_task = None
+
+        task = asyncio.create_task(_activate_when_ready())
+        self._runner_activation_task = task
+        self._background_tasks.append(task)
+
+    def _start_warmup_sequence(self, warmup_coro) -> None:
+        """
+        Override to install runner activation scheduling after warmup.
+        """
+        super()._start_warmup_sequence(warmup_coro)
+        self._schedule_runner_activation()
 
     def _build_loading_overlay_frame(self, frame: VideoFrame) -> VideoFrame:
         """
@@ -273,6 +329,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
             capabilities = self.pipeline.get_workflow_io_capabilities()
             logger.info(f"Detected I/O capabilities: {capabilities}")
+            self._update_modality_state(capabilities)
 
             if capabilities.get("video", {}).get("input") or capabilities.get("video", {}).get(
                 "output"
@@ -384,14 +441,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                         )
                     return frame
 
-            # Log transition from warmup to normal processing
-            if self._warmup_done.is_set() and not self._runner_active:
-                logger.info(
-                    "First frame after warmup complete - resuming runner for normal processing"
-                )
-
-            await self._ensure_runner_active()
-
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
             av_frame.pts = frame.timestamp
@@ -417,9 +466,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             # Audio always passes through during warmup
             if self._is_warmup_active():
                 return [frame]
-            # On first frame of an active stream, start/resume runner
-            await self._ensure_runner_active()
-
             # Audio processing needed - use pipeline
             av_frame = frame.to_av_frame()
             await self.pipeline.put_audio_frame(av_frame)
@@ -476,9 +522,19 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             converted = convert_prompt(prompts, return_dict=True)
 
+            # Stop any running prompts to avoid overlapping workflows
+            if self.pipeline and hasattr(self.pipeline, "stop_prompts_immediately"):
+                try:
+                    await self.pipeline.stop_prompts_immediately()
+                except Exception:
+                    logger.debug("Failed to stop prompts immediately before update", exc_info=True)
+
             # Set prompts in pipeline
             await self.pipeline.set_prompts([converted])
             logger.info(f"Prompts set successfully: {list(prompts.keys())}")
+
+            capabilities = self.pipeline.get_workflow_io_capabilities()
+            self._update_modality_state(capabilities)
 
             # Trigger loading overlay and warmup sequence for new prompts unless suppressed
             if not skip_warmup:

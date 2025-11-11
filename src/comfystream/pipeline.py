@@ -158,6 +158,10 @@ class Pipeline:
             self._cached_io_capabilities = None
             await self._clear_pipeline_queues()
 
+    async def stop_prompts_immediately(self):
+        """Cancel prompt execution tasks without full cleanup."""
+        await self.client.stop_prompts_immediately()
+
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
 
@@ -371,12 +375,12 @@ class Pipeline:
             WorkflowModality mapping each modality to its input/output capabilities
         """
         if self._cached_io_capabilities is None:
-            if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
+            if not hasattr(self.client, "current_prompts") or not self.client.current_prompts:
                 # Cache empty capabilities if no prompts to avoid repeated checks
                 self._cached_io_capabilities = create_empty_workflow_modality()
             else:
                 self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
-        
+
         return self._cached_io_capabilities
 
     def get_workflow_modalities(self) -> Set[str]:
@@ -386,12 +390,12 @@ class Pipeline:
             Set of modality strings: {'video', 'audio', 'text'}
         """
         if self._cached_modalities is None:
-            if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
+            if not hasattr(self.client, "current_prompts") or not self.client.current_prompts:
                 # Cache empty set if no prompts to avoid repeated checks
                 self._cached_modalities = set()
             else:
                 self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
-        
+
         return self._cached_modalities
 
     def get_modalities(self) -> Set[str]:
