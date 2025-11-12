@@ -72,8 +72,6 @@ class Pipeline:
         self._initialize_lock = asyncio.Lock()
         self._ingest_enabled = True
         self._prompt_update_lock = asyncio.Lock()
-        self._loading_active = False
-        self._loading_message = "Loading workflow..."
 
     @property
     def state(self) -> PipelineState:
@@ -142,16 +140,11 @@ class Pipeline:
         state_before = self.state
         transitioned = False
         warmup_successful = False
-        started_loading = False
 
         try:
             if state_before != PipelineState.STREAMING:
                 await self.state_manager.transition_to(PipelineState.INITIALIZING)
                 transitioned = True
-
-            if not self.is_loading():
-                self.begin_loading("Warming pipeline...")
-                started_loading = True
 
             await self._run_warmup(
                 warm_video=warm_video,
@@ -174,9 +167,6 @@ class Pipeline:
                     await self.state_manager.transition_to(PipelineState.STREAMING)
                 except Exception:
                     logger.exception("Failed to restore STREAMING state after warmup")
-
-            if started_loading and (not self.produces_video_output() or not warmup_successful):
-                self.end_loading("Workflow ready" if warmup_successful else "Workflow error")
 
     async def _run_warmup(
         self,
@@ -350,26 +340,6 @@ class Pipeline:
                 logger.exception("Failed to transition pipeline to ERROR state")
             raise
 
-    def begin_loading(self, message: str = "Loading workflow...") -> None:
-        """Mark the pipeline as actively loading."""
-        self._loading_active = True
-        if message:
-            self._loading_message = message
-
-    def end_loading(self, message: Optional[str] = None) -> None:
-        """Mark the pipeline as no longer loading."""
-        self._loading_active = False
-        if message:
-            self._loading_message = message
-
-    def is_loading(self) -> bool:
-        """Return whether the pipeline is currently loading."""
-        return self._loading_active
-
-    def get_loading_message(self) -> str:
-        """Return the current loading message."""
-        return self._loading_message
-
     def disable_ingest(self) -> None:
         """Temporarily disable ingestion of new frames into the pipeline."""
         self._ingest_enabled = False
@@ -387,7 +357,6 @@ class Pipeline:
         prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]],
         *,
         skip_warmup: bool = False,
-        loading_message: Optional[str] = "Loading workflow...",
         warm_video: Optional[bool] = None,
         warm_audio: Optional[bool] = None,
     ) -> WorkflowModality:
@@ -401,7 +370,6 @@ class Pipeline:
         Args:
             prompts: Prompt dictionary or list of prompt dictionaries to apply.
             skip_warmup: If True, skip automatic warmup after applying prompts.
-            loading_message: Message to display while new prompts are being prepared.
             warm_video: Optional override for video warmup (None = auto-detect).
             warm_audio: Optional override for audio warmup (None = auto-detect).
 
@@ -415,7 +383,6 @@ class Pipeline:
             was_initialized = self.state_manager.is_initialized()
             restart_streaming = False
             capabilities: WorkflowModality | None = None
-            self.begin_loading(loading_message or "Loading workflow...")
             self.disable_ingest()
 
             try:
@@ -435,7 +402,6 @@ class Pipeline:
                 audio_capability = capabilities.get("audio", {})
 
                 has_video_io = bool(video_capability.get("input") or video_capability.get("output"))
-                has_video_output = bool(video_capability.get("output"))
                 has_audio_io = bool(audio_capability.get("input") or audio_capability.get("output"))
 
                 if not skip_warmup:
@@ -446,11 +412,7 @@ class Pipeline:
 
                 restart_streaming = was_streaming and self.state_manager.can_stream()
 
-                if not has_video_output:
-                    self.end_loading("Workflow ready")
-
             except Exception:
-                self.end_loading("Workflow error")
                 raise
             finally:
                 self.enable_ingest()

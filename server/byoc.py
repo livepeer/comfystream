@@ -13,6 +13,7 @@ if torch.cuda.is_available():
 from aiohttp import web
 from frame_processor import ComfyStreamFrameProcessor
 from pytrickle.frame_skipper import FrameSkipConfig
+from pytrickle.loading_config import LoadingConfig, LoadingMode
 from pytrickle.stream_processor import StreamProcessor
 from pytrickle.utils.register import RegisterCapability
 
@@ -126,6 +127,12 @@ def main():
         port=int(args.port),
         host=args.host,
         frame_skip_config=frame_skip_config,
+        loading_config=LoadingConfig(
+            mode=LoadingMode.OVERLAY,
+            message="Loading workflow...",
+            enabled=True,
+            auto_timeout_seconds=1.5,
+        ),
         # Ensure server metadata reflects the desired capability name
         capability_name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
         # server_kwargs...

@@ -266,7 +266,6 @@ async def offer(request):
         await pipeline.apply_prompts(
             prompts,
             skip_warmup=False,
-            loading_message="Initializing stream...",
         )
         await pipeline.start_streaming()
         logger.info("[Offer] Set workflow prompts, warmed pipeline, and started execution")
