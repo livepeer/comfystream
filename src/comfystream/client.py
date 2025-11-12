@@ -129,8 +129,8 @@ class ComfyStreamClient:
             logger.info("Client cleanup complete")
 
     async def cancel_running_prompts(self):
-        """Pause the runner without tearing down the client."""
-        self._run_enabled_event.clear()
+        """Cancel the runner task to stop prompt execution immediately."""
+        await self.stop_prompts_immediately()
 
     async def pause_prompts(self):
         """Pause prompt execution loops without canceling underlying tasks."""
