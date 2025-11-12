@@ -82,7 +82,9 @@ def main():
         logging.getLogger("comfy").setLevel(log_level)
 
     # Add ComfyStream timeout filter to suppress verbose execution logging
-    logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
+    timeout_filter = ComfyStreamTimeoutFilter()
+    logging.getLogger("comfy.cmd.execution").addFilter(timeout_filter)
+    logging.getLogger("comfystream").addFilter(timeout_filter)
 
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)
@@ -117,6 +119,7 @@ def main():
         audio_processor=frame_processor.process_audio_async,
         model_loader=frame_processor.load_model,
         param_updater=frame_processor.update_params,
+        on_stream_start=frame_processor.on_stream_start,
         on_stream_stop=frame_processor.on_stream_stop,
         # Align processor name with capability for consistent logs
         name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
@@ -131,10 +134,6 @@ def main():
 
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
-
-    # Create async startup function to load model
-    async def load_model_on_startup(app):
-        await processor._frame_processor.load_model()
 
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
@@ -168,8 +167,7 @@ def main():
             # Clear ORCH_SECRET from environment even on error
             os.environ.pop("ORCH_SECRET", None)
 
-    # Add model loading and registration to startup hooks
-    processor.server.app.on_startup.append(load_model_on_startup)
+    # Add registration to startup hooks
     processor.server.app.on_startup.append(register_orchestrator_startup)
 
     # Add warmup endpoint: accepts same body as prompts update

@@ -255,9 +255,13 @@ async def offer(request):
     if is_noop_mode:
         logger.info("[Offer] No prompts provided - entering noop passthrough mode")
     else:
-        await pipeline.set_prompts(prompts)
-        await pipeline.resume_prompts()
-        logger.info("[Offer] Set workflow prompts and resumed execution")
+        await pipeline.apply_prompts(
+            prompts,
+            skip_warmup=False,
+            loading_message="Initializing stream...",
+        )
+        await pipeline.start_streaming()
+        logger.info("[Offer] Set workflow prompts, warmed pipeline, and started execution")
 
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
@@ -403,7 +407,7 @@ async def offer(request):
                         logger.info("[Control] Noop mode - no prompts to resume")
                     else:
                         try:
-                            await pipeline.resume_prompts()
+                            await pipeline.start_streaming()
                             logger.info("[Control] Resumed prompt execution")
                         except Exception as e:
                             logger.error(f"[Control] Error resuming prompts: {str(e)}")
@@ -603,15 +607,7 @@ async def offer(request):
         )
 
     # Warm up the pipeline based on detected modalities and SDP content (skip in noop mode)
-    if not is_noop_mode:
-        if "m=video" in pc.remoteDescription.sdp and pipeline.accepts_video_input():
-            logger.info("[Offer] Warming up video pipeline")
-            await pipeline.warm_video()
-
-        if "m=audio" in pc.remoteDescription.sdp and pipeline.accepts_audio_input():
-            logger.info("[Offer] Warming up audio pipeline")
-            await pipeline.warm_audio()
-    else:
+    if is_noop_mode:
         logger.debug("[Offer] Skipping pipeline warmup in noop mode")
 
     answer = await pc.createAnswer()
@@ -637,7 +633,7 @@ async def set_prompt(request):
     pipeline = request.app["pipeline"]
 
     prompt = await request.json()
-    await pipeline.set_prompts(prompt)
+    await pipeline.apply_prompts(prompt)
 
     return web.Response(content_type="application/json", text="OK")
 
@@ -660,6 +656,7 @@ async def on_startup(app: web.Application):
         comfyui_inference_log_level=app.get("comfyui_inference_log_level", None),
         blacklist_custom_nodes=["ComfyUI-Manager"],
     )
+    await app["pipeline"].initialize()
     app["pcs"] = set()
     app["video_tracks"] = {}
 
@@ -760,7 +757,9 @@ if __name__ == "__main__":
         logging.getLogger("comfy").setLevel(log_level)
 
     # Add ComfyStream timeout filter to suppress verbose execution logging
-    logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
+    timeout_filter = ComfyStreamTimeoutFilter()
+    logging.getLogger("comfy.cmd.execution").addFilter(timeout_filter)
+    logging.getLogger("comfystream").addFilter(timeout_filter)
     if args.comfyui_inference_log_level:
         app["comfyui_inference_log_level"] = args.comfyui_inference_log_level
 
