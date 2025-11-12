@@ -252,6 +252,14 @@ async def offer(request):
     prompts = params.get("prompts")
     is_noop_mode = not prompts
 
+    resolution = params.get("resolution")
+    if resolution:
+        pipeline.width = resolution["width"]
+        pipeline.height = resolution["height"]
+        logger.info(
+            f"[Offer] Set pipeline resolution to {resolution['width']}x{resolution['height']}"
+        )
+
     if is_noop_mode:
         logger.info("[Offer] No prompts provided - entering noop passthrough mode")
     else:
@@ -262,15 +270,6 @@ async def offer(request):
         )
         await pipeline.start_streaming()
         logger.info("[Offer] Set workflow prompts, warmed pipeline, and started execution")
-
-    # Set resolution if provided in the offer
-    resolution = params.get("resolution")
-    if resolution:
-        pipeline.width = resolution["width"]
-        pipeline.height = resolution["height"]
-        logger.info(
-            f"[Offer] Set pipeline resolution to {resolution['width']}x{resolution['height']}"
-        )
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
