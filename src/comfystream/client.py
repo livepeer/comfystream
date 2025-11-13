@@ -21,7 +21,6 @@ class ComfyStreamClient:
         self.current_prompts = []
         self._cleanup_lock = asyncio.Lock()
         self._prompt_update_lock = asyncio.Lock()
-        self._stop_event = asyncio.Event()
 
         # PromptRunner state
         self._shutdown_event = asyncio.Event()
@@ -107,7 +106,6 @@ class ComfyStreamClient:
 
     async def cleanup(self):
         # Signal runner to shutdown
-        self._stop_event.set()
         self._shutdown_event.set()
         if self._runner_task:
             self._runner_task.cancel()
@@ -128,11 +126,7 @@ class ComfyStreamClient:
             await self.cleanup_queues()
             logger.info("Client cleanup complete")
 
-    async def cancel_running_prompts(self):
-        """Cancel the runner task to stop prompt execution immediately."""
-        await self.stop_prompts_immediately()
-
-    async def pause_prompts(self):
+    def pause_prompts(self):
         """Pause prompt execution loops without canceling underlying tasks."""
         self._run_enabled_event.clear()
         logger.debug("Prompt execution paused")
@@ -140,7 +134,6 @@ class ComfyStreamClient:
     async def resume_prompts(self):
         """Resume prompt execution loops."""
         await self.ensure_prompt_tasks_running()
-        self._stop_event.clear()
         self._run_enabled_event.set()
         logger.debug("Prompt execution resumed")
 
@@ -151,9 +144,7 @@ class ComfyStreamClient:
             cleanup: If True, perform full cleanup including queue clearing and
                 client shutdown. If False, only cancel prompt tasks.
         """
-        self._stop_event.set()
-
-        await self.cancel_running_prompts()
+        await self.stop_prompts_immediately()
 
         if cleanup:
             await self.cleanup()
@@ -176,13 +167,6 @@ class ComfyStreamClient:
 
         while not tensor_cache.text_outputs.empty():
             await tensor_cache.text_outputs.get()
-
-    # Explicit lifecycle helpers for external controllers (FrameProcessor)
-    def resume(self):
-        self._run_enabled_event.set()
-
-    def pause(self):
-        self._run_enabled_event.clear()
 
     async def stop_prompts_immediately(self):
         """Cancel the runner task to immediately stop any in-flight prompt execution."""

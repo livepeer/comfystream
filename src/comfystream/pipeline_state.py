@@ -92,13 +92,13 @@ class PipelineStateManager:
         if state == PipelineState.INITIALIZING:
             await self.client.resume_prompts()
         elif state == PipelineState.READY:
-            await self.client.pause_prompts()
+            self.client.pause_prompts()
         elif state == PipelineState.STREAMING:
             await self.client.resume_prompts()
         elif state == PipelineState.ERROR:
-            await self.client.pause_prompts()
+            self.client.pause_prompts()
         elif state == PipelineState.UNINITIALIZED:
-            await self.client.pause_prompts()
+            self.client.pause_prompts()
 
     async def _on_exit_state(self, _state: PipelineState):
         """Actions executed when exiting a state."""
