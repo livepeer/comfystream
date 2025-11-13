@@ -82,7 +82,9 @@ def main():
         logging.getLogger("comfy").setLevel(log_level)
 
     # Add ComfyStream timeout filter to suppress verbose execution logging
-    logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
+    timeout_filter = ComfyStreamTimeoutFilter()
+    logging.getLogger("comfy.cmd.execution").addFilter(timeout_filter)
+    logging.getLogger("comfystream").addFilter(timeout_filter)
 
     def force_print(*args, **kwargs):
         print(*args, **kwargs, flush=True)
@@ -117,6 +119,7 @@ def main():
         audio_processor=frame_processor.process_audio_async,
         model_loader=frame_processor.load_model,
         param_updater=frame_processor.update_params,
+        on_stream_start=frame_processor.on_stream_start,
         on_stream_stop=frame_processor.on_stream_stop,
         # Align processor name with capability for consistent logs
         name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
@@ -131,10 +134,6 @@ def main():
 
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
-
-    # Create async startup function to load model
-    async def load_model_on_startup(app):
-        await processor._frame_processor.load_model()
 
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
@@ -168,32 +167,8 @@ def main():
             # Clear ORCH_SECRET from environment even on error
             os.environ.pop("ORCH_SECRET", None)
 
-    # Add model loading and registration to startup hooks
-    processor.server.app.on_startup.append(load_model_on_startup)
+    # Add registration to startup hooks
     processor.server.app.on_startup.append(register_orchestrator_startup)
-
-    # Add warmup endpoint: accepts same body as prompts update
-    async def warmup_handler(request):
-        try:
-            body = await request.json()
-        except Exception as e:
-            logger.error(f"Invalid JSON in warmup request: {e}")
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-        try:
-            # Inject sentinel to trigger warmup inside update_params on the model thread
-            if isinstance(body, dict):
-                body["warmup"] = True
-            else:
-                body = {"warmup": True}
-            # Fire-and-forget: do not await warmup; update_params will schedule it
-            asyncio.get_running_loop().create_task(frame_processor.update_params(body))
-            return web.json_response({"status": "accepted"})
-        except Exception as e:
-            logger.error(f"Warmup failed: {e}")
-            return web.json_response({"error": str(e)}, status=500)
-
-    # Mount at same API namespace as StreamProcessor defaults
-    processor.server.add_route("POST", "/api/stream/warmup", warmup_handler)
 
     # Run the processor
     processor.run()
