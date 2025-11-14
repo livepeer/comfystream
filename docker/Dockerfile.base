@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_VERSION="${CONDA_VERSION}" \
     PATH="/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}"
-    
+
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
     git wget nano socat \
@@ -89,9 +89,6 @@ COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 COPY ./docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
 
-# Install OpenCV CUDA
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream --no-capture-output docker/entrypoint.sh --opencv-cuda
-
 # Install ComfyUI requirements
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
 RUN cd /workspace/ComfyUI/custom_nodes/ComfyUI-Manager && pip install -r requirements.txt
@@ -99,6 +96,16 @@ RUN cd /workspace/ComfyUI/custom_nodes/ComfyUI-Manager && pip install -r require
 # Install ComfyStream requirements
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --root-user-action=ignore
+
+# Ensure numpy<2.0 is installed (required for OpenCV CUDA compatibility)
+RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
+
+# Install OpenCV CUDA (explicitly called since setuptools hooks may not trigger in editable mode)
+RUN conda run -n comfystream --no-capture-output python /workspace/comfystream/src/comfystream/scripts/install_opencv_cuda.py
+
+# Verify OpenCV CUDA installation
+RUN conda run -n comfystream --no-capture-output python /workspace/comfystream/src/comfystream/scripts/verify_opencv_cuda.py
+
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
 
 # Accept a build-arg that lets CI force-invalidate setup_nodes.py
@@ -107,8 +114,6 @@ ENV CACHEBUST=${CACHEBUST}
 
 # Run setup_nodes
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
-
-RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
 
 RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
 

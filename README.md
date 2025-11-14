@@ -86,6 +86,29 @@ pip install git+https://github.com/livepeer/comfystream.git
 # pip install -e .
 ```
 
+**OpenCV CUDA Installation:**
+
+ComfyStream requires OpenCV with CUDA support. Due to PEP 517 build isolation, the installation may not trigger automatically with `pip install`. After installing ComfyStream, manually run:
+
+```bash
+python src/comfystream/scripts/install_opencv_cuda.py
+```
+
+**Important:** The OpenCV CUDA binaries require `numpy<2.0`. The installation script will automatically downgrade NumPy if needed.
+
+Verify the installation:
+
+```bash
+python src/comfystream/scripts/verify_opencv_cuda.py
+```
+
+Or to skip OpenCV CUDA installation (if you already have OpenCV installed):
+
+```bash
+export COMFYSTREAM_SKIP_OPENCV_CUDA=true
+pip install -e .
+```
+
 ### Custom Nodes
 
 Comfystream uses a few auxiliary custom nodes to support running workflows.
