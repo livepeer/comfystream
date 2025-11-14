@@ -25,3 +25,4 @@ nodes/web/static/*
 
 # opencv files
 opencv
+pkgs/

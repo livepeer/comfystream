@@ -31,6 +31,13 @@ PublisherId = "livepeer-comfystream"
 DisplayName = "ComfyStream"
 Icon = "https://raw.githubusercontent.com/livepeer/comfystream-docs/main/logo/icon-light-120px.svg" # SVG, PNG, JPG or GIF (MAX. 800x400px)
 
+[tool.comfystream.opencv_cuda]
+artifact_url = "https://github.com/JJassonn69/ComfyUI-Stream-Pack/releases/download/v2.1/opencv-cuda-release.tar.gz"
+artifact_name = "opencv-cuda-release.tar.gz"
+package_name = "opencv-cuda"
+package_version = "0.1.0"
+library_dirs = ["/usr/lib/x86_64-linux-gnu"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = {find = {where = ["src", "nodes"]}}

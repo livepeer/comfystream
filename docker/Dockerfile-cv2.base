@@ -1,0 +1,127 @@
+ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 \
+    CONDA_VERSION=latest \
+    PYTHON_VERSION=3.12
+
+FROM "${BASE_IMAGE}"
+
+ARG CONDA_VERSION \
+    PYTHON_VERSION
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TensorRT_ROOT=/opt/TensorRT-10.12.0.36 \
+    CONDA_VERSION="${CONDA_VERSION}" \
+    PATH="/workspace/miniconda3/bin:${PATH}" \
+    PYTHON_VERSION="${PYTHON_VERSION}"
+    
+# System dependencies
+RUN apt update && apt install -yqq --no-install-recommends \
+    git wget nano socat \
+    libsndfile1 build-essential llvm tk-dev \
+    libglvnd-dev cmake swig libprotobuf-dev \
+    protobuf-compiler libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev \
+    libffi-dev libgirepository1.0-dev pkg-config libgflags-dev \
+    libgoogle-glog-dev libjpeg-dev libavcodec-dev libavformat-dev \
+    libavutil-dev libswscale-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+#enable opengl support with nvidia gpu
+RUN printf '%s\n' \
+  '{' \
+  '    "file_format_version" : "1.0.0",' \
+  '    "ICD" : {' \
+  '        "library_path" : "libEGL_nvidia.so.0"' \
+  '    }' \
+  '}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+# Conda setup
+RUN mkdir -p /workspace/comfystream && \
+    wget "https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}-Linux-x86_64.sh" -O /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -p /workspace/miniconda3 && \
+    eval "$(/workspace/miniconda3/bin/conda shell.bash hook)" && \
+    /workspace/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    /workspace/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+    conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
+    rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+
+RUN conda run -n comfystream --no-capture-output pip install --upgrade pip && \
+conda run -n comfystream --no-capture-output pip install wheel
+
+# Remove system cuDNN to avoid version conflicts with PyTorch-bundled cuDNN
+# The base image includes cuDNN 9.8, but PyTorch 2.7+ bundles cuDNN 9.7.1
+# Mixed versions cause CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH errors
+RUN apt-get remove --purge -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12 || true && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install cuDNN 9.7.1 via conda to match PyTorch's bundled version
+RUN conda install -n comfystream -y -c nvidia -c conda-forge cudnn=9.7.1 cuda-version=12.8
+
+# Copy only files needed for setup
+COPY ./src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
+COPY ./configs /workspace/comfystream/configs
+
+# TensorRT SDK
+WORKDIR /opt
+RUN wget --progress=dot:giga \
+    https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.12.0/tars/TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz \
+    && tar -xzf TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz \
+    && rm TensorRT-10.12.0.36.Linux.x86_64-gnu.cuda-12.9.tar.gz
+
+# Link libraries and update linker cache
+RUN echo "${TensorRT_ROOT}/lib" > /etc/ld.so.conf.d/tensorrt.conf \
+    && ldconfig
+
+# Install matching TensorRT Python bindings for CPython 3.12
+RUN conda run -n comfystream pip install --no-cache-dir \
+    ${TensorRT_ROOT}/python/tensorrt-10.12.0.36-cp312-none-linux_x86_64.whl
+
+# Clone ComfyUI
+RUN git clone --branch v0.3.60 --depth 1 https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
+RUN git clone https://github.com/Comfy-Org/ComfyUI-Manager.git /workspace/ComfyUI/custom_nodes/ComfyUI-Manager
+
+# Copy ComfyStream files into ComfyUI
+COPY . /workspace/comfystream
+
+RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pip install -r ./src/comfystream/scripts/constraints.txt
+
+# Copy comfystream and example workflows to ComfyUI
+COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
+COPY ./test/example-512x512.png /workspace/ComfyUI/input
+COPY ./docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+
+# Install OpenCV CUDA
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream --no-capture-output docker/entrypoint.sh --opencv-cuda
+
+# Install ComfyUI requirements
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --root-user-action=ignore
+RUN cd /workspace/ComfyUI/custom_nodes/ComfyUI-Manager && pip install -r requirements.txt
+
+# Install ComfyStream requirements
+RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
+
+# Accept a build-arg that lets CI force-invalidate setup_nodes.py
+ARG CACHEBUST=static
+ENV CACHEBUST=${CACHEBUST}
+
+# Run setup_nodes
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python src/comfystream/scripts/setup_nodes.py --workspace /workspace/ComfyUI
+
+RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
+
+RUN conda run -n comfystream --no-capture-output pip install --no-cache-dir xformers==0.0.30 --no-deps
+
+# Configure no environment activation by default
+RUN conda config --set auto_activate_base false && \
+    conda init bash
+
+# Set comfystream environment as default
+RUN echo "conda activate comfystream" >> ~/.bashrc
+
+WORKDIR /workspace/comfystream
+
+# Run ComfyStream BYOC server from /workspace/ComfyUI within the comfystream conda env
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "comfystream", "--cwd", "/workspace/ComfyUI", "python", "/workspace/comfystream/server/byoc.py"]
+# Default args; can be overridden/appended at runtime
+CMD ["--workspace", "/workspace/ComfyUI", "--host", "0.0.0.0", "--port", "8000"]
