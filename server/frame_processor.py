@@ -1,13 +1,16 @@
 import asyncio
 import logging
 import os
-from typing import List
+from typing import List, Union
 
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import AudioFrame, VideoFrame
+from pytrickle.loading_config import LoadingConfig, LoadingMode
+from pytrickle.stream_processor import VideoProcessingResult
 
 from comfystream.pipeline import Pipeline
-from comfystream.utils import ComfyStreamParamsUpdateRequest, convert_prompt
+from comfystream.pipeline_state import PipelineState
+from comfystream.utils import ComfyStreamParamsUpdateRequest, convert_prompt, get_default_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,16 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             text_poll_interval: Interval in seconds to poll for text outputs (default: 0.25)
             **load_params: Parameters for pipeline creation
         """
+        # Initialize parent with loading config for automatic overlay
+        super().__init__(
+            loading_config=LoadingConfig(
+                mode=LoadingMode.OVERLAY,
+                message="Loading workflow...",
+                enabled=True,
+                auto_timeout_seconds=1.5,
+            )
+        )
+
         self.pipeline = None
         self._load_params = load_params
         self._text_poll_interval = text_poll_interval
@@ -34,7 +47,18 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._text_forward_task = None
         self._background_tasks = []
         self._stop_event = asyncio.Event()
-        super().__init__()
+        self._first_frame_received = False
+
+    def _workflow_has_video(self) -> bool:
+        """Return True if current workflow is expected to produce video output."""
+        if not self.pipeline:
+            return False
+        try:
+            capabilities = self.pipeline.get_workflow_io_capabilities()
+            return bool(capabilities.get("video", {}).get("output", False))
+        except Exception:
+            logger.debug("Unable to determine workflow video capability", exc_info=True)
+            return False
 
     def set_stream_processor(self, stream_processor):
         """Set reference to StreamProcessor for data publishing."""
@@ -115,10 +139,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._stop_event.set()
 
         # Stop the ComfyStream client's prompt execution
-        if self.pipeline and self.pipeline.client:
+        if self.pipeline:
             logger.info("Stopping ComfyStream client prompt execution")
             try:
-                await self.pipeline.client.cleanup()
+                await self.pipeline.stop_prompts(cleanup=True)
             except Exception as e:
                 logger.error(f"Error stopping ComfyStream client: {e}")
 
@@ -146,9 +170,57 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._background_tasks.clear()
         logger.info("All background tasks cleaned up")
 
+        # Ensure loading overlay is turned off when stream stops
+        self.set_loading_active(False, message="Stream stopped")
+
     def _reset_stop_event(self):
         """Reset the stop event for a new stream."""
         self._stop_event.clear()
+
+    async def on_stream_start(self):
+        """Handle stream start lifecycle events."""
+        logger.info("Stream starting")
+        self._reset_stop_event()
+        self._first_frame_received = False
+
+        if not self.pipeline:
+            logger.debug("Stream start requested before pipeline initialization")
+            return
+
+        if not self.pipeline.state_manager.is_initialized():
+            logger.info("Pipeline not initialized; waiting for prompts before streaming")
+            return
+
+        # Enable loading overlay for video workflows until first frame
+        show_overlay = self._workflow_has_video()
+        if show_overlay:
+            self.set_loading_active(True, message="Initializing stream...")
+        else:
+            self.set_loading_active(False, message="Stream ready")
+
+        try:
+            if (
+                self.pipeline.state != PipelineState.STREAMING
+                and self.pipeline.state_manager.can_stream()
+            ):
+                await self.pipeline.start_streaming()
+
+            if self.pipeline.produces_text_output():
+                self._setup_text_monitoring()
+            else:
+                await self._stop_text_forwarder()
+        except Exception:
+            logger.exception("Failed during stream start", exc_info=True)
+            if show_overlay:
+                self.set_loading_active(False, message="Stream error")
+            raise
+
+    async def prepare_stream_loading(self, message: str = "Loading workflow..."):
+        """Prime the loading overlay prior to receiving stream frames."""
+        if not self.pipeline:
+            return
+        self._first_frame_received = False
+        self.set_loading_active(True, message=message)
 
     async def load_model(self, **kwargs):
         """Load model and initialize the pipeline."""
@@ -166,6 +238,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 logging_level=params.get("comfyui_inference_log_level", "INFO"),
                 blacklist_custom_nodes=["ComfyUI-Manager"],
             )
+            await self.pipeline.initialize()
 
     async def warmup(self):
         """Warm up the pipeline."""
@@ -178,15 +251,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             capabilities = self.pipeline.get_workflow_io_capabilities()
             logger.info(f"Detected I/O capabilities: {capabilities}")
 
-            if capabilities.get("video", {}).get("input") or capabilities.get("video", {}).get(
-                "output"
-            ):
-                await self.pipeline.warm_video()
-
-            if capabilities.get("audio", {}).get("input") or capabilities.get("audio", {}).get(
-                "output"
-            ):
-                await self.pipeline.warm_audio()
+            await self.pipeline.warmup()
 
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
@@ -203,9 +268,23 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         except Exception:
             logger.warning("Failed to schedule warmup", exc_info=True)
 
-    async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
-        """Process video frame through ComfyStream Pipeline."""
+    async def process_video_async(
+        self, frame: VideoFrame
+    ) -> Union[VideoFrame, VideoProcessingResult]:
+        """Process video frame through ComfyStream Pipeline.
+
+        Returns VideoProcessingResult.WITHHELD to trigger pytrickle's automatic overlay when
+        processed frames are not yet available.
+        """
         try:
+            if not self.pipeline:
+                return frame
+
+            # If pipeline ingestion is paused, withhold frame so pytrickle renders the overlay
+            if not self.pipeline.is_ingest_enabled():
+                self.set_loading_active(True)
+                return VideoProcessingResult.WITHHELD
+
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
             av_frame.pts = frame.timestamp
@@ -213,11 +292,26 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
             # Process through pipeline
             await self.pipeline.put_video_frame(av_frame)
-            processed_av_frame = await self.pipeline.get_processed_video_frame()
 
-            # Convert back to pytrickle VideoFrame
-            processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
-            return processed_frame
+            # Try to get processed frame with short timeout
+            try:
+                processed_av_frame = await asyncio.wait_for(
+                    self.pipeline.get_processed_video_frame(),
+                    timeout=0.05,
+                )
+                processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
+
+                # First frame received - disable loading overlay
+                if not self._first_frame_received:
+                    self._first_frame_received = True
+                    self.set_loading_active(False, message="Workflow ready")
+
+                return processed_frame
+
+            except asyncio.TimeoutError:
+                # No frame ready yet - return withheld sentinel to trigger overlay
+                self.set_loading_active(True)
+                return VideoProcessingResult.WITHHELD
 
         except Exception as e:
             logger.error(f"Video processing failed: {e}")
@@ -229,7 +323,13 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             if not self.pipeline:
                 return [frame]
 
-            # Audio processing needed - use pipeline
+            # If pipeline ingestion is paused, passthrough audio
+            if not self.pipeline.is_ingest_enabled():
+                frame.side_data.skipped = True
+                frame.side_data.passthrough = True
+                return [frame]
+
+            # Audio processing - use pipeline
             av_frame = frame.to_av_frame()
             await self.pipeline.put_audio_frame(av_frame)
             processed_av_frame = await self.pipeline.get_processed_audio_frame()
@@ -267,16 +367,42 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if validated.get("warmup", False):
             self._schedule_warmup()
 
+        if "show_loading" in validated:
+            if validated["show_loading"]:
+                message = validated.get("loading_message") or "Loading workflow..."
+                self.set_loading_active(True, message=message)
+            else:
+                message = validated.get("loading_message") or "Workflow ready"
+                self.set_loading_active(False, message=message)
+
     async def _process_prompts(self, prompts):
         """Process and set prompts in the pipeline."""
+        if not self.pipeline:
+            logger.warning("Prompt update requested before pipeline initialization")
+            return
         try:
             converted = convert_prompt(prompts, return_dict=True)
 
-            # Set prompts in pipeline
-            await self.pipeline.set_prompts([converted])
-            logger.info(f"Prompts set successfully: {list(prompts.keys())}")
+            self.set_loading_active(True, message="Loading workflow...")
 
-            # Update text monitoring based on workflow capabilities
+            capabilities = await self.pipeline.apply_prompts(
+                [converted],
+                skip_warmup=False,
+            )
+
+            video_capability = capabilities.get("video", {})
+            has_video_output = bool(video_capability.get("output"))
+
+            if has_video_output:
+                self._first_frame_received = False
+            else:
+                self.set_loading_active(False, message="Workflow ready")
+
+            if self.pipeline.state_manager.can_stream():
+                await self.pipeline.start_streaming()
+
+            logger.info(f"Prompts applied successfully: {list(prompts.keys())}")
+
             if self.pipeline.produces_text_output():
                 self._setup_text_monitoring()
             else:
@@ -284,3 +410,5 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         except Exception as e:
             logger.error(f"Failed to process prompts: {e}")
+            self.set_loading_active(False, message="Workflow error")
+            raise

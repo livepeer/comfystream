@@ -84,11 +84,13 @@ class ComfyStreamTimeoutFilter(logging.Filter):
             if record.levelno != logging.ERROR:
                 return True
 
-            # Check if this is from ComfyUI execution system
-            if not (
-                record.name.startswith("comfy")
-                and ("execution" in record.name or record.name == "comfy")
-            ):
+            # Determine if this record is from a logger we want to inspect for timeout suppression
+            is_comfy_execution_logger = record.name.startswith("comfy") and (
+                "execution" in record.name or record.name == "comfy"
+            )
+            is_comfystream_logger = record.name.startswith("comfystream")
+
+            if not (is_comfy_execution_logger or is_comfystream_logger):
                 return True
 
             # Get the full message including any exception info
