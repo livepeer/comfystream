@@ -1,0 +1,25 @@
+{
+  "1": {
+    "inputs": {
+      "value": "Hello from ComfyStream!"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "String Input"
+    }
+  },
+  "2": {
+    "inputs": {
+      "data": [
+        "1",
+        0
+      ],
+      "remove_linebreaks": true
+    },
+    "class_type": "SaveTextTensor",
+    "_meta": {
+      "title": "Save Text Tensor"
+    }
+  }
+}
+
