@@ -1,14 +1,13 @@
 import asyncio
-import json
 import logging
 import os
 from typing import List
 
-import numpy as np
 from pytrickle.frame_processor import FrameProcessor
-from pytrickle.frames import VideoFrame, AudioFrame
+from pytrickle.frames import AudioFrame, VideoFrame
+
 from comfystream.pipeline import Pipeline
-from comfystream.utils import convert_prompt, ComfyStreamParamsUpdateRequest
+from comfystream.utils import ComfyStreamParamsUpdateRequest, convert_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +15,13 @@ logger = logging.getLogger(__name__)
 class ComfyStreamFrameProcessor(FrameProcessor):
     """
     Integrated ComfyStream FrameProcessor for pytrickle.
-    
+
     This class wraps the ComfyStream Pipeline to work with pytrickle's streaming architecture.
     """
 
     def __init__(self, text_poll_interval: float = 0.25, **load_params):
         """Initialize with load parameters for pipeline creation.
-        
+
         Args:
             text_poll_interval: Interval in seconds to poll for text outputs (default: 0.25)
             **load_params: Parameters for pipeline creation
@@ -41,7 +40,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """Set reference to StreamProcessor for data publishing."""
         self._stream_processor = stream_processor
         logger.info("StreamProcessor reference set for text data publishing")
-    
+
     def _setup_text_monitoring(self):
         """Set up background text forwarding from the pipeline."""
         try:
@@ -75,7 +74,9 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                                     if self._stream_processor:
                                         success = await self._stream_processor.send_data(text)
                                         if not success:
-                                            logger.debug("Text send failed; stopping text forwarder")
+                                            logger.debug(
+                                                "Text send failed; stopping text forwarder"
+                                            )
                                             break
                                 except asyncio.CancelledError:
                                     logger.debug("Text forwarder task cancelled")
@@ -105,7 +106,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             except Exception:
                 logger.debug("Error while awaiting text forwarder cancellation", exc_info=True)
         self._text_forward_task = None
-    
+
     async def on_stream_stop(self):
         """Called when stream stops - cleanup background tasks."""
         logger.info("Stream stopped, cleaning up background tasks")
@@ -144,7 +145,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         self._background_tasks.clear()
         logger.info("All background tasks cleaned up")
-    
+
     def _reset_stop_event(self):
         """Reset the stop event for a new stream."""
         self._stop_event.clear()
@@ -152,16 +153,18 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def load_model(self, **kwargs):
         """Load model and initialize the pipeline."""
         params = {**self._load_params, **kwargs}
-        
+
         if self.pipeline is None:
             self.pipeline = Pipeline(
-                width=int(params.get('width', 512)),
-                height=int(params.get('height', 512)),
-                cwd=params.get('workspace', os.getcwd()),
-                disable_cuda_malloc=params.get('disable_cuda_malloc', True),
-                gpu_only=params.get('gpu_only', True),
-                preview_method=params.get('preview_method', 'none'),
-                comfyui_inference_log_level=params.get('comfyui_inference_log_level'),
+                width=int(params.get("width", 512)),
+                height=int(params.get("height", 512)),
+                cwd=params.get("workspace", os.getcwd()),
+                disable_cuda_malloc=params.get("disable_cuda_malloc", True),
+                gpu_only=params.get("gpu_only", True),
+                preview_method=params.get("preview_method", "none"),
+                comfyui_inference_log_level=params.get("comfyui_inference_log_level", "INFO"),
+                logging_level=params.get("comfyui_inference_log_level", "INFO"),
+                blacklist_custom_nodes=["ComfyUI-Manager"],
             )
 
     async def warmup(self):
@@ -169,18 +172,22 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if not self.pipeline:
             logger.warning("Warmup requested before pipeline initialization")
             return
-        
+
         logger.info("Running pipeline warmup...")
         try:
             capabilities = self.pipeline.get_workflow_io_capabilities()
             logger.info(f"Detected I/O capabilities: {capabilities}")
-            
-            if capabilities.get("video", {}).get("input") or capabilities.get("video", {}).get("output"):
+
+            if capabilities.get("video", {}).get("input") or capabilities.get("video", {}).get(
+                "output"
+            ):
                 await self.pipeline.warm_video()
-            
-            if capabilities.get("audio", {}).get("input") or capabilities.get("audio", {}).get("output"):
+
+            if capabilities.get("audio", {}).get("input") or capabilities.get("audio", {}).get(
+                "output"
+            ):
                 await self.pipeline.warm_audio()
-                
+
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
 
@@ -199,20 +206,19 @@ class ComfyStreamFrameProcessor(FrameProcessor):
     async def process_video_async(self, frame: VideoFrame) -> VideoFrame:
         """Process video frame through ComfyStream Pipeline."""
         try:
-            
             # Convert pytrickle VideoFrame to av.VideoFrame
             av_frame = frame.to_av_frame(frame.tensor)
             av_frame.pts = frame.timestamp
             av_frame.time_base = frame.time_base
-            
+
             # Process through pipeline
             await self.pipeline.put_video_frame(av_frame)
             processed_av_frame = await self.pipeline.get_processed_video_frame()
-            
+
             # Convert back to pytrickle VideoFrame
             processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
             return processed_frame
-            
+
         except Exception as e:
             logger.error(f"Video processing failed: {e}")
             return frame
@@ -222,14 +228,14 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             if not self.pipeline:
                 return [frame]
-            
+
             # Audio processing needed - use pipeline
             av_frame = frame.to_av_frame()
             await self.pipeline.put_audio_frame(av_frame)
             processed_av_frame = await self.pipeline.get_processed_audio_frame()
             processed_frame = AudioFrame.from_av_audio(processed_av_frame)
             return [processed_frame]
-        
+
         except Exception as e:
             logger.error(f"Audio processing failed: {e}")
             return [frame]
@@ -238,44 +244,43 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """Update processing parameters."""
         if not self.pipeline:
             return
-    
+
         # Handle list input - take first element
         if isinstance(params, list) and params:
             params = params[0]
-        
+
         # Validate parameters using the centralized validation
         validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
         logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
-        
+
         # Process prompts if provided
         if "prompts" in validated and validated["prompts"]:
             await self._process_prompts(validated["prompts"])
-        
+
         # Update pipeline dimensions
         if "width" in validated:
             self.pipeline.width = int(validated["width"])
         if "height" in validated:
             self.pipeline.height = int(validated["height"])
-        
+
         # Schedule warmup if requested
         if validated.get("warmup", False):
             self._schedule_warmup()
-            
 
     async def _process_prompts(self, prompts):
         """Process and set prompts in the pipeline."""
         try:
             converted = convert_prompt(prompts, return_dict=True)
-                 
+
             # Set prompts in pipeline
             await self.pipeline.set_prompts([converted])
             logger.info(f"Prompts set successfully: {list(prompts.keys())}")
-            
+
             # Update text monitoring based on workflow capabilities
             if self.pipeline.produces_text_output():
                 self._setup_text_monitoring()
             else:
                 await self._stop_text_forwarder()
-                
+
         except Exception as e:
             logger.error(f"Failed to process prompts: {e}")

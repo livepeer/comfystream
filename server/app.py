@@ -4,17 +4,13 @@ import json
 import logging
 import os
 import sys
-import time
-import secrets
+
 import torch
 
 # Initialize CUDA before any other imports to prevent core dump.
 if torch.cuda.is_available():
     torch.cuda.init()
 
-
-from aiohttp import web, MultipartWriter
-from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiohttp import web
 from aiortc import (
     MediaStreamTrack,
@@ -23,16 +19,16 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
+
 # Import HTTP streaming modules
-from http_streaming.routes import setup_routes
 from aiortc.codecs import h264
 from aiortc.rtcrtpsender import RTCRtpSender
-from comfystream.pipeline import Pipeline
 from twilio.rest import Client
-from comfystream.server.utils import patch_loop_datagram, add_prefix_to_app_routes, FPSMeter
+
 from comfystream.exceptions import ComfyStreamTimeoutFilter
+from comfystream.pipeline import Pipeline
 from comfystream.server.metrics import MetricsManager, StreamStatsManager
-import time
+from comfystream.server.utils import FPSMeter, add_prefix_to_app_routes, patch_loop_datagram
 
 logger = logging.getLogger(__name__)
 logging.getLogger("aiortc.rtcrtpsender").setLevel(logging.WARNING)
@@ -65,12 +61,10 @@ class VideoStreamTrack(MediaStreamTrack):
         super().__init__()
         self.track = track
         self.pipeline = pipeline
-        self.fps_meter = FPSMeter(
-            metrics_manager=app["metrics_manager"], track_id=track.id
-        )
+        self.fps_meter = FPSMeter(metrics_manager=app["metrics_manager"], track_id=track.id)
         self.running = True
         self.collect_task = asyncio.create_task(self.collect_frames())
-        
+
         # Add cleanup when track ends
         @track.on("ended")
         async def on_ended():
@@ -96,7 +90,7 @@ class VideoStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting video frames: {str(e)}")
                     self.running = False
                     break
-            
+
             # Perform cleanup outside the exception handler
             logger.info("Video frame collection stopped")
         except asyncio.CancelledError:
@@ -112,15 +106,6 @@ class VideoStreamTrack(MediaStreamTrack):
         """
         processed_frame = await self.pipeline.get_processed_video_frame()
 
-                # Update the frame buffer with the processed frame
-        try:
-            from frame_buffer import FrameBuffer
-            frame_buffer = FrameBuffer.get_instance()
-            frame_buffer.update_frame(processed_frame)
-        except Exception as e:
-            # Don't let frame buffer errors affect the main pipeline
-            print(f"Error updating frame buffer: {e}")
-
         # Increment the frame count to calculate FPS.
         await self.fps_meter.increment_frame_count()
 
@@ -129,6 +114,7 @@ class VideoStreamTrack(MediaStreamTrack):
 
 class NoopVideoStreamTrack(MediaStreamTrack):
     """Simple passthrough video track that bypasses pipeline processing."""
+
     kind = "video"
 
     def __init__(self, track: MediaStreamTrack):
@@ -148,6 +134,7 @@ class NoopVideoStreamTrack(MediaStreamTrack):
 
 class NoopAudioStreamTrack(MediaStreamTrack):
     """Simple passthrough audio track that bypasses pipeline processing."""
+
     kind = "audio"
 
     def __init__(self, track: MediaStreamTrack):
@@ -175,7 +162,7 @@ class AudioStreamTrack(MediaStreamTrack):
         self.running = True
         logger.info(f"AudioStreamTrack created for track {track.id}")
         self.collect_task = asyncio.create_task(self.collect_frames())
-        
+
         # Add cleanup when track ends
         @track.on("ended")
         async def on_ended():
@@ -201,7 +188,7 @@ class AudioStreamTrack(MediaStreamTrack):
                         logger.error(f"Error collecting audio frames: {str(e)}")
                     self.running = False
                     break
-            
+
             # Perform cleanup outside the exception handler
             logger.info("Audio frame collection stopped")
         except asyncio.CancelledError:
@@ -213,6 +200,7 @@ class AudioStreamTrack(MediaStreamTrack):
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
+
 
 def force_codec(pc, sender, forced_codec):
     kind = forced_codec.split("/")[0]
@@ -259,39 +247,39 @@ async def offer(request):
     pcs = request.app["pcs"]
 
     params = await request.json()
-    
+
     # Check if this is noop mode (no prompts provided)
     prompts = params.get("prompts")
     is_noop_mode = not prompts
-    
+
     if is_noop_mode:
         logger.info("[Offer] No prompts provided - entering noop passthrough mode")
     else:
         await pipeline.set_prompts(prompts)
         logger.info("[Offer] Set workflow prompts")
-    
+
     # Set resolution if provided in the offer
     resolution = params.get("resolution")
     if resolution:
         pipeline.width = resolution["width"]
         pipeline.height = resolution["height"]
-        logger.info(f"[Offer] Set pipeline resolution to {resolution['width']}x{resolution['height']}")
+        logger.info(
+            f"[Offer] Set pipeline resolution to {resolution['width']}x{resolution['height']}"
+        )
 
     offer_params = params["offer"]
     offer = RTCSessionDescription(sdp=offer_params["sdp"], type=offer_params["type"])
-    
+
     ice_servers = get_ice_servers()
     if len(ice_servers) > 0:
-        pc = RTCPeerConnection(
-            configuration=RTCConfiguration(iceServers=get_ice_servers())
-        )
+        pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=get_ice_servers()))
     else:
         pc = RTCPeerConnection()
 
     pcs.add(pc)
 
     tracks = {"video": None, "audio": None}
-    
+
     # Flag to track if we've received resolution update
     resolution_received = {"value": False}
 
@@ -333,9 +321,7 @@ async def offer(request):
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_prompts":
                         if "prompts" not in params:
-                            logger.warning(
-                                "[Control] Missing prompt in update_prompt message"
-                            )
+                            logger.warning("[Control] Missing prompt in update_prompt message")
                             return
                         try:
                             await pipeline.update_prompts(params["prompts"])
@@ -345,35 +331,38 @@ async def offer(request):
                         channel.send(json.dumps(response))
                     elif params.get("type") == "update_resolution":
                         if "width" not in params or "height" not in params:
-                            logger.warning("[Control] Missing width or height in update_resolution message")
+                            logger.warning(
+                                "[Control] Missing width or height in update_resolution message"
+                            )
                             return
-                        
+
                         if is_noop_mode:
-                            logger.info(f"[Control] Noop mode - resolution update to {params['width']}x{params['height']} (no pipeline involved)")
+                            logger.info(
+                                f"[Control] Noop mode - resolution update to {params['width']}x{params['height']} (no pipeline involved)"
+                            )
                         else:
                             # Update pipeline resolution for future frames
                             pipeline.width = params["width"]
                             pipeline.height = params["height"]
-                            logger.info(f"[Control] Updated resolution to {params['width']}x{params['height']}")
-                        
+                            logger.info(
+                                f"[Control] Updated resolution to {params['width']}x{params['height']}"
+                            )
+
                         # Mark that we've received resolution
                         resolution_received["value"] = True
-                        
+
                         if is_noop_mode:
                             logger.info("[Control] Noop mode - no warmup needed")
                         else:
                             # Note: Video warmup now happens during offer, not here
-                            logger.info("[Control] Resolution updated - warmup was already performed during offer")
-                            
-                        response = {
-                            "type": "resolution_updated",
-                            "success": True
-                        }
+                            logger.info(
+                                "[Control] Resolution updated - warmup was already performed during offer"
+                            )
+
+                        response = {"type": "resolution_updated", "success": True}
                         channel.send(json.dumps(response))
                     else:
-                        logger.warning(
-                            "[Server] Invalid message format - missing required fields"
-                        )
+                        logger.warning("[Server] Invalid message format - missing required fields")
                 except json.JSONDecodeError:
                     logger.error("[Server] Invalid JSON received")
                 except Exception as e:
@@ -382,12 +371,16 @@ async def offer(request):
         elif channel.label == "data":
             if is_noop_mode:
                 logger.debug("[TextChannel] Noop mode - skipping text output forwarding")
+
                 # In noop mode, just acknowledge the data channel but don't forward anything
                 @channel.on("open")
                 def on_data_channel_open():
-                    logger.debug("[TextChannel] Data channel opened in noop mode (no text forwarding)")
+                    logger.debug(
+                        "[TextChannel] Data channel opened in noop mode (no text forwarding)"
+                    )
             else:
                 if pipeline.produces_text_output():
+
                     async def forward_text():
                         try:
                             while channel.readyState == "open":
@@ -402,7 +395,9 @@ async def offer(request):
                                         try:
                                             channel.send(json.dumps({"type": "text", "data": text}))
                                         except Exception as e:
-                                            logger.debug(f"[TextChannel] Send failed, stopping forwarder: {e}")
+                                            logger.debug(
+                                                f"[TextChannel] Send failed, stopping forwarder: {e}"
+                                            )
                                             break
                                 except asyncio.CancelledError:
                                     logger.debug("[TextChannel] Forward text task cancelled")
@@ -421,6 +416,7 @@ async def offer(request):
                         tasks = request.app.get("data_channel_tasks")
                         if tasks is not None:
                             tasks.discard(t)
+
                     forward_task.add_done_callback(_remove_forward_task)
 
                     # Ensure cancellation on channel close event
@@ -432,20 +428,22 @@ async def offer(request):
                                 if not t.done():
                                     t.cancel()
                 else:
-                    logger.debug("[TextChannel] Workflow has no text outputs; not starting forward_text")
+                    logger.debug(
+                        "[TextChannel] Workflow has no text outputs; not starting forward_text"
+                    )
 
     @pc.on("track")
     def on_track(track):
         logger.info(f"Track received: {track.kind} (readyState: {track.readyState})")
-        
+
         # Check if we already have a track of this type to avoid duplicate track errors
         if track.kind == "video" and tracks["video"] is not None:
-            logger.debug(f"Video track already exists, ignoring duplicate track event")
+            logger.debug("Video track already exists, ignoring duplicate track event")
             return
         elif track.kind == "audio" and tracks["audio"] is not None:
-            logger.debug(f"Audio track already exists, ignoring duplicate track event")
+            logger.debug("Audio track already exists, ignoring duplicate track event")
             return
-            
+
         if track.kind == "video":
             if is_noop_mode:
                 # Use simple passthrough track that bypasses pipeline
@@ -455,7 +453,7 @@ async def offer(request):
                 # Always use pipeline processing - it handles passthrough internally based on workflow
                 videoTrack = VideoStreamTrack(track, pipeline)
                 logger.info("[Pipeline] Using video processing pipeline")
-            
+
             tracks["video"] = videoTrack
             sender = pc.addTrack(videoTrack)
 
@@ -466,11 +464,10 @@ async def offer(request):
 
             codec = "video/H264"
             force_codec(pc, sender, codec)
-            
-            
+
         elif track.kind == "audio":
             logger.info(f"Creating audio track for track {track.id}")
-            
+
             if is_noop_mode:
                 # Use simple passthrough track that bypasses pipeline
                 audioTrack = NoopAudioStreamTrack(track)
@@ -479,10 +476,10 @@ async def offer(request):
                 # Always use pipeline processing - it handles passthrough internally based on workflow
                 audioTrack = AudioStreamTrack(track, pipeline)
                 logger.info("[Pipeline] Using audio processing pipeline")
-            
+
             tracks["audio"] = audioTrack
             sender = pc.addTrack(audioTrack)
-            logger.debug(f"Audio track added to peer connection")
+            logger.debug("Audio track added to peer connection")
 
         @track.on("ended")
         async def on_ended():
@@ -517,14 +514,16 @@ async def offer(request):
     transceivers = pc.getTransceivers()
     logger.debug(f"[Offer] After negotiation - Total transceivers: {len(transceivers)}")
     for i, t in enumerate(transceivers):
-        logger.debug(f"[Offer] Transceiver {i}: {t.kind} - direction: {t.direction} - currentDirection: {t.currentDirection}")
+        logger.debug(
+            f"[Offer] Transceiver {i}: {t.kind} - direction: {t.direction} - currentDirection: {t.currentDirection}"
+        )
 
     # Warm up the pipeline based on detected modalities and SDP content (skip in noop mode)
     if not is_noop_mode:
         if "m=video" in pc.remoteDescription.sdp and pipeline.accepts_video_input():
             logger.info("[Offer] Warming up video pipeline")
             await pipeline.warm_video()
-            
+
         if "m=audio" in pc.remoteDescription.sdp and pipeline.accepts_audio_input():
             logger.info("[Offer] Warming up audio pipeline")
             await pipeline.warm_audio()
@@ -536,19 +535,19 @@ async def offer(request):
 
     return web.Response(
         content_type="application/json",
-        text=json.dumps(
-            {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
-        ),
+        text=json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}),
     )
+
 
 async def cancel_collect_frames(track):
     track.running = False
-    if hasattr(track, 'collect_task') is not None and not track.collect_task.done():
+    if hasattr(track, "collect_task") is not None and not track.collect_task.done():
         try:
             track.collect_task.cancel()
             await track.collect_task
-        except (asyncio.CancelledError):
+        except asyncio.CancelledError:
             pass
+
 
 async def set_prompt(request):
     pipeline = request.app["pipeline"]
@@ -557,6 +556,7 @@ async def set_prompt(request):
     await pipeline.set_prompts(prompt)
 
     return web.Response(content_type="application/json", text="OK")
+
 
 def health(_):
     return web.Response(content_type="application/json", text="OK")
@@ -569,11 +569,12 @@ async def on_startup(app: web.Application):
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"], 
-        disable_cuda_malloc=True, 
-        gpu_only=True, 
-        preview_method='none',
-        comfyui_inference_log_level=app.get("comfui_inference_log_level", None),
+        cwd=app["workspace"],
+        disable_cuda_malloc=True,
+        gpu_only=True,
+        preview_method="none",
+        comfyui_inference_log_level=app.get("comfyui_inference_log_level", None),
+        blacklist_custom_nodes=["ComfyUI-Manager"],
     )
     app["pcs"] = set()
     app["video_tracks"] = {}
@@ -589,13 +590,9 @@ async def on_shutdown(app: web.Application):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run comfystream server")
     parser.add_argument("--port", default=8889, help="Set the signaling port")
-    parser.add_argument(
-        "--media-ports", default=None, help="Set the UDP ports for WebRTC media"
-    )
+    parser.add_argument("--media-ports", default=None, help="Set the UDP ports for WebRTC media")
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
-    parser.add_argument(
-        "--workspace", default=None, required=True, help="Set Comfy workspace"
-    )
+    parser.add_argument("--workspace", default=None, required=True, help="Set Comfy workspace")
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -637,16 +634,6 @@ if __name__ == "__main__":
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
-    
-    # Setup CORS
-    cors = setup_cors(app, defaults={
-        "*": ResourceOptions(
-            allow_credentials=True,
-            expose_headers="*",
-            allow_headers="*",
-            allow_methods=["GET", "POST", "OPTIONS"]
-        )
-    })
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -657,18 +644,10 @@ if __name__ == "__main__":
     # WebRTC signalling and control routes.
     app.router.add_post("/offer", offer)
     app.router.add_post("/prompt", set_prompt)
-    
-    # Setup HTTP streaming routes
-    setup_routes(app, cors)
-    
-    # Serve static files from the public directory
-    app.router.add_static("/", path=os.path.join(os.path.dirname(__file__), "public"), name="static")
 
     # Add routes for getting stream statistics.
     stream_stats_manager = StreamStatsManager(app)
-    app.router.add_get(
-        "/streams/stats", stream_stats_manager.collect_all_stream_metrics
-    )
+    app.router.add_get("/streams/stats", stream_stats_manager.collect_all_stream_metrics)
     app.router.add_get(
         "/stream/{stream_id}/stats", stream_stats_manager.collect_stream_metrics_by_id
     )
@@ -695,10 +674,10 @@ if __name__ == "__main__":
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
         logging.getLogger("comfy").setLevel(log_level)
-    
+
     # Add ComfyStream timeout filter to suppress verbose execution logging
     logging.getLogger("comfy.cmd.execution").addFilter(ComfyStreamTimeoutFilter())
     if args.comfyui_inference_log_level:
-        app["comfui_inference_log_level"] = args.comfyui_inference_log_level
+        app["comfyui_inference_log_level"] = args.comfyui_inference_log_level
 
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)

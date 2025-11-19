@@ -1,5 +1,5 @@
-import torch
 import queue
+
 from comfystream import tensor_cache
 from comfystream.exceptions import ComfyStreamInputTimeoutError
 
@@ -17,13 +17,16 @@ class LoadTensor:
                 "batch_size": ("INT", {"default": 1, "min": 1, "max": 8, "step": 1}),
             },
             "optional": {
-                "timeout_seconds": ("FLOAT", {
-                    "default": 1.0, 
-                    "min": 0.1, 
-                    "max": 30.0,
-                    "step": 0.1,
-                    "tooltip": "Timeout in seconds"
-                }),
+                "timeout_seconds": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.1,
+                        "max": 30.0,
+                        "step": 0.1,
+                        "tooltip": "Timeout in seconds",
+                    },
+                ),
             }
         }
 
