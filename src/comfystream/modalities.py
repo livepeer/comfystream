@@ -14,6 +14,8 @@ class WorkflowModality(TypedDict):
     video: ModalityIO
     audio: ModalityIO
     text: ModalityIO
+    # Batch processing information
+    max_batch_size: int
 
 
 # Centralized node type definitions
@@ -101,8 +103,12 @@ def create_empty_workflow_modality() -> WorkflowModality:
 def _merge_workflow_modalities(base: WorkflowModality, other: WorkflowModality) -> WorkflowModality:
     """Merge two WorkflowModality objects using logical OR for all capabilities."""
     for modality in base:
-        for direction in base[modality]:
-            base[modality][direction] = base[modality][direction] or other[modality][direction]
+        if modality == "max_batch_size":
+            # For batch size, take the maximum
+            base[modality] = max(base[modality], other[modality])
+        elif isinstance(base[modality], dict):
+            for direction in base[modality]:
+                base[modality][direction] = base[modality][direction] or other[modality][direction]
     return base
 
 

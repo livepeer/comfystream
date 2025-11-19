@@ -99,7 +99,10 @@ if [ "$1" = "--build-engines" ]; then
 
   # Build Static Engine for Dreamshaper - Landscape (704x384)
   python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-1-h-384-w-704_00001_.engine --width 704 --height 384
-
+  
+  # Build Static Engine for Dreamshaper - Square (512x512) - Batch Size 2
+  python src/comfystream/scripts/build_trt.py --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors --out-engine /workspace/ComfyUI/output/tensorrt/static-dreamshaper8_SD15_\$stat-b-2-h-512-w-512_00001_.engine --width 512 --height 512 --batch-size 2
+  
   # Build Dynamic Engine for Dreamshaper
   python src/comfystream/scripts/build_trt.py \
                 --model /workspace/ComfyUI/models/unet/dreamshaper-8-dmd-1kstep.safetensors \
@@ -110,6 +113,7 @@ if [ "$1" = "--build-engines" ]; then
                 --min-height 512 \
                 --max-width 448 \
                 --max-height 704
+  
 
   # Build Engine for Depth Anything V2
   if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE" ]; then

@@ -49,14 +49,55 @@ class Pipeline:
         self.width = width
         self.height = height
 
-        self.video_incoming_frames = asyncio.Queue()
-        self.audio_incoming_frames = asyncio.Queue()
+        # Initialize queues with default size (will be updated based on workflow analysis)
+        self._default_queue_size = 10  # Default queue size
+        self.video_incoming_frames = asyncio.Queue(maxsize=self._default_queue_size)
+        self.audio_incoming_frames = asyncio.Queue(maxsize=self._default_queue_size)
 
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
         self._comfyui_inference_log_level = comfyui_inference_log_level
         self._cached_modalities: Optional[Set[str]] = None
         self._cached_io_capabilities: Optional[WorkflowModality] = None
+
+    def _recreate_queues(self, new_queue_size: int):
+        """Recreate queues with new size limits to optimize for batch processing.
+        
+        Args:
+            new_queue_size: Maximum number of frames to store in each queue
+        """
+        # Calculate optimal queue size: batch_size * 2 + some buffer for frame skipping
+        optimal_size = max(new_queue_size * 2, self._default_queue_size)
+        
+        logger.info(f"Recreating queues with size {optimal_size} (batch_size: {new_queue_size})")
+        
+        # Create new queues with the calculated size
+        self.video_incoming_frames = asyncio.Queue(maxsize=optimal_size)
+        self.audio_incoming_frames = asyncio.Queue(maxsize=optimal_size)
+
+    def _update_queue_sizes_for_batch_processing(self):
+        """Update queue sizes based on detected batch requirements from workflow analysis."""
+        if not hasattr(self.client, 'current_prompts') or not self.client.current_prompts:
+            logger.debug("No prompts available for batch size analysis")
+            return
+            
+        try:
+            # Get workflow I/O capabilities (which now includes batch_size)
+            io_capabilities = self.get_workflow_io_capabilities()
+            detected_batch_size = io_capabilities.get("max_batch_size", 1)
+            
+            # Only recreate queues if batch size has changed significantly
+            current_queue_size = self.video_incoming_frames.maxsize
+            optimal_size = max(detected_batch_size * 2, self._default_queue_size)
+            
+            if optimal_size != current_queue_size:
+                logger.info(f"Detected batch_size {detected_batch_size}, updating queue size from {current_queue_size} to {optimal_size}")
+                self._recreate_queues(detected_batch_size)
+            else:
+                logger.debug(f"Queue size already optimal for batch_size {detected_batch_size}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to update queue sizes based on batch analysis: {e}")
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -120,6 +161,9 @@ class Pipeline:
         # Clear cached modalities and I/O capabilities when prompts change
         self._cached_modalities = None
         self._cached_io_capabilities = None
+        
+        # Update queue sizes based on detected batch requirements
+        self._update_queue_sizes_for_batch_processing()
 
     async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
         """Update the existing processing prompts.
@@ -135,6 +179,9 @@ class Pipeline:
         # Clear cached modalities and I/O capabilities when prompts change
         self._cached_modalities = None
         self._cached_io_capabilities = None
+        
+        # Update queue sizes based on detected batch requirements
+        self._update_queue_sizes_for_batch_processing()
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.

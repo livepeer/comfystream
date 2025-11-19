@@ -1,5 +1,9 @@
 import copy
 import importlib
+import time
+from typing import Dict, Any, List, Tuple, Optional, Union
+from contextlib import contextmanager
+from pytrickle.api import StreamParamsUpdateRequest
 import json
 from typing import Any, Dict
 
@@ -11,10 +15,14 @@ from .modalities import (
     get_node_counts_by_type,
 )
 
-
-def create_load_tensor_node():
+def create_load_tensor_node(batch_size: int = 1):
+    """Create a LoadTensor node with specified batch size.
+    
+    Args:
+        batch_size: Number of frames to process in batch (default: 1)
+    """
     return {
-        "inputs": {},
+        "inputs": {"batch_size": batch_size},
         "class_type": "LoadTensor",
         "_meta": {"title": "LoadTensor"},
     }
@@ -139,3 +147,84 @@ def get_default_workflow() -> dict:
         },
         "2": {"inputs": {}, "class_type": "LoadTensor", "_meta": {"title": "LoadTensor"}},
     }
+
+class PerformanceTimer:
+    """Utility class for measuring performance metrics in ComfyStream workflows."""
+    
+    def __init__(self):
+        self.timings: Dict[str, List[float]] = {}
+        self.current_timings: Dict[str, float] = {}
+        self.batch_sizes: List[int] = []
+        self.total_images_processed = 0
+        
+    def start_timing(self, operation: str):
+        """Start timing an operation."""
+        self.current_timings[operation] = time.time()
+    
+    def end_timing(self, operation: str):
+        """End timing an operation and record the duration."""
+        if operation in self.current_timings:
+            duration = time.time() - self.current_timings[operation]
+            if operation not in self.timings:
+                self.timings[operation] = []
+            self.timings[operation].append(duration)
+            del self.current_timings[operation]
+            return duration
+        return 0.0
+    
+    def record_batch_processing(self, batch_size: int, num_images: int):
+        """Record a batch processing event."""
+        self.batch_sizes.append(batch_size)
+        self.total_images_processed += num_images
+    
+    def get_fps(self, operation: str = "total") -> float:
+        """Calculate FPS for a specific operation."""
+        if operation not in self.timings or not self.timings[operation]:
+            return 0.0
+        
+        total_time = sum(self.timings[operation])
+        if total_time == 0:
+            return 0.0
+        
+        return self.total_images_processed / total_time
+    
+    def get_average_time(self, operation: str) -> float:
+        """Get average time for an operation."""
+        if operation not in self.timings or not self.timings[operation]:
+            return 0.0
+        
+        return sum(self.timings[operation]) / len(self.timings[operation])
+    
+    def get_performance_summary(self) -> Dict[str, float]:
+        """Get a comprehensive performance summary."""
+        summary = {
+            "total_images_processed": self.total_images_processed,
+            "total_fps": self.get_fps("total"),
+            "average_batch_size": sum(self.batch_sizes) / len(self.batch_sizes) if self.batch_sizes else 0,
+        }
+        
+        for operation in self.timings:
+            summary[f"{operation}_fps"] = self.get_fps(operation)
+            summary[f"{operation}_avg_time"] = self.get_average_time(operation)
+        
+        return summary
+    
+    def reset(self):
+        """Reset all performance data."""
+        self.timings.clear()
+        self.current_timings.clear()
+        self.batch_sizes.clear()
+        self.total_images_processed = 0
+    
+    @contextmanager
+    def time_operation(self, operation: str):
+        """Context manager for timing operations."""
+        self.start_timing(operation)
+        try:
+            yield
+        finally:
+            self.end_timing(operation)
+
+
+# Global performance timer instance
+performance_timer = PerformanceTimer()
