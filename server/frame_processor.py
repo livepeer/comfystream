@@ -1,21 +1,28 @@
 import asyncio
+import json
 import logging
 import os
-from typing import List, Union
+from typing import Any, Dict, List, Optional, Union
 
+from pytrickle.frame_overlay import OverlayConfig, OverlayMode
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import AudioFrame, VideoFrame
-from pytrickle.loading_config import LoadingConfig, LoadingMode
 from pytrickle.stream_processor import VideoProcessingResult
 
 from comfystream.pipeline import Pipeline
 from comfystream.pipeline_state import PipelineState
-from comfystream.utils import ComfyStreamParamsUpdateRequest, convert_prompt, get_default_workflow
+from comfystream.utils import (
+    ComfyStreamParamsUpdateRequest,
+    convert_prompt,
+    get_default_workflow,
+    normalize_stream_params,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ComfyStreamFrameProcessor(FrameProcessor):
+    WARMUP_OVERLAY_SENTINEL = "__warmup_overlay__"
     """
     Integrated ComfyStream FrameProcessor for pytrickle.
 
@@ -31,8 +38,8 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         """
         # Initialize parent with loading config for automatic overlay
         super().__init__(
-            loading_config=LoadingConfig(
-                mode=LoadingMode.OVERLAY,
+            overlay_config=OverlayConfig(
+                mode=OverlayMode.PROGRESSBAR,
                 message="Loading workflow...",
                 enabled=True,
                 auto_timeout_seconds=1.5,
@@ -47,7 +54,48 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._text_forward_task = None
         self._background_tasks = []
         self._stop_event = asyncio.Event()
-        self._first_frame_received = False
+        self._withhold_until_first_output = False
+
+    async def _apply_stream_start_prompt(self, prompt_value: Any) -> bool:
+        if not self.pipeline:
+            logger.debug("Cannot apply stream start prompt without pipeline")
+            return False
+
+        # Parse prompt payload from various formats
+        prompt_dict = None
+        if prompt_value is None:
+            pass
+        elif isinstance(prompt_value, dict):
+            prompt_dict = prompt_value
+        elif isinstance(prompt_value, list):
+            for candidate in prompt_value:
+                if isinstance(candidate, dict):
+                    prompt_dict = candidate
+                    break
+        elif isinstance(prompt_value, str):
+            prompt_str = prompt_value.strip()
+            if prompt_str:
+                try:
+                    parsed = json.loads(prompt_str)
+                    if isinstance(parsed, dict):
+                        prompt_dict = parsed
+                    else:
+                        logger.warning("Parsed prompt payload is %s, expected dict", type(parsed))
+                except json.JSONDecodeError:
+                    logger.error("Stream start prompt is not valid JSON")
+        else:
+            logger.warning("Unsupported prompt payload type: %s", type(prompt_value))
+
+        if not isinstance(prompt_dict, dict):
+            logger.warning("Skipping prompt application due to invalid payload")
+            return False
+
+        try:
+            await self._process_prompts(prompt_dict, skip_warmup=True)
+            return True
+        except Exception:
+            logger.exception("Failed to apply stream start prompt")
+            raise
 
     def _workflow_has_video(self) -> bool:
         """Return True if current workflow is expected to produce video output."""
@@ -168,35 +216,48 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     logger.debug("Background task raised during shutdown", exc_info=True)
 
         self._background_tasks.clear()
+        self._withhold_until_first_output = False
         logger.info("All background tasks cleaned up")
-
-        # Ensure loading overlay is turned off when stream stops
-        self.set_loading_active(False, message="Stream stopped")
 
     def _reset_stop_event(self):
         """Reset the stop event for a new stream."""
         self._stop_event.clear()
 
-    async def on_stream_start(self):
+    async def on_stream_start(self, params: Optional[Dict[str, Any]] = None):
         """Handle stream start lifecycle events."""
         logger.info("Stream starting")
         self._reset_stop_event()
-        self._first_frame_received = False
+        logger.info(f"Stream start params: {params}")
 
         if not self.pipeline:
             logger.debug("Stream start requested before pipeline initialization")
             return
 
+        stream_params = normalize_stream_params(params)
+        prompt_payload = stream_params.pop("prompts", None)
+        if prompt_payload is None:
+            prompt_payload = stream_params.pop("prompt", None)
+
+        if prompt_payload:
+            try:
+                await self._apply_stream_start_prompt(prompt_payload)
+            except Exception:
+                logger.exception("Failed to apply stream start prompt")
+                return
+
         if not self.pipeline.state_manager.is_initialized():
             logger.info("Pipeline not initialized; waiting for prompts before streaming")
             return
 
-        # Enable loading overlay for video workflows until first frame
-        show_overlay = self._workflow_has_video()
-        if show_overlay:
-            self.set_loading_active(True, message="Initializing stream...")
-        else:
-            self.set_loading_active(False, message="Stream ready")
+        # Always enable warmup with overlay
+        stream_params[self.WARMUP_OVERLAY_SENTINEL] = True
+
+        if stream_params:
+            try:
+                await self.update_params(stream_params)
+            except Exception:
+                logger.exception("Failed to process stream start parameters")
+                return
 
         try:
             if (
@@ -211,16 +272,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                 await self._stop_text_forwarder()
         except Exception:
             logger.exception("Failed during stream start", exc_info=True)
-            if show_overlay:
-                self.set_loading_active(False, message="Stream error")
-            raise
-
-    async def prepare_stream_loading(self, message: str = "Loading workflow..."):
-        """Prime the loading overlay prior to receiving stream frames."""
-        if not self.pipeline:
-            return
-        self._first_frame_received = False
-        self.set_loading_active(True, message=message)
 
     async def load_model(self, **kwargs):
         """Load model and initialize the pipeline."""
@@ -282,7 +333,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
             # If pipeline ingestion is paused, withhold frame so pytrickle renders the overlay
             if not self.pipeline.is_ingest_enabled():
-                self.set_loading_active(True)
                 return VideoProcessingResult.WITHHELD
 
             # Convert pytrickle VideoFrame to av.VideoFrame
@@ -300,17 +350,12 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     timeout=0.05,
                 )
                 processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
-
-                # First frame received - disable loading overlay
-                if not self._first_frame_received:
-                    self._first_frame_received = True
-                    self.set_loading_active(False, message="Workflow ready")
-
+                if self._withhold_until_first_output:
+                    self._withhold_until_first_output = False
                 return processed_frame
 
             except asyncio.TimeoutError:
                 # No frame ready yet - return withheld sentinel to trigger overlay
-                self.set_loading_active(True)
                 return VideoProcessingResult.WITHHELD
 
         except Exception as e:
@@ -345,17 +390,37 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if not self.pipeline:
             return
 
-        # Handle list input - take first element
-        if isinstance(params, list) and params:
-            params = params[0]
+        params_payload: Dict[str, Any] = {}
+        if isinstance(params, list):
+            params = params[0] if params else {}
+
+        if isinstance(params, dict):
+            params_payload = dict(params)
+        elif params is None:
+            params_payload = {}
+        else:
+            logger.warning("Unsupported params type for update_params: %s", type(params))
+            return
+
+        overlay_request = params_payload.pop(self.WARMUP_OVERLAY_SENTINEL, None)
+        if overlay_request is not None:
+            should_withhold = bool(overlay_request)
+            self._withhold_until_first_output = should_withhold
+            logger.info(
+                "Warmup overlay sentinel %s",
+                "enabled" if should_withhold else "disabled",
+            )
+
+        if not params_payload:
+            return
 
         # Validate parameters using the centralized validation
-        validated = ComfyStreamParamsUpdateRequest(**params).model_dump()
+        validated = ComfyStreamParamsUpdateRequest(**params_payload).model_dump()
         logger.info(f"Parameter validation successful, keys: {list(validated.keys())}")
 
         # Process prompts if provided
         if "prompts" in validated and validated["prompts"]:
-            await self._process_prompts(validated["prompts"])
+            await self._process_prompts(validated["prompts"], skip_warmup=True)
 
         # Update pipeline dimensions
         if "width" in validated:
@@ -363,19 +428,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if "height" in validated:
             self.pipeline.height = int(validated["height"])
 
-        # Schedule warmup if requested
-        if validated.get("warmup", False):
-            self._schedule_warmup()
-
-        if "show_loading" in validated:
-            if validated["show_loading"]:
-                message = validated.get("loading_message") or "Loading workflow..."
-                self.set_loading_active(True, message=message)
-            else:
-                message = validated.get("loading_message") or "Workflow ready"
-                self.set_loading_active(False, message=message)
-
-    async def _process_prompts(self, prompts):
+    async def _process_prompts(self, prompts, *, skip_warmup: bool = False):
         """Process and set prompts in the pipeline."""
         if not self.pipeline:
             logger.warning("Prompt update requested before pipeline initialization")
@@ -383,20 +436,10 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         try:
             converted = convert_prompt(prompts, return_dict=True)
 
-            self.set_loading_active(True, message="Loading workflow...")
-
-            capabilities = await self.pipeline.apply_prompts(
+            await self.pipeline.apply_prompts(
                 [converted],
-                skip_warmup=False,
+                skip_warmup=skip_warmup,
             )
-
-            video_capability = capabilities.get("video", {})
-            has_video_output = bool(video_capability.get("output"))
-
-            if has_video_output:
-                self._first_frame_received = False
-            else:
-                self.set_loading_active(False, message="Workflow ready")
 
             if self.pipeline.state_manager.can_stream():
                 await self.pipeline.start_streaming()
@@ -410,5 +453,4 @@ class ComfyStreamFrameProcessor(FrameProcessor):
 
         except Exception as e:
             logger.error(f"Failed to process prompts: {e}")
-            self.set_loading_active(False, message="Workflow error")
             raise

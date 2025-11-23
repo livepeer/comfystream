@@ -12,8 +12,8 @@ if torch.cuda.is_available():
 
 from aiohttp import web
 from frame_processor import ComfyStreamFrameProcessor
+from pytrickle.frame_overlay import OverlayConfig, OverlayMode
 from pytrickle.frame_skipper import FrameSkipConfig
-from pytrickle.loading_config import LoadingConfig, LoadingMode
 from pytrickle.stream_processor import StreamProcessor
 from pytrickle.utils.register import RegisterCapability
 
@@ -76,6 +76,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
+    logging.getLogger("comfy.model_detection").setLevel(logging.WARNING)
 
     # Allow overriding of ComfyUI log levels.
     if args.comfyui_log_level:
@@ -92,6 +93,10 @@ def main():
         sys.stdout.flush()
 
     logger.info("Starting ComfyStream BYOC server with pytrickle StreamProcessor...")
+    logger.info(
+        "Send initial workflow parameters (width/height/prompts/warmup) via /stream/start "
+        "params; runtime updates now apply incremental changes only."
+    )
 
     # Create frame processor with configuration
     frame_processor = ComfyStreamFrameProcessor(
@@ -127,11 +132,11 @@ def main():
         port=int(args.port),
         host=args.host,
         frame_skip_config=frame_skip_config,
-        loading_config=LoadingConfig(
-            mode=LoadingMode.OVERLAY,
+        overlay_config=OverlayConfig(
+            mode=OverlayMode.PROGRESSBAR,
             message="Loading...",
             enabled=True,
-            auto_timeout_seconds=1.0,
+            auto_timeout_seconds=0.5,
         ),
         # Ensure server metadata reflects the desired capability name
         capability_name=(os.getenv("CAPABILITY_NAME") or "comfystream"),
@@ -141,6 +146,8 @@ def main():
 
     # Set the stream processor reference for text data publishing
     frame_processor.set_stream_processor(processor)
+
+    logger.info("Startup warmup runs automatically as part of on_stream_start.")
 
     # Create async startup function for orchestrator registration
     async def register_orchestrator_startup(app):
