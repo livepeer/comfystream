@@ -13,7 +13,6 @@ from comfystream.pipeline_state import PipelineState
 from comfystream.utils import (
     ComfyStreamParamsUpdateRequest,
     convert_prompt,
-    get_default_workflow,
     normalize_stream_params,
 )
 
@@ -332,7 +331,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             try:
                 processed_av_frame = await asyncio.wait_for(
                     self.pipeline.get_processed_video_frame(),
-                    timeout=0.05,
+                    timeout=self._stream_processor.overlay_config.auto_timeout_seconds,
                 )
                 processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
                 return processed_frame

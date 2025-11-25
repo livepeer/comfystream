@@ -21,6 +21,8 @@ from comfystream.exceptions import ComfyStreamTimeoutFilter
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_WITHHELD_TIMEOUT_SECONDS = 0.5
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -136,7 +138,7 @@ def main():
             mode=OverlayMode.PROGRESSBAR,
             message="Loading...",
             enabled=True,
-            auto_timeout_seconds=0.5,
+            auto_timeout_seconds=DEFAULT_WITHHELD_TIMEOUT_SECONDS,
             frame_count_to_disable=20,
         ),
         # Ensure server metadata reflects the desired capability name
