@@ -97,8 +97,6 @@ class VideoStreamTrack(MediaStreamTrack):
             logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
-        finally:
-            await self.pipeline.stop_prompts(cleanup=True)
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
@@ -195,8 +193,6 @@ class AudioStreamTrack(MediaStreamTrack):
             logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
-        finally:
-            await self.pipeline.stop_prompts(cleanup=True)
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
@@ -584,6 +580,13 @@ async def offer(request):
                     if not task.done():
                         task.cancel()
                 request.app["data_channel_tasks"].clear()
+            # Cleanup pipeline once per connection (not per track)
+            if not is_noop_mode:
+                try:
+                    await pipeline.stop_prompts(cleanup=True)
+                    logger.info("Pipeline cleanup completed for failed connection")
+                except Exception as e:
+                    logger.error(f"Error during pipeline cleanup on connection failure: {e}")
         elif pc.connectionState == "closed":
             await pc.close()
             pcs.discard(pc)
@@ -593,6 +596,13 @@ async def offer(request):
                     if not task.done():
                         task.cancel()
                 request.app["data_channel_tasks"].clear()
+            # Cleanup pipeline once per connection (not per track)
+            if not is_noop_mode:
+                try:
+                    await pipeline.stop_prompts(cleanup=True)
+                    logger.info("Pipeline cleanup completed for closed connection")
+                except Exception as e:
+                    logger.error(f"Error during pipeline cleanup on connection close: {e}")
 
     await pc.setRemoteDescription(offer)
 
