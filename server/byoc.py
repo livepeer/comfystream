@@ -137,6 +137,7 @@ def main():
             message="Loading...",
             enabled=True,
             auto_timeout_seconds=0.5,
+            frame_count_to_disable=20,
         ),
         # Ensure server metadata reflects the desired capability name
         capability_name=(os.getenv("CAPABILITY_NAME") or "comfystream"),

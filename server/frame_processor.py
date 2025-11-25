@@ -4,7 +4,6 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
-from pytrickle.frame_overlay import OverlayConfig, OverlayMode
 from pytrickle.frame_processor import FrameProcessor
 from pytrickle.frames import AudioFrame, VideoFrame
 from pytrickle.stream_processor import VideoProcessingResult
@@ -22,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class ComfyStreamFrameProcessor(FrameProcessor):
-    WARMUP_OVERLAY_SENTINEL = "__warmup_overlay__"
     """
     Integrated ComfyStream FrameProcessor for pytrickle.
 
@@ -36,15 +34,7 @@ class ComfyStreamFrameProcessor(FrameProcessor):
             text_poll_interval: Interval in seconds to poll for text outputs (default: 0.25)
             **load_params: Parameters for pipeline creation
         """
-        # Initialize parent with loading config for automatic overlay
-        super().__init__(
-            overlay_config=OverlayConfig(
-                mode=OverlayMode.PROGRESSBAR,
-                message="Loading workflow...",
-                enabled=True,
-                auto_timeout_seconds=1.5,
-            )
-        )
+        super().__init__()
 
         self.pipeline = None
         self._load_params = load_params
@@ -54,7 +44,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         self._text_forward_task = None
         self._background_tasks = []
         self._stop_event = asyncio.Event()
-        self._withhold_until_first_output = False
 
     async def _apply_stream_start_prompt(self, prompt_value: Any) -> bool:
         if not self.pipeline:
@@ -216,7 +205,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     logger.debug("Background task raised during shutdown", exc_info=True)
 
         self._background_tasks.clear()
-        self._withhold_until_first_output = False
         logger.info("All background tasks cleaned up")
 
     def _reset_stop_event(self):
@@ -248,9 +236,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         if not self.pipeline.state_manager.is_initialized():
             logger.info("Pipeline not initialized; waiting for prompts before streaming")
             return
-
-        # Always enable warmup with overlay
-        stream_params[self.WARMUP_OVERLAY_SENTINEL] = True
 
         if stream_params:
             try:
@@ -350,8 +335,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
                     timeout=0.05,
                 )
                 processed_frame = VideoFrame.from_av_frame_with_timing(processed_av_frame, frame)
-                if self._withhold_until_first_output:
-                    self._withhold_until_first_output = False
                 return processed_frame
 
             except asyncio.TimeoutError:
@@ -401,15 +384,6 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         else:
             logger.warning("Unsupported params type for update_params: %s", type(params))
             return
-
-        overlay_request = params_payload.pop(self.WARMUP_OVERLAY_SENTINEL, None)
-        if overlay_request is not None:
-            should_withhold = bool(overlay_request)
-            self._withhold_until_first_output = should_withhold
-            logger.info(
-                "Warmup overlay sentinel %s",
-                "enabled" if should_withhold else "disabled",
-            )
 
         if not params_payload:
             return
