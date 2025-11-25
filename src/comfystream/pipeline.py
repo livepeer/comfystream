@@ -7,7 +7,9 @@ import numpy as np
 import torch
 
 from comfystream.client import ComfyStreamClient
+from comfystream.pipeline_state import PipelineState, PipelineStateManager
 from comfystream.server.utils import temporary_log_level
+from comfystream.utils import get_default_workflow
 
 from .modalities import (
     WorkflowModality,
@@ -17,6 +19,7 @@ from .modalities import (
 )
 
 WARMUP_RUNS = 5
+BOOTSTRAP_TIMEOUT_SECONDS = 30.0
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,8 @@ class Pipeline:
         width: int = 512,
         height: int = 512,
         comfyui_inference_log_level: Optional[int] = None,
+        auto_warmup: bool = False,
+        bootstrap_default_prompt: bool = True,
         **kwargs,
     ):
         """Initialize the pipeline with the given configuration.
@@ -43,11 +48,16 @@ class Pipeline:
             height: Height of the video frames (default: 512)
             comfyui_inference_log_level: The logging level for ComfyUI inference.
                 Defaults to None, using the global ComfyUI log level.
+            auto_warmup: Whether to run warmup automatically after prompts are set.
+            bootstrap_default_prompt: Whether to run the default workflow once during
+                initialization to start ComfyUI before prompts are applied.
             **kwargs: Additional arguments to pass to the ComfyStreamClient
         """
         self.client = ComfyStreamClient(**kwargs)
         self.width = width
         self.height = height
+        self.auto_warmup = auto_warmup
+        self.bootstrap_default_prompt = bootstrap_default_prompt
 
         self.video_incoming_frames = asyncio.Queue()
         self.audio_incoming_frames = asyncio.Queue()
@@ -57,6 +67,143 @@ class Pipeline:
         self._comfyui_inference_log_level = comfyui_inference_log_level
         self._cached_modalities: Optional[Set[str]] = None
         self._cached_io_capabilities: Optional[WorkflowModality] = None
+        self.state_manager = PipelineStateManager(self.client)
+        self._bootstrap_completed = False
+        self._initialize_lock = asyncio.Lock()
+        self._ingest_enabled = True
+        self._prompt_update_lock = asyncio.Lock()
+
+    @property
+    def state(self) -> PipelineState:
+        """Expose current pipeline state."""
+        return self.state_manager.state
+
+    async def initialize(self):
+        """Run optional bootstrap workflow to start ComfyUI before prompts are set."""
+        if self._bootstrap_completed or not self.bootstrap_default_prompt:
+            return
+
+        async with self._initialize_lock:
+            if self._bootstrap_completed or not self.bootstrap_default_prompt:
+                return
+
+            logger.info("Bootstrapping ComfyUI with default workflow")
+            await self._run_bootstrap_prompt()
+            self._bootstrap_completed = True
+
+    async def _run_bootstrap_prompt(self):
+        """Run the default workflow once with a dummy frame to start ComfyUI."""
+        default_workflow = get_default_workflow()
+        logger.debug("Running default workflow bootstrap prompt")
+
+        try:
+            await self.client.set_prompts([default_workflow])
+            await self.client.resume_prompts()
+
+            dummy_frame = av.VideoFrame()
+            dummy_frame.side_data.input = torch.randn(1, self.height, self.width, 3)
+            self.client.put_video_input(dummy_frame)
+
+            await asyncio.wait_for(
+                self.client.get_video_output(),
+                timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+            )
+            logger.info("Bootstrap prompt completed successfully")
+        except asyncio.TimeoutError as exc:
+            logger.error("Timeout while waiting for bootstrap prompt output")
+            raise RuntimeError("Bootstrap prompt timed out while waiting for output") from exc
+        finally:
+            try:
+                await self.client.stop_prompts(cleanup=False)
+            except Exception:
+                logger.debug("Failed to stop bootstrap prompts cleanly", exc_info=True)
+
+            self.client.current_prompts = []
+            self._cached_modalities = None
+            self._cached_io_capabilities = None
+
+            try:
+                await self.client.cleanup_queues()
+            except Exception:
+                logger.debug("Failed to clear tensor caches after bootstrap prompt", exc_info=True)
+
+    async def warmup(
+        self,
+        *,
+        warm_video: Optional[bool] = None,
+        warm_audio: Optional[bool] = None,
+    ):
+        """Run warmup for selected modalities while managing pipeline state."""
+        if not self.state_manager.is_initialized():
+            raise RuntimeError("Cannot warm up pipeline before prompts are initialized")
+
+        state_before = self.state
+        transitioned = False
+        warmup_successful = False
+
+        try:
+            if state_before != PipelineState.STREAMING:
+                await self.state_manager.transition_to(PipelineState.INITIALIZING)
+                transitioned = True
+
+            await self._run_warmup(
+                warm_video=warm_video,
+                warm_audio=warm_audio,
+            )
+            warmup_successful = True
+        except Exception:
+            await self.state_manager.transition_to(PipelineState.ERROR)
+            raise
+        finally:
+            if transitioned and warmup_successful:
+                try:
+                    await self.state_manager.transition_to(PipelineState.READY)
+                except Exception:
+                    logger.exception("Failed to transition pipeline to READY after warmup")
+                    warmup_successful = False
+
+            if warmup_successful and state_before == PipelineState.STREAMING:
+                try:
+                    await self.state_manager.transition_to(PipelineState.STREAMING)
+                except Exception:
+                    logger.exception("Failed to restore STREAMING state after warmup")
+
+    async def _run_warmup(
+        self,
+        *,
+        warm_video: Optional[bool] = None,
+        warm_audio: Optional[bool] = None,
+    ):
+        """Run warmup routines for video and audio as requested."""
+        capabilities = self.get_workflow_io_capabilities()
+
+        video_config = capabilities.get("video", {})
+        audio_config = capabilities.get("audio", {})
+
+        should_warm_video = (
+            warm_video
+            if warm_video is not None
+            else bool(video_config.get("input") or video_config.get("output"))
+        )
+        should_warm_audio = (
+            warm_audio
+            if warm_audio is not None
+            else bool(audio_config.get("input") or audio_config.get("output"))
+        )
+
+        if should_warm_video:
+            logger.debug("Running video warmup routine")
+            await self.warm_video()
+
+        if should_warm_audio:
+            logger.debug("Running audio warmup routine")
+            await self.warm_audio()
+
+        logger.info(
+            "Pipeline warmup completed (video=%s, audio=%s)",
+            should_warm_video,
+            should_warm_audio,
+        )
 
     async def warm_video(self):
         """Warm up the video processing pipeline with dummy frames."""
@@ -106,35 +253,241 @@ class Pipeline:
             if self.produces_text_output():
                 await self.client.get_text_output()
 
-    async def set_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+    async def set_prompts(
+        self,
+        prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]],
+        *,
+        skip_warmup: bool = False,
+    ):
         """Set the processing prompts for the pipeline.
 
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            skip_warmup: Skip automatic warmup even if auto_warmup is enabled
         """
-        if isinstance(prompts, list):
-            await self.client.set_prompts(prompts)
-        else:
-            await self.client.set_prompts([prompts])
+        try:
+            prompt_list = prompts if isinstance(prompts, list) else [prompts]
+            await self.client.set_prompts(prompt_list)
 
-        # Clear cached modalities and I/O capabilities when prompts change
-        self._cached_modalities = None
-        self._cached_io_capabilities = None
+            # Refresh cached modalities and I/O capabilities from the new prompts
+            self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+            self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
 
-    async def update_prompts(self, prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]]):
+            should_warmup = self.auto_warmup and not skip_warmup
+            if should_warmup:
+                await self.state_manager.transition_to(PipelineState.INITIALIZING)
+                try:
+                    await self._run_warmup()
+                except Exception:
+                    await self.state_manager.transition_to(PipelineState.ERROR)
+                    raise
+
+            await self.state_manager.transition_to(PipelineState.READY)
+        except Exception:
+            logger.exception("Failed to set pipeline prompts")
+            try:
+                await self.state_manager.transition_to(PipelineState.ERROR)
+            except ValueError:
+                logger.debug("Skipping ERROR transition due to invalid state")
+            except Exception:
+                logger.exception("Failed to transition pipeline to ERROR state")
+            raise
+
+    async def update_prompts(
+        self,
+        prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]],
+        *,
+        skip_warmup: bool = False,
+    ):
         """Update the existing processing prompts.
 
         Args:
             prompts: Either a single prompt dictionary or a list of prompt dictionaries
+            skip_warmup: Skip automatic warmup even if auto_warmup is enabled
         """
-        if isinstance(prompts, list):
-            await self.client.update_prompts(prompts)
-        else:
-            await self.client.update_prompts([prompts])
+        was_streaming = self.state == PipelineState.STREAMING
+        should_warmup = self.auto_warmup and not skip_warmup
 
-        # Clear cached modalities and I/O capabilities when prompts change
-        self._cached_modalities = None
-        self._cached_io_capabilities = None
+        try:
+            if was_streaming and should_warmup:
+                await self.state_manager.transition_to(PipelineState.READY)
+
+            prompt_list = prompts if isinstance(prompts, list) else [prompts]
+            await self.client.update_prompts(prompt_list)
+
+            # Refresh cached modalities and I/O capabilities from the updated prompts
+            self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+            self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
+
+            if should_warmup:
+                await self.state_manager.transition_to(PipelineState.INITIALIZING)
+                try:
+                    await self._run_warmup()
+                except Exception:
+                    await self.state_manager.transition_to(PipelineState.ERROR)
+                    raise
+                await self.state_manager.transition_to(PipelineState.READY)
+
+            if was_streaming and self.state != PipelineState.STREAMING:
+                await self.state_manager.transition_to(PipelineState.STREAMING)
+        except Exception:
+            logger.exception("Failed to update pipeline prompts")
+            try:
+                await self.state_manager.transition_to(PipelineState.ERROR)
+            except ValueError:
+                logger.debug("Skipping ERROR transition due to invalid state")
+            except Exception:
+                logger.exception("Failed to transition pipeline to ERROR state")
+            raise
+
+    def disable_ingest(self) -> None:
+        """Temporarily disable ingestion of new frames into the pipeline."""
+        self._ingest_enabled = False
+
+    def enable_ingest(self) -> None:
+        """Re-enable ingestion of new frames into the pipeline."""
+        self._ingest_enabled = True
+
+    def is_ingest_enabled(self) -> bool:
+        """Check if the pipeline is currently ingesting new frames."""
+        return self._ingest_enabled
+
+    async def apply_prompts(
+        self,
+        prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]],
+        *,
+        skip_warmup: bool = False,
+        warm_video: Optional[bool] = None,
+        warm_audio: Optional[bool] = None,
+    ) -> WorkflowModality:
+        """Atomically replace prompts while coordinating runner, queues, and state.
+
+        This helper orchestrates prompt swaps by pausing streaming, cancelling any
+        in-flight prompt execution, clearing input queues, applying the new prompts,
+        warming the pipeline (unless explicitly skipped), and finally resuming
+        streaming if it was active beforehand.
+
+        Args:
+            prompts: Prompt dictionary or list of prompt dictionaries to apply.
+            skip_warmup: If True, skip automatic warmup after applying prompts.
+            warm_video: Optional override for video warmup (None = auto-detect).
+            warm_audio: Optional override for audio warmup (None = auto-detect).
+
+        Returns:
+            WorkflowModality describing I/O capabilities detected from the new prompts.
+        """
+        prompt_list = prompts if isinstance(prompts, list) else [prompts]
+
+        async with self._prompt_update_lock:
+            was_streaming = self.state == PipelineState.STREAMING
+            was_initialized = self.state_manager.is_initialized()
+            restart_streaming = False
+            capabilities: WorkflowModality | None = None
+            self.disable_ingest()
+
+            try:
+                if was_streaming:
+                    await self.pause_prompts()
+
+                if was_initialized:
+                    await self.stop_prompts_immediately()
+
+                await self._clear_pipeline_queues()
+                await self.client.cleanup_queues()
+
+                await self.set_prompts(prompt_list, skip_warmup=True)
+
+                capabilities = self.get_workflow_io_capabilities()
+                video_capability = capabilities.get("video", {})
+                audio_capability = capabilities.get("audio", {})
+
+                has_video_io = bool(video_capability.get("input") or video_capability.get("output"))
+                has_audio_io = bool(audio_capability.get("input") or audio_capability.get("output"))
+
+                if not skip_warmup:
+                    await self.warmup(
+                        warm_video=warm_video if warm_video is not None else has_video_io,
+                        warm_audio=warm_audio if warm_audio is not None else has_audio_io,
+                    )
+
+                restart_streaming = was_streaming and self.state_manager.can_stream()
+
+            except Exception:
+                raise
+            finally:
+                self.enable_ingest()
+                if restart_streaming and self.state_manager.can_stream():
+                    await self.start_streaming()
+
+            return capabilities if capabilities is not None else self.get_workflow_io_capabilities()
+
+    async def start_streaming(self):
+        """Enable prompt execution for active streaming."""
+        if not self.state_manager.can_stream():
+            raise RuntimeError(f"Cannot start streaming in state: {self.state.name}")
+
+        await self.state_manager.transition_to(PipelineState.STREAMING)
+
+    async def stop_streaming(self):
+        """Pause prompt execution while keeping prompts loaded."""
+        if self.state == PipelineState.STREAMING:
+            await self.state_manager.transition_to(PipelineState.READY)
+
+    async def pause_prompts(self):
+        """Pause prompt execution loops without canceling tasks."""
+        await self.stop_streaming()
+
+    async def resume_prompts(self):
+        """Resume paused prompt execution loops."""
+        await self.start_streaming()
+
+    def are_prompts_running(self) -> bool:
+        """Check if prompts are currently running.
+
+        Returns:
+            True if prompts are enabled and running, False otherwise
+        """
+        return self.state == PipelineState.STREAMING
+
+    async def stop_prompts(self, cleanup: bool = False):
+        """Stop running prompts by canceling their tasks.
+
+        Args:
+            cleanup: If True, perform full cleanup including queue clearing and
+                client shutdown. If False, only cancel prompt tasks.
+        """
+        if self.state in {PipelineState.STREAMING, PipelineState.INITIALIZING}:
+            await self.state_manager.transition_to(PipelineState.READY)
+
+        await self.client.stop_prompts(cleanup=cleanup)
+
+        # Clear cached modalities and I/O capabilities when prompts are stopped
+        if cleanup:
+            self._cached_modalities = None
+            self._cached_io_capabilities = None
+            # Clear pipeline queues for full cleanup
+            await self._clear_pipeline_queues()
+            try:
+                await self.state_manager.transition_to(PipelineState.UNINITIALIZED)
+            except Exception:
+                logger.exception("Failed to transition pipeline to UNINITIALIZED during cleanup")
+        else:
+            try:
+                await self.state_manager.transition_to(PipelineState.READY)
+            except ValueError:
+                logger.debug("Skipping READY transition due to invalid state")
+            except Exception:
+                logger.exception("Failed to ensure READY state after stopping prompts")
+
+    async def stop_prompts_immediately(self):
+        """Cancel prompt execution tasks without full cleanup."""
+        await self.client.stop_prompts_immediately()
+        try:
+            await self.state_manager.transition_to(PipelineState.READY)
+        except ValueError:
+            logger.debug("Skipping READY transition during immediate stop")
+        except Exception:
+            logger.exception("Failed to ensure READY state during immediate stop")
 
     async def put_video_frame(self, frame: av.VideoFrame):
         """Queue a video frame for processing.
@@ -350,10 +703,10 @@ class Pipeline:
         """
         if self._cached_io_capabilities is None:
             if not hasattr(self.client, "current_prompts") or not self.client.current_prompts:
-                # Return empty capabilities if no prompts
-                return create_empty_workflow_modality()
-
-            self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
+                # Cache empty capabilities if no prompts to avoid repeated checks
+                self._cached_io_capabilities = create_empty_workflow_modality()
+            else:
+                self._cached_io_capabilities = detect_io_points(self.client.current_prompts)
 
         return self._cached_io_capabilities
 
@@ -365,9 +718,10 @@ class Pipeline:
         """
         if self._cached_modalities is None:
             if not hasattr(self.client, "current_prompts") or not self.client.current_prompts:
-                return set()
-
-            self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
+                # Cache empty set if no prompts to avoid repeated checks
+                self._cached_modalities = set()
+            else:
+                self._cached_modalities = detect_prompt_modalities(self.client.current_prompts)
 
         return self._cached_modalities
 
@@ -427,6 +781,13 @@ class Pipeline:
 
         # Cleanup client (this handles prompt cancellation and tensor cache cleanup)
         await self.client.cleanup()
+
+        try:
+            await self.state_manager.transition_to(PipelineState.UNINITIALIZED)
+        except ValueError:
+            logger.debug("Skipping UNINITIALIZED transition during cleanup")
+        except Exception:
+            logger.exception("Failed to transition pipeline to UNINITIALIZED during cleanup")
 
         logger.debug("Pipeline cleanup completed")
 

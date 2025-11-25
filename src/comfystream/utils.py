@@ -125,6 +125,27 @@ class ComfyStreamParamsUpdateRequest(StreamParamsUpdateRequest):
         return super().model_dump()
 
 
+def normalize_stream_params(params: Any) -> Dict[str, Any]:
+    """Normalize stream parameters from various formats to a dict.
+
+    Args:
+        params: Parameters in dict, list, or other format
+
+    Returns:
+        Dict containing normalized parameters, empty dict if invalid
+    """
+    if params is None:
+        return {}
+    if isinstance(params, dict):
+        return dict(params)
+    if isinstance(params, list):
+        for candidate in params:
+            if isinstance(candidate, dict):
+                return dict(candidate)
+        return {}
+    return {}
+
+
 def get_default_workflow() -> dict:
     """Return the default workflow as a dictionary for warmup.
 
