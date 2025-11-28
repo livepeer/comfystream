@@ -97,6 +97,12 @@ class VideoStreamTrack(MediaStreamTrack):
             logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in frame collection: {str(e)}")
+        finally:
+            try:
+                await self.pipeline.stop_prompts(cleanup=True)
+                logger.info("Pipeline cleanup completed after video track ended")
+            except Exception as e:
+                logger.error(f"Error during pipeline cleanup after video track: {e}")
 
     async def recv(self):
         """Receive a processed video frame from the pipeline, increment the frame
@@ -193,6 +199,12 @@ class AudioStreamTrack(MediaStreamTrack):
             logger.info("Frame collection task cancelled")
         except Exception as e:
             logger.error(f"Unexpected error in audio frame collection: {str(e)}")
+        finally:
+            try:
+                await self.pipeline.stop_prompts(cleanup=True)
+                logger.info("Pipeline cleanup completed after audio track ended")
+            except Exception as e:
+                logger.error(f"Error during pipeline cleanup after audio track: {e}")
 
     async def recv(self):
         return await self.pipeline.get_processed_audio_frame()
