@@ -53,6 +53,10 @@ RUN apt-get remove --purge -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12 || true &&
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+# Install numpy<2.0.0 first 
+# to ensure numpy 2.0 is not installed automatically by another package
+RUN conda run -n comfystream --no-capture-output pip install "numpy<2.0.0"
+
 # Install cuDNN 9.7.1 via conda to match PyTorch's bundled version
 RUN conda install -n comfystream -y -c nvidia -c conda-forge cudnn=9.7.1 cuda-version=12.8
 
