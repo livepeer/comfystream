@@ -23,61 +23,12 @@ nodes:
     branch: "main"
     type: "tensorrt"
 
-  # Ryan's nodes
-  comfyui-ryanontheinside:
-    name: "ComfyUI RyanOnTheInside"
-    url: "https://github.com/pschroedl/ComfyUI_RyanOnTheInside.git"
-    type: "utility"
-    dependencies:
-      - "scikit-image"
-
-  comfyui-misc-effects:
-    name: "ComfyUI Misc Effects"
-    url: "https://github.com/ryanontheinside/ComfyUI-Misc-Effects.git"
-    type: "effects"
-   
-  comfyui-realtimenode:
-    name: "ComfyUI RealTimeNodes"
-    url: "https://github.com/ryanontheinside/ComfyUI_RealTimeNodes.git"
-    type: "realtime"
-    dependencies:
-      - "opencv-python"
-
-  comfyui-florence2-vision:
-    name: "ComfyUI Florence2 Vision"
-    url: "https://github.com/ad-astra-video/ComfyUI-Florence2-Vision.git"
-    type: "vision"
-   
-  comfyui-sam2-realtime:
-    name: "ComfyUI SAM2 Realtime"
-    branch: "main"
-    url: "https://github.com/pschroedl/ComfyUI-SAM2-Realtime.git"
-    type: "vision"
-
-  comfyui-load-image-url:
-    name: "ComfyUI Load Image from URL"
-    url: "https://github.com/tsogzark/ComfyUI-load-image-from-url.git"
-    type: "utility"
 
   comfyui-torch-compile:
     name: "ComfyUI Torch Compile"
     url: "https://github.com/yondonfu/ComfyUI-Torch-Compile"
     type: "optimization"
 
-  rgthree-comfy:
-    name: "rgthree Comfy"
-    url: "https://github.com/rgthree/rgthree-comfy.git"
-    type: "utility"
-
-  comfyui-background-edit:
-    name: "ComfyUI Background Edit"
-    url: "https://github.com/yondonfu/ComfyUI-Background-Edit"
-    type: "utility"
-
-  comfyui_controlnet_aux:
-    name: "ComfyUI ControlNet Auxiliary"
-    url: "https://github.com/Fannovel16/comfyui_controlnet_aux"
-    type: "utility"
 
   comfyui-stream-pack:
     name: "ComfyUI Stream Pack"
