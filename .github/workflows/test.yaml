@@ -56,7 +56,7 @@ jobs:
 
   test:
     name: Run Tests
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out code
         uses: actions/checkout@v6
