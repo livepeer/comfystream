@@ -96,7 +96,7 @@ RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip in
 
 # Install ComfyStream requirements
 RUN ln -s /workspace/comfystream /workspace/ComfyUI/custom_nodes/comfystream
-RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e . --constraint src/comfystream/scripts/constraints.txt --root-user-action=ignore
+RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream pip install -e .[server] --constraint src/comfystream/scripts/constraints.txt --root-user-action=ignore
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/comfystream python install.py --workspace /workspace/ComfyUI
 
 # Accept a build-arg that lets CI force-invalidate setup_nodes.py
