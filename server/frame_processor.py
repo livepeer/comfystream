@@ -11,7 +11,10 @@ from utils_byoc import ComfyStreamParamsUpdateRequest, normalize_stream_params
 
 from comfystream.pipeline import Pipeline
 from comfystream.pipeline_state import PipelineState
-from comfystream.utils import convert_prompt, get_default_workflow
+from comfystream.utils import (
+    convert_prompt,
+    get_default_workflow,
+)
 
 logger = logging.getLogger(__name__)
 
