@@ -56,7 +56,8 @@ jobs:
 
   test:
     name: Run Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, amd64]
+    # self-hosted runner provides enough disk space for the full test suite
     steps:
       - name: Check out code
         uses: actions/checkout@v6
