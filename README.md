@@ -160,6 +160,8 @@ If you only have a subset of those UDP ports available, you can use the `--media
 python server/app.py --workspace <COMFY_WORKSPACE> --media-ports 1024,1025,...
 ```
 
+> Tip: Use `--workspace` (preferred). `--cwd` remains a compatible alias and honors `COMFYUI_CWD`.
+
 If you are running the server in a restrictive network environment where this is not possible, you will need to use a TURN server.
 
 At the moment, the server supports using Twilio's TURN servers (although it is easy to make the update to support arbitrary TURN servers):

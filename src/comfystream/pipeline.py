@@ -36,7 +36,7 @@ class Pipeline:
         self,
         width: int = 512,
         height: int = 512,
-        comfyui_inference_log_level: Optional[int] = None,
+        logging_level: Optional[int] = None,
         auto_warmup: bool = False,
         bootstrap_default_prompt: bool = True,
         **kwargs,
@@ -46,12 +46,11 @@ class Pipeline:
         Args:
             width: Width of the video frames (default: 512)
             height: Height of the video frames (default: 512)
-            comfyui_inference_log_level: The logging level for ComfyUI inference.
-                Defaults to None, using the global ComfyUI log level.
+            logging_level: The logging level for ComfyUI (passed to Configuration).
             auto_warmup: Whether to run warmup automatically after prompts are set.
             bootstrap_default_prompt: Whether to run the default workflow once during
                 initialization to start ComfyUI before prompts are applied.
-            **kwargs: Additional arguments to pass to the ComfyStreamClient
+            **kwargs: Additional arguments to pass to the ComfyStreamClient to configure ComfyUI
         """
         self.client = ComfyStreamClient(**kwargs)
         self.width = width
@@ -64,7 +63,7 @@ class Pipeline:
 
         self.processed_audio_buffer = np.array([], dtype=np.int16)
 
-        self._comfyui_inference_log_level = comfyui_inference_log_level
+        self._comfy_logging_level = logging_level
         self._cached_modalities: Optional[Set[str]] = None
         self._cached_io_capabilities: Optional[WorkflowModality] = None
         self.state_manager = PipelineStateManager(self.client)
@@ -624,7 +623,7 @@ class Pipeline:
             return frame
 
         # Get processed output from client
-        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+        async with temporary_log_level("comfy", self._comfy_logging_level):
             out_tensor = await self.client.get_video_output()
 
         processed_frame = self.video_postprocess(out_tensor)
@@ -657,7 +656,7 @@ class Pipeline:
 
         # Process audio if needed
         if frame.samples > len(self.processed_audio_buffer):
-            async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+            async with temporary_log_level("comfy", self._comfy_logging_level):
                 out_tensor = await self.client.get_audio_output()
             self.processed_audio_buffer = np.concatenate([self.processed_audio_buffer, out_tensor])
 
@@ -681,7 +680,7 @@ class Pipeline:
         if not self.produces_text_output():
             return None
 
-        async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+        async with temporary_log_level("comfy", self._comfy_logging_level):
             out_text = await self.client.get_text_output()
 
         return out_text

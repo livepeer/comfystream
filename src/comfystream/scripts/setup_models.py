@@ -11,9 +11,11 @@ from utils import get_config_path, load_model_config
 def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI models")
     parser.add_argument(
+        "--cwd",
         "--workspace",
-        default=os.environ.get("COMFY_UI_WORKSPACE", os.path.expanduser("~/comfyui")),
-        help="ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD", os.path.expanduser("~/comfyui")),
+        help="ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_CWD)",
     )
     return parser.parse_args()
 

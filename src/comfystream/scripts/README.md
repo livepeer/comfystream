@@ -14,15 +14,18 @@
 
 From the repository root:
 
-> The `--workspace` flag is optional and will default to `$COMFY_UI_WORKSPACE` or `~/comfyui`.
+> The `--workspace` flag is optional and will default to `$COMFYUI_CWD` or `~/comfyui`.
 
 ### Install custom nodes
+
 ```bash
 python src/comfystream/scripts/setup_nodes.py --workspace /path/to/comfyui
 ```
+
 > The optional flag `--pull-branches` can be used to ensure the latest git changes are pulled for any custom nodes defined with a `branch` in nodes.yaml
 
 ### Download models and compile tensorrt engines
+
 ```bash
 python src/comfystream/scripts/setup_models.py --workspace /path/to/comfyui
 ```
@@ -42,7 +45,7 @@ nodes:
       - "tensorrt"
 ```
 
-> The `branch` property can be substituted with a SHA-256 commit hash for pinning custom node versions 
+> The `branch` property can be substituted with a SHA-256 commit hash for pinning custom node versions
 
 ### Models (models.yaml)
 
@@ -70,6 +73,6 @@ workspace/
 
 ## Environment Variables
 
-- `COMFY_UI_WORKSPACE`: Base directory for installation
+- `COMFYUI_CWD`: Base directory for installation
 - `PYTHONPATH`: Defaults to workspace directory
 - `CUSTOM_NODES_PATH`: Custom nodes directory

@@ -259,16 +259,23 @@ class ComfyStreamFrameProcessor(FrameProcessor):
         params = {**self._load_params, **kwargs}
 
         if self.pipeline is None:
+            comfy_kwargs: Dict[str, Any] = {
+                "cwd": params.get("workspace", os.getcwd()),
+                "disable_cuda_malloc": params.get("disable_cuda_malloc", True),
+                "gpu_only": params.get("gpu_only", True),
+                "preview_method": params.get("preview_method", "none"),
+                "logging_level": params.get("logging_level", "INFO"),
+                "blacklist_custom_nodes": ["ComfyUI-Manager"],
+            }
+
+            # If a ComfyUI config file is provided, prefer it and pass it through.
+            if params.get("config"):
+                comfy_kwargs = {"config": params["config"]}
+
             self.pipeline = Pipeline(
                 width=int(params.get("width", 512)),
                 height=int(params.get("height", 512)),
-                cwd=params.get("workspace", os.getcwd()),
-                disable_cuda_malloc=params.get("disable_cuda_malloc", True),
-                gpu_only=params.get("gpu_only", True),
-                preview_method=params.get("preview_method", "none"),
-                comfyui_inference_log_level=params.get("comfyui_inference_log_level", "INFO"),
-                logging_level=params.get("comfyui_inference_log_level", "INFO"),
-                blacklist_custom_nodes=["ComfyUI-Manager"],
+                **comfy_kwargs,
             )
             await self.pipeline.initialize()
 
