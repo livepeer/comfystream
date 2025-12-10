@@ -66,19 +66,19 @@ jobs:
           # for ref value discussion
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-          cache: pip
+      - name: Install Python 3.12 (Debian 12 self-hosted)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3.12 python3.12-venv python3.12-distutils
+          python3.12 -m pip install --upgrade pip
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install '.[dev]'
+          python3.12 -m pip install --upgrade pip
+          python3.12 -m pip install '.[dev]'
 
       - name: Run tests
-        run: pytest --cov --verbose --showlocals
+        run: python3.12 -m pytest --cov --verbose --showlocals
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
