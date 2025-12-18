@@ -9,12 +9,6 @@ on:
       - main
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      nodes_config:
-        description: "Custom nodes config filename or path for base image build"
-        required: false
-        default: "nodes.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -84,7 +78,6 @@ jobs:
           file: docker/Dockerfile.base
           build-args: |
             CACHEBUST=${{ github.run_id }}
-            NODES_CONFIG=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.nodes_config || 'nodes.yaml' }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=registry,ref=livepeer/comfyui-base:build-cache
