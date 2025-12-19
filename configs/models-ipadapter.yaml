@@ -30,7 +30,7 @@ models:
   PixelArtRedmond15V-PixelArt-PIXARFK.safetensors:
     name: "PixelArtRedmond15V-PixelArt-PIXARFK"
     url: "https://huggingface.co/artificialguybr/pixelartredmond-1-5v-pixel-art-loras-for-sd-1-5/resolve/ab43d9e2cf8c9240189f01e9cdc4ca341362500c/PixelArtRedmond15V-PixelArt-PIXARFK.safetensors"
-    path: "loras/SD1.5/PixelArtRedmond15V-PixelArt-PIXARFK.safetensors"
+    path: "loras/SD1.5/PixelArt.safetensors"
     type: "lora"
 
   # TAESD for fast VAE
@@ -42,4 +42,3 @@ models:
     extra_files:
       - url: "https://huggingface.co/madebyollin/taesd/resolve/main/taesd_encoder.safetensors"
         path: "vae_approx/taesd_encoder.safetensors"
-

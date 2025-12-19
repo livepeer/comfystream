@@ -10,7 +10,7 @@ nodes:
 
   comfyui-streamdiffusion:
     name: "ComfyUI StreamDiffusion"
-    url: "https://github.com/RUFFY-369/ComfyUI-StreamDiffusion"
+    url: "https://github.com/muxionlabs/ComfyUI-StreamDiffusion"
     branch: "main"
     type: "tensorrt"
 
@@ -34,4 +34,3 @@ nodes:
     name: "rgthree Comfy"
     url: "https://github.com/rgthree/rgthree-comfy.git"
     type: "utility"
-
