@@ -51,25 +51,31 @@ class VideoStreamTrack(MediaStreamTrack):
 
     kind = "video"
 
-    def __init__(self, track: MediaStreamTrack, pipeline: Pipeline):
+    def __init__(self, track: MediaStreamTrack | None, pipeline: Pipeline):
         """Initialize the VideoStreamTrack.
 
         Args:
-            track: The underlying media stream track.
+            track: The underlying media stream track (None if generative).
             pipeline: The processing pipeline to apply to each video frame.
         """
         super().__init__()
         self.track = track
         self.pipeline = pipeline
-        self.fps_meter = FPSMeter(metrics_manager=app["metrics_manager"], track_id=track.id)
+        
+        track_id = track.id if track else self.id
+        self.fps_meter = FPSMeter(metrics_manager=app["metrics_manager"], track_id=track_id)
         self.running = True
-        self.collect_task = asyncio.create_task(self.collect_frames())
+        
+        if track:
+            self.collect_task = asyncio.create_task(self.collect_frames())
 
-        # Add cleanup when track ends
-        @track.on("ended")
-        async def on_ended():
-            logger.info("Source video track ended, stopping collection")
-            await cancel_collect_frames(self)
+            # Add cleanup when track ends
+            @track.on("ended")
+            async def on_ended():
+                logger.info("Source video track ended, stopping collection")
+                await cancel_collect_frames(self)
+        else:
+             self.collect_task = None
 
     async def collect_frames(self):
         """Collect video frames from the underlying track and pass them to
@@ -153,19 +159,25 @@ class NoopAudioStreamTrack(MediaStreamTrack):
 class AudioStreamTrack(MediaStreamTrack):
     kind = "audio"
 
-    def __init__(self, track: MediaStreamTrack, pipeline):
+    def __init__(self, track: MediaStreamTrack | None, pipeline):
         super().__init__()
         self.track = track
         self.pipeline = pipeline
         self.running = True
-        logger.info(f"AudioStreamTrack created for track {track.id}")
-        self.collect_task = asyncio.create_task(self.collect_frames())
+        
+        track_id = track.id if track else self.id
+        logger.info(f"AudioStreamTrack created for track {track_id}")
+        
+        if track:
+            self.collect_task = asyncio.create_task(self.collect_frames())
 
-        # Add cleanup when track ends
-        @track.on("ended")
-        async def on_ended():
-            logger.info("Source audio track ended, stopping collection")
-            await cancel_collect_frames(self)
+            # Add cleanup when track ends
+            @track.on("ended")
+            async def on_ended():
+                logger.info("Source audio track ended, stopping collection")
+                await cancel_collect_frames(self)
+        else:
+            self.collect_task = None
 
     async def collect_frames(self):
         """Collect audio frames from the underlying track and pass them to
@@ -285,7 +297,18 @@ async def offer(request):
     # Add transceivers for both audio and video if present in the offer
     if "m=video" in offer.sdp:
         logger.debug("[Offer] Adding video transceiver")
-        video_transceiver = pc.addTransceiver("video", direction="sendrecv")
+        
+        track_or_kind = "video"
+        if not is_noop_mode and not pipeline.accepts_video_input() and pipeline.produces_video_output():
+            logger.info("[Offer] Creating Generative Video Track")
+            gen_track = VideoStreamTrack(None, pipeline)
+            tracks["video"] = gen_track
+            track_or_kind = gen_track
+            
+            # Store video track in app for stats
+            request.app["video_tracks"][gen_track.id] = gen_track
+            
+        video_transceiver = pc.addTransceiver(track_or_kind, direction="sendrecv")
         caps = RTCRtpSender.getCapabilities("video")
         prefs = list(filter(lambda x: x.name == "H264", caps.codecs))
         video_transceiver.setCodecPreferences(prefs)
@@ -296,7 +319,15 @@ async def offer(request):
 
     if "m=audio" in offer.sdp:
         logger.debug("[Offer] Adding audio transceiver")
-        audio_transceiver = pc.addTransceiver("audio", direction="sendrecv")
+        
+        track_or_kind = "audio"
+        if not is_noop_mode and not pipeline.accepts_audio_input() and pipeline.produces_audio_output():
+             logger.info("[Offer] Creating Generative Audio Track")
+             gen_track = AudioStreamTrack(None, pipeline)
+             tracks["audio"] = gen_track
+             track_or_kind = gen_track
+             
+        audio_transceiver = pc.addTransceiver(track_or_kind, direction="sendrecv")
         audio_caps = RTCRtpSender.getCapabilities("audio")
         # Prefer Opus for audio
         audio_prefs = [codec for codec in audio_caps.codecs if codec.name == "opus"]
