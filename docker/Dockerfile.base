@@ -90,6 +90,8 @@ RUN conda run -n comfystream --cwd /workspace/comfystream --no-capture-output pi
 COPY ./workflows/comfyui/* /workspace/ComfyUI/user/default/workflows/
 COPY ./test/example-512x512.png /workspace/ComfyUI/input
 COPY ./docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+COPY ./docker/byoc-entrypoint.sh /usr/local/bin/byoc-entrypoint.sh
+RUN chmod +x /usr/local/bin/byoc-entrypoint.sh
 
 # Install ComfyUI requirements
 RUN conda run -n comfystream --no-capture-output --cwd /workspace/ComfyUI pip install -r requirements.txt --constraint /workspace/comfystream/src/comfystream/scripts/constraints.txt --root-user-action=ignore
@@ -118,7 +120,7 @@ RUN echo "conda activate comfystream" >> ~/.bashrc
 
 WORKDIR /workspace/comfystream
 
-# Run ComfyStream BYOC server from /workspace/ComfyUI within the comfystream conda env
-ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "comfystream", "--cwd", "/workspace/ComfyUI", "python", "/workspace/comfystream/server/byoc.py"]
-# Default args; can be overridden/appended at runtime
+# Run ComfyStream BYOC server by default but allow overriding the command
+ENTRYPOINT ["/usr/local/bin/byoc-entrypoint.sh"]
+# Default args; can be overridden/appended at runtime or replaced entirely
 CMD ["--workspace", "/workspace/ComfyUI", "--host", "0.0.0.0", "--port", "8000"]
