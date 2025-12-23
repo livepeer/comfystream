@@ -8,7 +8,7 @@
 	},
 	"runArgs": [
 		"--gpus=all"
-	], 
+	],
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// Configure tool-specific properties.
 	"customizations": {
@@ -31,9 +31,10 @@
 	"appPort": [
 		"8188:8188",  // ComfyUI
 		"8889:8889",  // ComfyStream
-		"3000:3000"   // ComfyStream UI (optional)
+		"3000:3000",   // ComfyStream UI (optional)
+    "8001:8001"   // ComfyStream BYOC
 	],
-	"forwardPorts": [8188, 8889, 3000],
+	"forwardPorts": [8188, 8889, 3000, 8001],
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// Use 'mounts' to make a list of local folders available inside the container.
 	"workspaceFolder": "/workspace/comfystream",
