@@ -7,4 +7,3 @@ toml
 twilio
 prometheus_client
 librosa
-mediapipe==0.10.15

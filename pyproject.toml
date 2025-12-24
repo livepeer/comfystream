@@ -16,8 +16,7 @@ dependencies = [
     "toml",
     "twilio",
     "prometheus_client",
-    "librosa",
-    "mediapipe==0.10.15"
+    "librosa"
 ]
 
 [project.optional-dependencies]
