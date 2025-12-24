@@ -654,15 +654,26 @@ async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
+    comfy_kwargs = {}
+    if app.get("config"):
+        # Pass config directly to ComfyUI; do not override with other ComfyUI flags
+        comfy_kwargs["config"] = app["config"]
+    else:
+        comfy_kwargs.update(
+            {
+                "cwd": app["workspace"],
+                "disable_cuda_malloc": True,
+                "gpu_only": True,
+                "preview_method": "none",
+                "logging_level": app.get("logging_level", None),
+                "blacklist_custom_nodes": ["ComfyUI-Manager"],
+            }
+        )
+
     app["pipeline"] = Pipeline(
         width=512,
         height=512,
-        cwd=app["workspace"],
-        disable_cuda_malloc=True,
-        gpu_only=True,
-        preview_method="none",
-        comfyui_inference_log_level=app.get("comfyui_inference_log_level", None),
-        blacklist_custom_nodes=["ComfyUI-Manager"],
+        **comfy_kwargs,
     )
     await app["pipeline"].initialize()
     app["pcs"] = set()
@@ -681,7 +692,21 @@ if __name__ == "__main__":
     parser.add_argument("--port", default=8889, help="Set the signaling port")
     parser.add_argument("--media-ports", default=None, help="Set the UDP ports for WebRTC media")
     parser.add_argument("--host", default="127.0.0.1", help="Set the host")
-    parser.add_argument("--workspace", default=None, required=True, help="Set Comfy workspace")
+    parser.add_argument(
+        "-c",
+        "--config",
+        dest="config",
+        default=None,
+        help="Path to ComfyUI config file (yaml/json/ini/conf). When provided, it is passed directly to ComfyUI.",
+    )
+    parser.add_argument(
+        "--workspace",
+        "--cwd",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD"),
+        required=True,
+        help="Set ComfyUI workspace directory (preferred; alias: --cwd)",
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -707,10 +732,10 @@ if __name__ == "__main__":
         help="Set the global logging level for ComfyUI",
     )
     parser.add_argument(
-        "--comfyui-inference-log-level",
+        "--logging-level",
         default=None,
         choices=logging._nameToLevel.keys(),
-        help="Set the logging level for ComfyUI inference",
+        help="Set the logging level for ComfyUI (passed through to ComfyUI Configuration)",
     )
     args = parser.parse_args()
 
@@ -720,9 +745,14 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
+    logger.info(f"Using ComfyUI workspace: {args.workspace}")
+    os.environ.setdefault("COMFYUI_CWD", args.workspace)
+
     app = web.Application()
     app["media_ports"] = args.media_ports.split(",") if args.media_ports else None
     app["workspace"] = args.workspace
+    app["logging_level"] = args.logging_level
+    app["config"] = args.config
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -768,7 +798,5 @@ if __name__ == "__main__":
     timeout_filter = ComfyStreamTimeoutFilter()
     logging.getLogger("comfy.cmd.execution").addFilter(timeout_filter)
     logging.getLogger("comfystream").addFilter(timeout_filter)
-    if args.comfyui_inference_log_level:
-        app["comfyui_inference_log_level"] = args.comfyui_inference_log_level
 
     web.run_app(app, host=args.host, port=int(args.port), print=force_print)
