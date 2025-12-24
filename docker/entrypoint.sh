@@ -86,6 +86,10 @@ DEPTH_ANYTHING_DIR="${TENSORRT_DIR}/depth-anything"
 DEPTH_ANYTHING_ENGINE="depth_anything_vitl14-fp16.engine"
 DEPTH_ANYTHING_ENGINE_LARGE="depth_anything_v2_vitl-fp16.engine"
 FASTERLIVEPORTRAIT_DIR="/workspace/ComfyUI/models/liveportrait_onnx"
+DEPTH_ANYTHING_NODE_DIR="/workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt"
+DEPTH_ANYTHING_EXPORT_SCRIPT="${DEPTH_ANYTHING_NODE_DIR}/export_trt.py"
+FASTERLIVEPORTRAIT_NODE_DIR="/workspace/ComfyUI/custom_nodes/ComfyUI-FasterLivePortrait"
+FASTERLIVEPORTRAIT_BUILD_SCRIPT="${FASTERLIVEPORTRAIT_NODE_DIR}/scripts/build_fasterliveportrait_trt.sh"
 
 if [ "$1" = "--build-engines" ]; then
   cd /workspace/comfystream
@@ -111,32 +115,41 @@ if [ "$1" = "--build-engines" ]; then
                 --max-width 448 \
                 --max-height 704
 
-  # Build Engine for Depth Anything V2
-  if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE" ]; then
-    if [ ! -d "$DEPTH_ANYTHING_DIR" ]; then
-      mkdir -p "$DEPTH_ANYTHING_DIR"
+  # Build Engine for Depth Anything V2 (guarded by custom node)
+  if [ -d "$DEPTH_ANYTHING_NODE_DIR" ] && [ -f "$DEPTH_ANYTHING_EXPORT_SCRIPT" ]; then
+    if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE" ]; then
+      if [ ! -d "$DEPTH_ANYTHING_DIR" ]; then
+        mkdir -p "$DEPTH_ANYTHING_DIR"
+      fi
+      cd "$DEPTH_ANYTHING_DIR"
+      python "$DEPTH_ANYTHING_EXPORT_SCRIPT"
+    else
+      echo "Engine for DepthAnything2 already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE}, skipping..."
     fi
-    cd "$DEPTH_ANYTHING_DIR"
-    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py
+
+    # Build Engine for Depth Anything2 (large)
+    if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE_LARGE" ]; then
+      cd "$DEPTH_ANYTHING_DIR"
+      python "$DEPTH_ANYTHING_EXPORT_SCRIPT" --trt-path "${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}" --onnx-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl.onnx"
+    else
+      echo "Engine for DepthAnything2 (large) already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}, skipping..."
+    fi
   else
-    echo "Engine for DepthAnything2 already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE}, skipping..."
+    echo "DepthAnything custom node not found at ${DEPTH_ANYTHING_NODE_DIR}, skipping engine build."
   fi
 
-  # Build Engine for Depth Anything2 (large)
-  if [ ! -f "$DEPTH_ANYTHING_DIR/$DEPTH_ANYTHING_ENGINE_LARGE" ]; then
-    cd "$DEPTH_ANYTHING_DIR"
-    python /workspace/ComfyUI/custom_nodes/ComfyUI-Depth-Anything-Tensorrt/export_trt.py --trt-path "${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}" --onnx-path "${DEPTH_ANYTHING_DIR}/depth_anything_v2_vitl.onnx"
+  # Build Engines for FasterLivePortrait (guarded by custom node)
+  if [ -d "$FASTERLIVEPORTRAIT_NODE_DIR" ] && [ -f "$FASTERLIVEPORTRAIT_BUILD_SCRIPT" ]; then
+    if [ ! -f "$FASTERLIVEPORTRAIT_DIR/warping_spade-fix.trt" ]; then
+      cd "$FASTERLIVEPORTRAIT_DIR"
+      bash "$FASTERLIVEPORTRAIT_BUILD_SCRIPT" "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}"
+    else
+      echo "Engines for FasterLivePortrait already exists, skipping..."
+    fi
   else
-    echo "Engine for DepthAnything2 (large) already exists at ${DEPTH_ANYTHING_DIR}/${DEPTH_ANYTHING_ENGINE_LARGE}, skipping..."
+    echo "ComfyUI-FasterLivePortrait custom node not found at ${FASTERLIVEPORTRAIT_NODE_DIR}, skipping engine build."
   fi
 
-  # Build Engines for FasterLivePortrait
-  if [ ! -f "$FASTERLIVEPORTRAIT_DIR/warping_spade-fix.trt" ]; then
-    cd "$FASTERLIVEPORTRAIT_DIR"
-    bash /workspace/ComfyUI/custom_nodes/ComfyUI-FasterLivePortrait/scripts/build_fasterliveportrait_trt.sh "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}" "${FASTERLIVEPORTRAIT_DIR}"
-  else
-    echo "Engines for FasterLivePortrait already exists, skipping..."
-  fi
 
   # Build Engine for StreamDiffusion using build_targets.yaml (dynamic, robust)
   BUILD_TARGETS_FILE="/workspace/comfystream/configs/build_targets.yaml"
@@ -174,7 +187,7 @@ fi
 if [ "$1" = "--opencv-cuda" ]; then
   cd /workspace/comfystream
   conda activate comfystream
-  
+
   # Check if OpenCV CUDA build already exists
   if [ ! -f "/workspace/comfystream/opencv-cuda-release.tar.gz" ]; then
     # Download and extract OpenCV CUDA build
@@ -196,7 +209,7 @@ if [ "$1" = "--opencv-cuda" ]; then
 
   # Handle library dependencies
   CONDA_ENV_LIB="/workspace/miniconda3/envs/comfystream/lib"
-  
+
   # Remove existing libstdc++ and copy system one
   rm -f "${CONDA_ENV_LIB}/libstdc++.so"*
   cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
@@ -219,20 +232,20 @@ if [ "$START_COMFYUI" = true ] || [ "$START_API" = true ] || [ "$START_UI" = tru
   # Start supervisord in background
   /usr/bin/supervisord -c /etc/supervisor/supervisord.conf &
   sleep 2  # Give supervisord time to start
-  
+
   # Start requested services
   if [ "$START_COMFYUI" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfyui
   fi
-  
+
   if [ "$START_API" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfystream-api
   fi
-  
+
   if [ "$START_UI" = true ]; then
     supervisorctl -c /etc/supervisor/supervisord.conf start comfystream-ui
   fi
-  
+
   # Keep the script running
   tail -f /var/log/supervisord.log
 fi
