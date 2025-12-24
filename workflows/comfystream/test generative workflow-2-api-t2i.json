@@ -1,0 +1,44 @@
+{
+  "1": {
+    "inputs": {
+      "value": "gen stream success!"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "String"
+    }
+  },
+  "7": {
+    "inputs": {
+      "width": 512,
+      "height": 512,
+      "font_size": 48,
+      "font_color": "white",
+      "background_color": "black",
+      "x_offset": 0,
+      "y_offset": 0,
+      "align": "center",
+      "wrap_width": 0,
+      "any": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "TextRenderer",
+    "_meta": {
+      "title": "Text Renderer 🕒🅡🅣🅝"
+    }
+  },
+  "10": {
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  }
+}
