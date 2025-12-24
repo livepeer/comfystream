@@ -13,6 +13,8 @@ nodes:
     url: "https://github.com/muxionlabs/ComfyUI-StreamDiffusion"
     branch: "main"
     type: "tensorrt"
+    dependencies:
+      - "nvidia-modelopt[hf]"
 
   comfyui-torch-compile:
     name: "ComfyUI Torch Compile"
