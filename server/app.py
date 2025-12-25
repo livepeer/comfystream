@@ -685,6 +685,9 @@ async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
+    from comfystream import tensor_cache
+    tensor_cache.init(asyncio.get_running_loop())
+
     app["pipeline"] = Pipeline(
         width=512,
         height=512,

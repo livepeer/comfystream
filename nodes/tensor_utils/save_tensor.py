@@ -54,5 +54,17 @@ class SaveTensor:
 
     def execute(self, images: torch.Tensor):
         for img in self._split_images(images):
-            tensor_cache.image_outputs.put_nowait(img)
+            # Schedule the put operation on the main event loop thread safely
+            if tensor_cache.main_loop:
+                tensor_cache.main_loop.call_soon_threadsafe(
+                    tensor_cache.image_outputs.put_nowait, img
+                )
+            else:
+                # Fallback implementation (mostly for tests without init or direct execution)
+                try:
+                    tensor_cache.image_outputs.put_nowait(img)
+                except RuntimeError:
+                    # If we are in a thread with no loop, this might fail or be unsafe, 
+                    # but if main_loop is not set we have few options. 
+                    pass
         return images
