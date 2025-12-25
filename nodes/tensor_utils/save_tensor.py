@@ -27,7 +27,7 @@ class SaveTensor:
         """Yield individual images for batched tensors/lists without changing interface."""
         # Torch tensor inputs with optional batch dimension in dim 0
         if isinstance(images, torch.Tensor):
-            if images.dim() >= 4 and images.shape[0] > 1:
+            if images.dim() >= 4:
                 for img in images:
                     yield img
                 return
