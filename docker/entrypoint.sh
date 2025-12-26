@@ -222,6 +222,15 @@ if [ "$START_COMFYUI" = true ] || [ "$START_API" = true ] || [ "$START_UI" = tru
   
   # Keep the script running
   tail -f /var/log/supervisord.log
+  exit 0
+fi
+
+# Activate conda environment
+conda activate comfystream
+
+# If no args or first arg is an option, run the BYOC server with default args.
+if [[ $# -eq 0 || "$1" == -* ]]; then
+  set -- python /workspace/comfystream/server/byoc.py "$@"
 fi
 
 exec "$@"
