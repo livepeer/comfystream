@@ -101,7 +101,7 @@ jobs:
           rm -rf test-extract
 
       - name: Upload OpenCV CUDA Release Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: opencv-cuda-release-python${{ env.PYTHON_VERSION }}-cuda${{ env.CUDA_VERSION }}-${{ github.sha }}
           path: |
@@ -141,7 +141,7 @@ jobs:
           EOF
 
       - name: Upload Release Info
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: release-info-python${{ env.PYTHON_VERSION }}-cuda${{ env.CUDA_VERSION }}-${{ github.sha }}
           path: release-info.txt
@@ -158,13 +158,13 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: opencv-cuda-release-python${{ env.PYTHON_VERSION }}-cuda${{ env.CUDA_VERSION }}-${{ github.sha }}
           path: ./artifacts
 
       - name: Download release info
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: release-info-python${{ env.PYTHON_VERSION }}-cuda${{ env.CUDA_VERSION }}-${{ github.sha }}
           path: ./artifacts
