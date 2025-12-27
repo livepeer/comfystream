@@ -13,3 +13,9 @@ audio_inputs: Queue[Union[torch.Tensor, np.ndarray]] = Queue()
 audio_outputs: AsyncQueue[Union[torch.Tensor, np.ndarray]] = AsyncQueue()
 
 text_outputs: AsyncQueue[str] = AsyncQueue()
+
+main_loop = None
+
+def init(loop):
+    global main_loop
+    main_loop = loop

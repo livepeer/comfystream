@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional, Set, Union
 
 import av
+from fractions import Fraction
 import numpy as np
 import torch
 
@@ -76,6 +77,7 @@ class Pipeline:
         self._warmup_task: Optional[asyncio.Task] = None
         self._warmup_completed = False
         self._last_warmup_resolution: Optional[tuple[int, int]] = None
+        self._generated_pts = 0
 
     @property
     def state(self) -> PipelineState:
@@ -682,6 +684,18 @@ class Pipeline:
         Returns:
             The processed video frame, or original frame if no processing needed
         """
+        # Handle generative video case (no input, but produces output)
+        if not self.accepts_video_input() and self.produces_video_output():
+            async with temporary_log_level("comfy", self._comfyui_inference_log_level):
+                out_tensor = await self.client.get_video_output()
+
+            processed_frame = self.video_postprocess(out_tensor)
+            processed_frame.pts = self._generated_pts
+            processed_frame.time_base = Fraction(1, 30)
+            self._generated_pts += 1
+
+            return processed_frame
+
         frame = await self.video_incoming_frames.get()
 
         # Skip frames that were marked as skipped

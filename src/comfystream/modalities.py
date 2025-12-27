@@ -25,7 +25,7 @@ NODE_TYPES = {
     "audio_input": {"LoadAudioTensor"},
     "audio_output": {"SaveAudioTensor"},
     # Text nodes
-    "text_input": set(),  # No text input nodes currently
+    "text_input": {"PrimitiveString"},  # Basic text input node
     "text_output": {"SaveTextTensor"},
 }
 
