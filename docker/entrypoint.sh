@@ -138,17 +138,40 @@ if [ "$1" = "--build-engines" ]; then
     echo "Engines for FasterLivePortrait already exists, skipping..."
   fi
 
-  # Build Engine for StreamDiffusion using trt script and config
-  ENGINE_SCRIPT="/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/scripts/build_tensorrt_engines.py"
-  CONFIGS=(
-    "/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/configs/sd15_singlecontrol.yaml"
-    "/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/configs/sdturbo_multicontrol.yaml"
-  )
-  cd /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/scripts
-  for ENGINE_CONFIG in "${CONFIGS[@]}"; do
-    echo "Building StreamDiffusion TensorRT engines using config: $ENGINE_CONFIG"
-    python "$ENGINE_SCRIPT" --config "$ENGINE_CONFIG"
-  done
+  # Build Engine for StreamDiffusion using build_targets.yaml (dynamic, robust)
+    BUILD_TARGETS_FILE="/workspace/comfystream/configs/build_targets.yaml"
+    if [ ! -f "$BUILD_TARGETS_FILE" ]; then
+    echo "build_targets.yaml not found at $BUILD_TARGETS_FILE. Skipping StreamDiffusion engine builds."
+    else
+      python3 - <<'EOF'
+import os
+import yaml
+import subprocess
+
+with open("/workspace/comfystream/configs/build_targets.yaml", "r") as f:
+  targets = yaml.safe_load(f)
+
+info = targets.get("streamdiffusion")
+if info:
+  folder = info.get("folder")
+  script = info.get("script")
+  configs = info.get("configs", [])
+  if folder and os.path.isdir(folder) and script and os.path.isfile(script):
+    for config in configs:
+      if os.path.isfile(config):
+        print(f"Building streamdiffusion engine with config: {config}")
+        try:
+          subprocess.run(["python", script, "--config", config], check=True)
+        except subprocess.CalledProcessError as e:
+          print(f"Error building engine for config {config}: {e}")
+      else:
+        print(f"Warning: Config {config} for streamdiffusion not found, skipping...")
+  else:
+    print(f"Skipping streamdiffusion: required folder or script not found.")
+else:
+  print("streamdiffusion not found in build_targets.yaml, skipping...")
+EOF
+  fi
   shift
 fi
 
@@ -217,5 +240,7 @@ if [ "$START_COMFYUI" = true ] || [ "$START_API" = true ] || [ "$START_UI" = tru
   # Keep the script running
   tail -f /var/log/supervisord.log
 fi
+
+
 
 exec "$@"

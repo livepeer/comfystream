@@ -1,0 +1,17 @@
+# build_targets.yaml
+# Maps node names to their build scripts and config files.
+# Add new nodes as needed.
+
+streamdiffusion:
+  script: /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/scripts/build_tensorrt_engines.py
+  configs:
+    - /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/configs/sd15_singlecontrol.yaml
+    - /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/configs/sdturbo_multicontrol.yaml
+  folder: /workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion/scripts
+
+# Example for another node:
+# depthanything:
+#   script: /workspace/ComfyUI/custom_nodes/ComfyUI-DepthAnything/scripts/build_depthanything_engine.py
+#   configs:
+#     - /workspace/ComfyUI/custom_nodes/ComfyUI-DepthAnything/configs/depthanything.yaml
+#   folder: /workspace/ComfyUI/custom_nodes/ComfyUI-DepthAnything/scripts
