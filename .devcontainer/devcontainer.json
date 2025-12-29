@@ -2,6 +2,10 @@
 // README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
 {
 	"name": "ComfyStream",
+  // Commented out to use the build context instead
+  // TODO: Update this to the correct image name
+  // when using images other than livepeer/comfystream:latest
+  // "image": "livepeer/comfystream:streamdiffusion",
 	"build": {
 		"dockerfile": "../docker/Dockerfile",
 		"context": "../"
