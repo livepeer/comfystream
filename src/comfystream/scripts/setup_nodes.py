@@ -11,9 +11,11 @@ from utils import get_config_path, load_model_config
 def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI nodes and models")
     parser.add_argument(
+        "--cwd",
         "--workspace",
-        default=os.environ.get("COMFY_UI_WORKSPACE", Path("~/comfyui").expanduser()),
-        help="ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD", Path("~/comfyui").expanduser()),
+        help="ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_CWD)",
     )
     parser.add_argument(
         "--pull-branches",
@@ -30,7 +32,7 @@ def parse_args():
 
 
 def setup_environment(workspace_dir):
-    os.environ["COMFY_UI_WORKSPACE"] = str(workspace_dir)
+    os.environ["COMFYUI_CWD"] = str(workspace_dir)
     os.environ["PYTHONPATH"] = str(workspace_dir)
     os.environ["CUSTOM_NODES_PATH"] = str(workspace_dir / "custom_nodes")
 

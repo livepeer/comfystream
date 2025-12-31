@@ -29,6 +29,7 @@ WORKSPACE_STORAGE="/app/storage"
 COMFYUI_DIR="/workspace/ComfyUI"
 MODELS_DIR="$COMFYUI_DIR/models"
 OUTPUT_DIR="$COMFYUI_DIR/output"
+export COMFYUI_CWD="$COMFYUI_DIR"
 
 # Initialize variables to track which services to start
 START_COMFYUI=false

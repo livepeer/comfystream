@@ -31,9 +31,18 @@ def main():
     parser.add_argument("--port", default=8000, help="Set the server port")
     parser.add_argument("--host", default="0.0.0.0", help="Set the host")
     parser.add_argument(
+        "-c",
+        "--config",
+        dest="config",
+        default=None,
+        help="Path to ComfyUI config file (yaml/json/ini/conf). When provided, it is passed directly to ComfyUI.",
+    )
+    parser.add_argument(
         "--workspace",
-        default=os.getcwd() + "/../ComfyUI",
-        help="Set Comfy workspace (Default: ../ComfyUI)",
+        "--cwd",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD", os.getcwd() + "/../ComfyUI"),
+        help="Set ComfyUI workspace directory (preferred; alias: --cwd)",
     )
     parser.add_argument(
         "--log-level",
@@ -48,10 +57,10 @@ def main():
         help="Set the global logging level for ComfyUI",
     )
     parser.add_argument(
-        "--comfyui-inference-log-level",
+        "--logging-level",
         default=None,
         choices=logging._nameToLevel.keys(),
-        help="Set the logging level for ComfyUI inference",
+        help="Set the logging level for ComfyUI (passed through to ComfyUI Configuration)",
     )
     parser.add_argument(
         "--disable-frame-skip",
@@ -80,6 +89,9 @@ def main():
     )
     logging.getLogger("comfy.model_detection").setLevel(logging.WARNING)
 
+    logger.info(f"Using ComfyUI workspace: {args.workspace}")
+    os.environ.setdefault("COMFYUI_CWD", args.workspace)
+
     # Allow overriding of ComfyUI log levels.
     if args.comfyui_log_level:
         log_level = logging._nameToLevel.get(args.comfyui_log_level.upper())
@@ -104,13 +116,13 @@ def main():
     frame_processor = ComfyStreamFrameProcessor(
         width=args.width,
         height=args.height,
+        config=args.config,
         workspace=args.workspace,
         disable_cuda_malloc=True,
         gpu_only=True,
         preview_method="none",
         blacklist_custom_nodes=["ComfyUI-Manager"],
-        logging_level=args.comfyui_log_level,
-        comfyui_inference_log_level=args.comfyui_inference_log_level,
+        logging_level=args.logging_level or args.comfyui_log_level,
     )
 
     # Create frame skip configuration only if enabled
