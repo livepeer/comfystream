@@ -187,6 +187,49 @@ def main():
     # Add registration to startup hooks
     processor.server.app.on_startup.append(register_orchestrator_startup)
 
+    # Add warmup endpoint: accepts same body as prompts update
+    async def warmup_handler(request):
+        try:
+            body = await request.json()
+        except Exception as e:
+            logger.error(f"Invalid JSON in warmup request: {e}")
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+        try:
+            # Inject sentinel to trigger warmup inside update_params on the model thread
+            if isinstance(body, dict):
+                body["warmup"] = True
+            else:
+                body = {"warmup": True}
+            # Fire-and-forget: do not await warmup; update_params will schedule it
+            asyncio.get_running_loop().create_task(frame_processor.update_params(body))
+            return web.json_response({"status": "accepted"})
+        except Exception as e:
+            logger.error(f"Warmup failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Add pause endpoint
+    async def pause_handler(request):
+        try:
+            # Fire-and-forget: do not await pause
+            asyncio.get_running_loop().create_task(frame_processor.pause_prompts())
+            return web.json_response({"status": "paused"})
+        except Exception as e:
+            logger.error(f"Pause failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Add resume endpoint
+    async def resume_handler(request):
+        try:
+            # Fire-and-forget: do not await resume
+            asyncio.get_running_loop().create_task(frame_processor.resume_prompts())
+            return web.json_response({"status": "resumed"})
+        except Exception as e:
+            logger.error(f"Resume failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Mount at same API namespace as StreamProcessor defaults
+    processor.server.add_route("POST", "/api/stream/warmup", warmup_handler)
+
     # Run the processor
     processor.run()
 
