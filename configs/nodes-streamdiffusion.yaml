@@ -24,6 +24,11 @@ nodes:
     url: "https://github.com/Fannovel16/comfyui_controlnet_aux"
     type: "controlnet"
 
+  comfyui-load-image-url:
+    name: "ComfyUI Load Image from URL"
+    url: "https://github.com/tsogzark/ComfyUI-load-image-from-url.git"
+    type: "utility"
+
   comfyui-stream-pack:
     name: "ComfyUI Stream Pack"
     url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
