@@ -1,0 +1,133 @@
+name: Docker build and push streamdiffusion images
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  base-streamdiffusion:
+    name: comfyui-base:streamdiffusion image
+    if: ${{ github.repository == 'livepeer/comfystream' }}
+    outputs:
+      repository: ${{ steps.repo.outputs.repository }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.repo.outputs.image-tag }}
+    permissions:
+      packages: write
+      contents: read
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Output image repository
+        id: repo
+        shell: bash
+        run: |
+          echo "repository=livepeer/comfyui-base" >> "$GITHUB_OUTPUT"
+          echo "image-tag=streamdiffusion" >> "$GITHUB_OUTPUT"
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ steps.repo.outputs.repository }}
+          tags: |
+            type=raw,value=streamdiffusion
+            type=raw,value=streamdiffusion-sha-${{ github.sha }}
+            type=raw,value=streamdiffusion-${{ github.event.pull_request.head.ref }},enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=streamdiffusion-latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.CI_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.CI_DOCKERHUB_TOKEN }}
+
+      - name: Build and push streamdiffusion base image
+        id: build
+        timeout-minutes: 200
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          provenance: mode=max
+          sbom: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          file: docker/Dockerfile.base
+          build-args: |
+            NODES_CONFIG=nodes-streamdiffusion.yaml
+            CACHEBUST=${{ github.run_id }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=registry,ref=livepeer/comfyui-base:streamdiffusion-build-cache
+          cache-to: type=registry,mode=max,ref=livepeer/comfyui-base:streamdiffusion-build-cache
+
+  comfystream-streamdiffusion:
+    name: comfystream:streamdiffusion image
+    needs: base-streamdiffusion
+    if: ${{ github.repository == 'livepeer/comfystream' }}
+    permissions:
+      packages: write
+      contents: read
+    runs-on: [self-hosted, linux, amd64]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            livepeer/comfystream
+          tags: |
+            type=raw,value=streamdiffusion
+            type=raw,value=streamdiffusion-sha-${{ github.sha }}
+            type=raw,value=streamdiffusion-${{ github.event.pull_request.head.ref }},enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=streamdiffusion-latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.CI_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.CI_DOCKERHUB_TOKEN }}
+
+      - name: Build and push streamdiffusion comfystream image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          provenance: mode=max
+          sbom: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          file: docker/Dockerfile
+          build-args: |
+            BASE_IMAGE=${{ needs.base-streamdiffusion.outputs.repository }}@${{ needs.base-streamdiffusion.outputs.image-digest }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=registry,ref=livepeer/comfystream:streamdiffusion-build-cache
+          cache-to: type=registry,mode=max,ref=livepeer/comfystream:streamdiffusion-build-cache
