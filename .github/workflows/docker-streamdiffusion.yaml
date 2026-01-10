@@ -17,7 +17,6 @@ concurrency:
 jobs:
   base-streamdiffusion:
     name: comfyui-base:streamdiffusion image
-    if: ${{ github.repository == 'livepeer/comfystream' }}
     outputs:
       repository: ${{ steps.repo.outputs.repository }}
       image-digest: ${{ steps.build.outputs.digest }}
@@ -37,7 +36,7 @@ jobs:
         id: repo
         shell: bash
         run: |
-          echo "repository=livepeer/comfyui-base" >> "$GITHUB_OUTPUT"
+          echo "repository=${{ github.repository_owner }}/comfyui-base" >> "$GITHUB_OUTPUT"
           echo "image-tag=streamdiffusion" >> "$GITHUB_OUTPUT"
 
       - name: Extract metadata (tags, labels) for Docker
@@ -77,13 +76,12 @@ jobs:
             CACHEBUST=${{ github.run_id }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=registry,ref=livepeer/comfyui-base:streamdiffusion-build-cache
-          cache-to: type=registry,mode=max,ref=livepeer/comfyui-base:streamdiffusion-build-cache
+          cache-from: type=registry,ref=${{ github.repository_owner }}/comfyui-base:streamdiffusion-build-cache
+          cache-to: type=registry,mode=max,ref=${{ github.repository_owner }}/comfyui-base:streamdiffusion-build-cache
 
   comfystream-streamdiffusion:
     name: comfystream:streamdiffusion image
     needs: base-streamdiffusion
-    if: ${{ github.repository == 'livepeer/comfystream' }}
     permissions:
       packages: write
       contents: read
@@ -100,7 +98,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            livepeer/comfystream
+            ${{ github.repository }}
           tags: |
             type=raw,value=streamdiffusion
             type=raw,value=streamdiffusion-sha-${{ github.sha }}
@@ -129,5 +127,5 @@ jobs:
             BASE_IMAGE=${{ needs.base-streamdiffusion.outputs.repository }}@${{ needs.base-streamdiffusion.outputs.image-digest }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=registry,ref=livepeer/comfystream:streamdiffusion-build-cache
-          cache-to: type=registry,mode=max,ref=livepeer/comfystream:streamdiffusion-build-cache
+          cache-from: type=registry,ref=${{ github.repository }}:streamdiffusion-build-cache
+          cache-to: type=registry,mode=max,ref=${{ github.repository }}:streamdiffusion-build-cache

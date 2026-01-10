@@ -15,7 +15,6 @@ concurrency:
 jobs:
   codeql:
     name: Perform CodeQL analysis
-    if: ${{ github.repository == 'livepeer/comfystream' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
