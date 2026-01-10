@@ -654,14 +654,17 @@ async def on_startup(app: web.Application):
     if app["media_ports"]:
         patch_loop_datagram(app["media_ports"])
 
-    comfy_kwargs = {}
+    # Always set the workspace as cwd so ComfyUI resolves paths correctly.
+    comfy_kwargs = {
+        "cwd": app["workspace"],
+    }
     if app.get("config"):
-        # Pass config directly to ComfyUI; do not override with other ComfyUI flags
+        # Pass config directly to ComfyUI; avoid adding other ComfyUI flags,
+        # but still preserve cwd so config paths resolve relative to workspace.
         comfy_kwargs["config"] = app["config"]
     else:
         comfy_kwargs.update(
             {
-                "cwd": app["workspace"],
                 "disable_cuda_malloc": True,
                 "gpu_only": True,
                 "preview_method": "none",
