@@ -19,8 +19,8 @@ except ImportError:
 def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI models")
     parser.add_argument(
-        "--cwd",
         "--workspace",
+        "--cwd",
         dest="workspace",
         default=os.environ.get("COMFYUI_CWD", os.path.expanduser("~/comfyui")),
         help="ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_CWD)",
