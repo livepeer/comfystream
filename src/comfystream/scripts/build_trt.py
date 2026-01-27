@@ -4,34 +4,99 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
-# Reccomended running from comfystream conda environment
-# in devcontainer from the workspace/ directory, or comfystream/ if you've checked out the repo
-# $> conda activate comfystream
-# $> python src/comfystream/scripts/build_trt.py --model /ComfyUI/models/checkpoints/SD1.5/dreamshaper-8.safetensors --out-engine /ComfyUI/output/tensorrt/static-dreamshaper8_SD15_$stat-b-1-h-512-w-512_00001_.engine
+# Globals populated after workspace setup
+comfy = None
+detect_version_from_model = None
+get_helper_from_model = None
+export_onnx = None
+TRTDiffusionBackbone = None
 
-# Paths path explicitly to use the downloaded comfyUI installation on root
-ROOT_DIR = "/workspace"
-COMFYUI_DIR = "/workspace/ComfyUI"
-timing_cache_path = "/workspace/ComfyUI/output/tensorrt/timing_cache"
 
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-if COMFYUI_DIR not in sys.path:
-    sys.path.insert(0, COMFYUI_DIR)
+def setup_comfy(workspace_dir: str):
+    """Ensure ComfyUI workspace is importable and load comfy modules.
 
-import comfy
-import comfy.model_management
-from ComfyUI.custom_nodes.ComfyUI_TensorRT.models.supported_models import (
-    detect_version_from_model,
-    get_helper_from_model,
-)
-from ComfyUI.custom_nodes.ComfyUI_TensorRT.onnx_utils.export import export_onnx
-from ComfyUI.custom_nodes.ComfyUI_TensorRT.tensorrt_diffusion_model import TRTDiffusionBackbone
+    For TensorRT engine building, we use the cloned ComfyUI workspace directly
+    (not the pip-installed comfyui package) because custom nodes like
+    ComfyUI_TensorRT expect the traditional ComfyUI module structure.
+    """
+    global \
+        comfy, \
+        detect_version_from_model, \
+        get_helper_from_model, \
+        export_onnx, \
+        TRTDiffusionBackbone
+
+    # Normalize and export the workspace so downstream imports/tools see it
+    workspace_dir = str(Path(workspace_dir).expanduser().resolve())
+    os.environ["COMFYUI_CWD"] = workspace_dir
+    os.environ["COMFYUI_WORKSPACE"] = workspace_dir
+
+    print(f"[build_trt] Using COMFYUI_CWD={workspace_dir}")
+
+    # Ensure workspace directories have __init__.py so they are proper packages
+    # (not namespace packages) and take priority over pip-installed versions
+    workspace_path = Path(workspace_dir)
+    package_dirs = ["comfy_extras"]
+    for pkg_dir in package_dirs:
+        init_file = workspace_path / pkg_dir / "__init__.py"
+        if init_file.parent.exists() and not init_file.exists():
+            init_file.touch()
+            print(f"[build_trt] Created {init_file}")
+
+    # Add workspace and custom_nodes to sys.path FIRST so they take priority
+    custom_nodes_dir = str(workspace_path / "custom_nodes")
+
+    # Insert at the beginning so workspace takes priority over site-packages
+    if workspace_dir not in sys.path:
+        sys.path.insert(0, workspace_dir)
+    if custom_nodes_dir not in sys.path:
+        sys.path.insert(0, custom_nodes_dir)
+
+    # Clear any pip-installed comfy modules from sys.modules so the workspace
+    # versions are imported instead. The pip-installed comfyui package has
+    # __init__.py files which would otherwise take priority over the workspace's
+    # namespace packages.
+    modules_to_clear = ["comfy", "comfy_extras", "nodes"]
+    for mod_prefix in modules_to_clear:
+        to_delete = [key for key in sys.modules if key == mod_prefix or key.startswith(f"{mod_prefix}.")]
+        for key in to_delete:
+            del sys.modules[key]
+
+    # Now import comfy from the workspace
+    import comfy as _comfy
+    import comfy.model_management as _cm
+
+    comfy = _comfy
+    comfy.model_management = _cm
+
+    # Import TensorRT custom node modules
+    from ComfyUI_TensorRT.models.supported_models import (
+        detect_version_from_model as _detect,
+        get_helper_from_model as _get_helper,
+    )
+    from ComfyUI_TensorRT.onnx_utils.export import export_onnx as _export
+    from ComfyUI_TensorRT.tensorrt_diffusion_model import (
+        TRTDiffusionBackbone as _TRTBackbone,
+    )
+
+    detect_version_from_model = _detect
+    get_helper_from_model = _get_helper
+    export_onnx = _export
+    TRTDiffusionBackbone = _TRTBackbone
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Build a TensorRT engine from a ComfyUI model.")
+    parser.add_argument(
+        "--workspace",
+        type=str,
+        default=os.environ.get(
+            "COMFYUI_CWD", os.environ.get("COMFYUI_WORKSPACE", str(Path.home() / "ComfyUI"))
+        ),
+        help="Path to the ComfyUI workspace (default: $COMFYUI_CWD, else $COMFYUI_WORKSPACE, else ~/ComfyUI)",
+    )
     parser.add_argument(
         "--model",
         type=str,
@@ -109,6 +174,7 @@ def build_trt_engine(
     num_video_frames: int = 14,
     fp8: bool = False,
     verbose: bool = False,
+    workspace_dir: str | None = None,
 ):
     """
     1) Load the model from ComfyUI by path or name
@@ -135,6 +201,9 @@ def build_trt_engine(
         )
 
     # 1) Load model in GPU:
+    if workspace_dir:
+        setup_comfy(workspace_dir)
+
     comfy.model_management.unload_all_models()
 
     loaded_model = comfy.sd.load_diffusion_model(model_path, model_options={})
@@ -199,7 +268,9 @@ def build_trt_engine(
     # The tensorrt_diffusion_model build() signature is typically:
     #   build(onnx_path, engine_path, timing_cache_path, opt_config, min_config, max_config)
     # If you have a separate 'timing_cache.trt', put it next to this script:
-    timing_cache_path = os.path.join(os.path.dirname(__file__), "timing_cache.trt")
+    timing_cache_path = os.path.join(
+        workspace_dir or os.path.dirname(__file__), "output", "tensorrt", "timing_cache"
+    )
 
     if verbose:
         print(f"[INFO] Building engine -> {engine_out_path}")
@@ -231,6 +302,7 @@ def build_trt_engine(
 
 def main():
     args = parse_args()
+    setup_comfy(args.workspace)
     build_trt_engine(
         model_path=args.model,
         engine_out_path=args.out_engine,
@@ -244,6 +316,7 @@ def main():
         context_opt=args.context,
         fp8=args.fp8,
         verbose=args.verbose,
+        workspace_dir=args.workspace,
     )
 
 

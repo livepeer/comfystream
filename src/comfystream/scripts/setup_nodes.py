@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+CONSTRAINTS_PATH = Path(__file__).parent / "constraints.txt"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI nodes and models")
@@ -63,6 +65,9 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
     os.chdir(custom_nodes_path)
 
     failed_nodes = []
+
+    # Build constraints args once, used for all pip installs
+    constraints_args = ["-c", str(CONSTRAINTS_PATH)] if CONSTRAINTS_PATH.exists() else []
 
     for _, node_info in config["nodes"].items():
         try:
@@ -135,17 +140,21 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
                     for url in extra_index_urls:
                         uv_cmd.extend(["--extra-index-url", url])
                     uv_cmd.extend(["-r", str(temp_req)])
+                    uv_cmd.extend(constraints_args)
                     subprocess.run(uv_cmd, check=True)
                     temp_req.unlink()
                 else:
                     uv_cmd = ["uv", "pip", "install", "-r", str(requirements_file)]
+                    uv_cmd.extend(constraints_args)
                     subprocess.run(uv_cmd, check=True)
 
             # Install additional dependencies if specified
             if "dependencies" in node_info:
                 for dep in node_info["dependencies"]:
                     print(f"Installing dependency: {dep}")
-                    uv_cmd = ["uv", "pip", "install", dep]
+                    uv_cmd = ["uv", "pip", "install"]
+                    uv_cmd.extend(constraints_args)
+                    uv_cmd.append(dep)
                     subprocess.run(uv_cmd, check=True)
 
             print(f"✓ Installed {node_info['name']}")
