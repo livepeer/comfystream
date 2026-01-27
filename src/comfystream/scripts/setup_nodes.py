@@ -128,6 +128,10 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
                             if url:
                                 extra_index_urls.append(url)
                         else:
+                            # Strip [all] extra from nvidia-modelopt to avoid
+                            # onnxruntime-gpu version conflicts
+                            if line.startswith("nvidia-modelopt"):
+                                line = line.replace("[all]", "")
                             package_lines.append(line)
 
                 # Create temp requirements file without --extra-index-url directives

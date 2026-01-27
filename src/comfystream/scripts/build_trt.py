@@ -67,9 +67,11 @@ def setup_comfy(workspace_dir: str):
     # Now import comfy from the workspace
     import comfy as _comfy
     import comfy.model_management as _cm
+    import comfy.sd as _sd
 
     comfy = _comfy
     comfy.model_management = _cm
+    comfy.sd = _sd
 
     # Import TensorRT custom node modules
     from ComfyUI_TensorRT.models.supported_models import (
