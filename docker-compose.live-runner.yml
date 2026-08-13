@@ -1,0 +1,43 @@
+# Attach ComfyStream as a live-runner to an already-running orchestrator.
+# Does not start go-livepeer — use the same orch as live-runner-transcode.
+#
+#   docker compose -f docker-compose.live-runner.yml up -d --build
+#
+# Defaults target ai1 (override via .env). Capacity stays 1; price is fair
+# latency pricing, not a batch $/image race.
+
+services:
+  comfystream-live-runner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.live-runner
+    image: comfystream-live-runner:latest
+    container_name: live-runner-comfystream
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
+      - COMFYUI_CWD=/workspace/ComfyUI
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Shared model/storage volume used by other AI workloads on this host.
+      - ${COMFYSTREAM_MODELS_DIR:-/livepeer/ai/data/models}:/workspace/ComfyUI/models
+      - ${COMFYSTREAM_STORAGE_DIR:-/livepeer/ai/data}:/app/storage
+    command:
+      - --live-runner
+      - --host=0.0.0.0
+      - --port=${COMFYSTREAM_PORT:-8991}
+      - --orchestrator=${LIVEPEER_ORCH_URL:-https://ai1.eliteencoder.net:8936}
+      - --orchSecret=${LIVEPEER_ORCH_SECRET:-LlFOUpAP8uTDIuz}
+      - --runner-url=${LIVEPEER_RUNNER_URL:-https://ai1.eliteencoder.net:8991}
+      - --workspace=/workspace/ComfyUI
+      - --capacity=1
+      - --price=${COMFYSTREAM_PRICE:-0.001}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              driver: nvidia
+              device_ids:
+                - "${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}"

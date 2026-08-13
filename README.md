@@ -20,6 +20,7 @@ This repo also includes a WebRTC server and UI that uses comfystream to support 
   - [Run UI](#run-ui)
   - [Limitations](#limitations)
   - [Troubleshoot](#troubleshoot)
+  - [Livepeer live-runner](#livepeer-live-runner)
 
 ## Quick Start
 
@@ -160,6 +161,8 @@ If you only have a subset of those UDP ports available, you can use the `--media
 python server/app.py --workspace <COMFY_WORKSPACE> --media-ports 1024,1025,...
 ```
 
+> Tip: Use `--workspace` (preferred). `--cwd` remains a compatible alias and honors `COMFYUI_CWD`.
+
 If you are running the server in a restrictive network environment where this is not possible, you will need to use a TURN server.
 
 At the moment, the server supports using Twilio's TURN servers (although it is easy to make the update to support arbitrary TURN servers):
@@ -224,3 +227,35 @@ This project has been tested locally successfully with the following setup:
 - Driver: 550.127.05
 - CUDA: 12.5
 - torch: 2.5.1+cu121
+
+## Livepeer live-runner
+
+Register ComfyStream against a go-livepeer orchestrator with `-useLiveRunners` and drive it through the SDK (same path as the transcode live-runner). One process, capacity **1**, metered by session wall-clock — sell latency/liveness, not a batch $/image race.
+
+Agent-shaped endpoints:
+
+| Method | Path | Role |
+| --- | --- | --- |
+| `POST` | `/analyze` | Video-in → text-out (build/demo this first) |
+| `POST` | `/start_stream` | Live trickle video (optional text channel) |
+| `POST` | `/update_stream` | Mid-session prompt / resolution update |
+| `GET` | `/text` | Buffered text outputs for the active session |
+| `GET` | `/healthz` | Health |
+
+Attach to an already-running orchestrator (example targets ai1):
+
+```sh
+docker compose -f docker-compose.live-runner.yml up -d --build
+curl -sk https://ai1.eliteencoder.net:8936/discovery | jq '.[].runners[].app'
+```
+
+Smoke client (after the runner appears in discovery):
+
+```sh
+pip install "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway@ja/live-runner" av aiohttp
+python server/live_runner_client.py sample.mp4 \
+  --workflow path/to/video-in-text-out.json \
+  --discovery https://ai1.eliteencoder.net:8936/discovery
+```
+
+Optional dep: `pip install '.[live-runner]'`. Legacy BYOC (`server/byoc.py`) is unchanged.

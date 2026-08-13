@@ -1,0 +1,24 @@
+# Overlay image: ComfyStream + livepeer-gateway live-runner entrypoint.
+ARG BASE_IMAGE=livepeer/comfystream:latest
+FROM ${BASE_IMAGE}
+
+WORKDIR /workspace/comfystream
+
+# Install the live-runner SDK into the ComfyStream conda env.
+# livepeer-gateway's generated pb2 requires protobuf runtime >= gencode (6.31.1).
+# ComfyUI pins protobuf<5, but the live-runner path still runs with protobuf 6.
+RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
+  && conda activate comfystream \
+  && pip install --no-cache-dir \
+    "protobuf>=6.31.1" \
+    "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@ja/live-runner" \
+    av'
+
+COPY server/live_runner.py /workspace/comfystream/server/live_runner.py
+COPY docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+RUN chmod +x /workspace/comfystream/docker/entrypoint.sh
+
+EXPOSE 8991
+
+ENTRYPOINT ["/workspace/comfystream/docker/entrypoint.sh"]
+CMD ["--live-runner"]

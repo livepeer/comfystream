@@ -24,6 +24,10 @@ dev = ["pytest", "pytest-cov", "ruff"]
 server = [
     "pytrickle @ git+https://github.com/livepeer/pytrickle.git@v0.1.8"
 ]
+live-runner = [
+    "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@ja/live-runner",
+    "av",
+]
 
 [project.urls]
 Repository = "https://github.com/yondonfu/comfystream"

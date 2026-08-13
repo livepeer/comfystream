@@ -75,7 +75,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Install custom node requirements")
     parser.add_argument(
         "--workspace",
-        default=os.environ.get("COMFY_UI_WORKSPACE", None),
+        "--cwd",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD"),
         required=False,
         help="Set Comfy workspace",
     )
@@ -99,6 +101,9 @@ if __name__ == "__main__":
                 logger.info(f"Found ComfyUI workspace at: {workspace}")
                 break
             current = os.path.dirname(current)
+
+    if workspace is not None:
+        os.environ.setdefault("COMFYUI_CWD", workspace)
 
     logger.info("Installing comfystream package...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])

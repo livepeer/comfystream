@@ -5,15 +5,18 @@ import sys
 from pathlib import Path
 
 import yaml
-from utils import get_config_path, load_model_config
+
+CONSTRAINTS_PATH = Path(__file__).parent / "constraints.txt"
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI nodes and models")
     parser.add_argument(
         "--workspace",
-        default=os.environ.get("COMFY_UI_WORKSPACE", Path("~/comfyui").expanduser()),
-        help="ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)",
+        "--cwd",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD", Path("~/comfyui").expanduser()),
+        help="ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_CWD)",
     )
     parser.add_argument(
         "--pull-branches",
@@ -30,14 +33,13 @@ def parse_args():
 
 
 def setup_environment(workspace_dir):
-    os.environ["COMFY_UI_WORKSPACE"] = str(workspace_dir)
+    os.environ["COMFYUI_CWD"] = str(workspace_dir)
     os.environ["PYTHONPATH"] = str(workspace_dir)
     os.environ["CUSTOM_NODES_PATH"] = str(workspace_dir / "custom_nodes")
 
 
 def setup_directories(workspace_dir):
     """Create required directories in the workspace"""
-    # Create base directories
     workspace_dir.mkdir(parents=True, exist_ok=True)
     custom_nodes_dir = workspace_dir / "custom_nodes"
     custom_nodes_dir.mkdir(parents=True, exist_ok=True)
@@ -46,9 +48,11 @@ def setup_directories(workspace_dir):
 def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
     """Install custom nodes based on configuration"""
     if config_path is None:
-        config_path = get_config_path("nodes.yaml")
+        config_path = Path("configs") / "nodes.yaml"
+
     try:
-        config = load_model_config(config_path)
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
     except FileNotFoundError:
         print(f"Error: Nodes config file not found at {config_path}")
         return
@@ -60,14 +64,13 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
     custom_nodes_path.mkdir(parents=True, exist_ok=True)
     os.chdir(custom_nodes_path)
 
-    # Get the absolute path to constraints.txt
-    constraints_path = Path(__file__).parent / "constraints.txt"
-    if not constraints_path.exists():
-        print(f"Warning: constraints.txt not found at {constraints_path}")
-        constraints_path = None
+    failed_nodes = []
 
-    try:
-        for _, node_info in config["nodes"].items():
+    # Build constraints args once, used for all pip installs
+    constraints_args = ["-c", str(CONSTRAINTS_PATH)] if CONSTRAINTS_PATH.exists() else []
+
+    for _, node_info in config["nodes"].items():
+        try:
             dir_name = node_info["url"].split("/")[-1].replace(".git", "")
             node_path = custom_nodes_path / dir_name
 
@@ -98,36 +101,82 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
             # Install requirements if present
             requirements_file = node_path / "requirements.txt"
             if requirements_file.exists():
-                pip_cmd = [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "-r",
-                    str(requirements_file),
-                ]
-                if constraints_path and constraints_path.exists():
-                    pip_cmd.extend(["-c", str(constraints_path)])
-                subprocess.run(pip_cmd, check=True)
+                print(f"Installing requirements from {requirements_file}")
+
+                # Parse requirements file to extract --extra-index-url lines
+                # uv doesn't support these directives in requirements files
+                extra_index_urls = []
+                package_lines = []
+
+                with open(requirements_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        # Check if --extra-index-url is on its own line
+                        if line.startswith("--extra-index-url"):
+                            url = line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""
+                            if url:
+                                extra_index_urls.append(url)
+                        # Check if --extra-index-url is inline with a package
+                        elif "--extra-index-url" in line:
+                            parts = line.split("--extra-index-url", 1)
+                            package = parts[0].strip()
+                            url = parts[1].strip() if len(parts) > 1 else ""
+                            if package:
+                                package_lines.append(package)
+                            if url:
+                                extra_index_urls.append(url)
+                        else:
+                            # Strip [all] extra from nvidia-modelopt to avoid
+                            # onnxruntime-gpu version conflicts
+                            if line.startswith("nvidia-modelopt"):
+                                line = line.replace("[all]", "")
+                            package_lines.append(line)
+
+                # Create temp requirements file without --extra-index-url directives
+                if extra_index_urls:
+                    temp_req = node_path / "requirements.txt.tmp"
+                    with open(temp_req, "w") as f:
+                        f.write("\n".join(package_lines))
+
+                    uv_cmd = ["uv", "pip", "install"]
+                    for url in extra_index_urls:
+                        uv_cmd.extend(["--extra-index-url", url])
+                    uv_cmd.extend(["-r", str(temp_req)])
+                    uv_cmd.extend(constraints_args)
+                    subprocess.run(uv_cmd, check=True)
+                    temp_req.unlink()
+                else:
+                    uv_cmd = ["uv", "pip", "install", "-r", str(requirements_file)]
+                    uv_cmd.extend(constraints_args)
+                    subprocess.run(uv_cmd, check=True)
 
             # Install additional dependencies if specified
             if "dependencies" in node_info:
                 for dep in node_info["dependencies"]:
-                    pip_cmd = [sys.executable, "-m", "pip", "install", dep]
-                    if constraints_path and constraints_path.exists():
-                        pip_cmd.extend(["-c", str(constraints_path)])
-                    subprocess.run(pip_cmd, check=True)
+                    print(f"Installing dependency: {dep}")
+                    uv_cmd = ["uv", "pip", "install"]
+                    uv_cmd.extend(constraints_args)
+                    uv_cmd.append(dep)
+                    subprocess.run(uv_cmd, check=True)
 
-            print(f"Installed {node_info['name']}")
-    except Exception as e:
-        print(f"Error installing {node_info['name']} {e}")
-        raise e
+            print(f"✓ Installed {node_info['name']}")
+        except Exception as e:
+            print(f"✗ Error installing {node_info['name']}: {e}")
+            failed_nodes.append(node_info["name"])
+            continue
+
+    if failed_nodes:
+        print(f"\nWarning: {len(failed_nodes)} node(s) failed to install:")
+        for name in failed_nodes:
+            print(f"  - {name}")
 
 
 def setup_nodes():
     args = parse_args()
     workspace_dir = Path(args.workspace)
-    
+
     # Resolve config path if provided
     config_path = None
     if args.config:
