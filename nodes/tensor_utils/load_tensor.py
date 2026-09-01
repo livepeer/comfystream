@@ -1,5 +1,7 @@
 import queue
 
+import torch
+
 from comfystream import tensor_cache
 from comfystream.exceptions import ComfyStreamInputTimeoutError
 
@@ -24,6 +26,16 @@ class LoadTensor:
                         "tooltip": "Timeout in seconds",
                     },
                 ),
+                "batch_size": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": 1,
+                        "max": 8,
+                        "step": 1,
+                        "tooltip": "Number of frames to stack into a single batch",
+                    },
+                ),
             }
         }
 
@@ -31,10 +43,16 @@ class LoadTensor:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def execute(self, timeout_seconds: float = 1.0):
-        try:
-            frame = tensor_cache.image_inputs.get(block=True, timeout=timeout_seconds)
+    def execute(self, timeout_seconds: float = 1.0, batch_size: int = 1):
+        frames = []
+        for _ in range(batch_size):
+            try:
+                frame = tensor_cache.image_inputs.get(block=True, timeout=timeout_seconds)
+            except queue.Empty:
+                raise ComfyStreamInputTimeoutError("video", timeout_seconds)
             frame.side_data.skipped = False
-            return (frame.side_data.input,)
-        except queue.Empty:
-            raise ComfyStreamInputTimeoutError("video", timeout_seconds)
+            frames.append(frame.side_data.input)
+
+        if len(frames) == 1:
+            return (frames[0],)
+        return (torch.cat(frames, dim=0),)
