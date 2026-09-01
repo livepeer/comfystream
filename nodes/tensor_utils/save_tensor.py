@@ -37,5 +37,5 @@ class SaveTensor:
         else:
             # Save as single tensor (original behavior)
             tensor_cache.image_outputs.put_nowait(images)
-        
+
         return images

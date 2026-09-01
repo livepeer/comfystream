@@ -30,19 +30,19 @@ class PerformanceTimerNode:
         """Record performance metrics and return summary."""
         performance_timer.record_batch_processing(batch_size, num_images)
         performance_timer.end_timing(operation)
-        
+
         summary = performance_timer.get_performance_summary()
-        
+
         # Format summary as readable string
-        summary_str = f"Performance Summary:\n"
+        summary_str = "Performance Summary:\n"
         summary_str += f"Total Images Processed: {summary['total_images_processed']}\n"
         summary_str += f"Total FPS: {summary['total_fps']:.2f}\n"
         summary_str += f"Average Batch Size: {summary['average_batch_size']:.2f}\n"
-        
+
         for key, value in summary.items():
             if key not in ["total_images_processed", "total_fps", "average_batch_size"]:
                 summary_str += f"{key}: {value:.4f}\n"
-        
+
         return (summary_str,)
 
 
