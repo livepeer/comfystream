@@ -1,0 +1,83 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ffmpeg-loudnorm",
+    "capability": "ffmpeg-loudnorm",
+    "endpoint_id": "fal-ai/ffmpeg-api/loudnorm",
+    "queue_app_id": "fal-ai/ffmpeg-api"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "audio_url": {
+        "type": "string"
+      },
+      "dual_mono": {
+        "type": "boolean"
+      },
+      "integrated_loudness": {
+        "type": "number"
+      },
+      "linear": {
+        "type": "boolean"
+      },
+      "loudness_range": {
+        "type": "number"
+      },
+      "measured_i": {
+        "type": "number"
+      },
+      "measured_lra": {
+        "type": "number"
+      },
+      "measured_thresh": {
+        "type": "number"
+      },
+      "measured_tp": {
+        "type": "number"
+      },
+      "offset": {
+        "type": "number"
+      },
+      "print_summary": {
+        "type": "boolean"
+      },
+      "true_peak": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "audio_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/ffmpeg-api/loudnorm",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "compute seconds",
+    "unit_price": "0.00017"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "cbcb46f7d48c1a3466849cddc14989552fc05e463932c640eaf21361c9800aba"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-sync-lipsync-v3",
+    "capability": "sync-lipsync-v3",
+    "endpoint_id": "fal-ai/sync-lipsync/v3/image-to-video",
+    "queue_app_id": "fal-ai/sync-lipsync"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "audio_url": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "image_url",
+      "audio_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/sync-lipsync/v3/image-to-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "minutes",
+    "unit_price": "8"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "6132b31e307224237c261327dced31cd5a1a204b731ea49987fe044ef4fd2040"
+  }
+}

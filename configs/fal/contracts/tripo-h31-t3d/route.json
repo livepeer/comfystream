@@ -1,0 +1,83 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-tripo-h31-t3d",
+    "capability": "tripo-h31-t3d",
+    "endpoint_id": "tripo3d/h3.1/text-to-3d",
+    "queue_app_id": "tripo3d/h3.1"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "auto_size": {
+        "type": "boolean"
+      },
+      "face_limit": {
+        "type": "integer"
+      },
+      "geometry_quality": {
+        "type": "string"
+      },
+      "image_seed": {
+        "type": "integer"
+      },
+      "model_seed": {
+        "type": "integer"
+      },
+      "negative_prompt": {
+        "type": "string"
+      },
+      "pbr": {
+        "type": "boolean"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "quad": {
+        "type": "boolean"
+      },
+      "texture": {
+        "type": "boolean"
+      },
+      "texture_quality": {
+        "type": "string"
+      },
+      "texture_seed": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "tripo3d/h3.1/text-to-3d",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "credits",
+    "unit_price": "0.01"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "cdf5dd9cf7a706cddb233d46b85a3bf4de5ff080e232ec859d09913c9cd9aae1"
+  }
+}

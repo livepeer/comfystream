@@ -1,0 +1,59 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-pixelcut-video-bg-remove",
+    "capability": "pixelcut-video-bg-remove",
+    "endpoint_id": "Pixelcut/video-background-removal",
+    "queue_app_id": "Pixelcut/video-background-removal"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "background": {
+        "type": "string"
+      },
+      "background_color": {
+        "type": "object"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "Pixelcut/video-background-removal",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "30 frames",
+    "unit_price": "0.022"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "a486105bc4a5e16cd86991488727e2dd2cabd9ab26860b4662fc69eb7253e304"
+  }
+}

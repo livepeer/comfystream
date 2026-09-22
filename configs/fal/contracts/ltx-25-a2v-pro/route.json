@@ -1,0 +1,62 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ltx-25-a2v-pro",
+    "capability": "ltx-25-a2v-pro",
+    "endpoint_id": "lightricks/ltx-2.5/audio-to-video/pro",
+    "queue_app_id": "lightricks/ltx-2.5"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "audio_url": {
+        "type": "string"
+      },
+      "guidance_scale": {
+        "type": "number"
+      },
+      "image_url": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "audio_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "lightricks/ltx-2.5/audio-to-video/pro",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.01"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "367df86faab2efa18200b2f7133f276be0e3b6bbdcca684c5ca6fd6b85025425"
+  }
+}

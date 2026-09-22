@@ -1,0 +1,10 @@
+{
+  "defaults": {
+    "capacity": 4,
+    "deadline_seconds": 180,
+    "expected_units": 1,
+    "max_request_bytes": 1048576,
+    "upcharge_bps": 0
+  },
+  "routes": {}
+}

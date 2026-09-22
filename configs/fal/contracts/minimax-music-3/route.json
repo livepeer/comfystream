@@ -1,0 +1,66 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-minimax-music-3",
+    "capability": "minimax-music-3",
+    "endpoint_id": "minimax/music-3",
+    "queue_app_id": "minimax/music-3"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "duration": {
+        "type": "number"
+      },
+      "guidance_scale": {
+        "type": "number"
+      },
+      "lyrics": {
+        "type": "string"
+      },
+      "num_inference_steps": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "prompt",
+      "lyrics"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "minimax/music-3",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.002"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "74fdeab613ee051bf59dbdee9105d4a9bfd606e7035d0ae089215c844c3f44fc"
+  }
+}
