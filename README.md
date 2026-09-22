@@ -20,6 +20,7 @@ This repo also includes a WebRTC server and UI that uses comfystream to support 
   - [Run UI](#run-ui)
   - [Limitations](#limitations)
   - [Troubleshoot](#troubleshoot)
+  - [Livepeer live-runner](#livepeer-live-runner)
 
 ## Quick Start
 
@@ -160,6 +161,8 @@ If you only have a subset of those UDP ports available, you can use the `--media
 python server/app.py --workspace <COMFY_WORKSPACE> --media-ports 1024,1025,...
 ```
 
+> Tip: Use `--workspace` (preferred). `--cwd` remains a compatible alias and honors `COMFYUI_CWD`.
+
 If you are running the server in a restrictive network environment where this is not possible, you will need to use a TURN server.
 
 At the moment, the server supports using Twilio's TURN servers (although it is easy to make the update to support arbitrary TURN servers):
@@ -224,3 +227,57 @@ This project has been tested locally successfully with the following setup:
 - Driver: 550.127.05
 - CUDA: 12.5
 - torch: 2.5.1+cu121
+
+## Livepeer live-runner
+
+Register ComfyStream against a go-livepeer orchestrator with `-useLiveRunners`. One process serves:
+
+- **Persistent** `comfystream` — capacity **1**, metered by session wall-clock (analyze / start_stream / ws_stream).
+- **Single-shot** `comfystream/fal-<capability>` — 73 pinned fal queue routes, `unit=fixed`, isolated in a CPU ProcessPoolExecutor.
+
+Agent-shaped endpoints:
+
+| Method | Path | Role |
+| --- | --- | --- |
+| `POST` | `/analyze` | Video-in → text-out (build/demo this first) |
+| `POST` | `/start_stream` | Live trickle video (optional text channel) |
+| `POST` | `/update_stream` | Mid-session prompt / resolution update |
+| `GET` | `/text` | Buffered text outputs for the active session |
+| `GET` | `/healthz` | Health |
+| `GET` | `/fal/{capability}/health` | Fal route health |
+| `GET` | `/fal/{capability}/schema` | Fal route schema |
+| `POST` | `/fal/{capability}` | Fal single-shot execute (provider-native JSON) |
+
+Remove any static `livepeer-example/fal-*` entries from the orchestrator's `-liveRunnerConfig` before this process registers `comfystream/fal-*`. Keep `livepeer-example/flux-klein` if still needed. See [configs/fal/README.md](configs/fal/README.md). Provide `FAL_KEY` for batch jobs.
+
+Faster image builds use [configs/nodes-live-runner.yaml](configs/nodes-live-runner.yaml) (stream-pack + fal-api only) instead of the full [configs/nodes.yaml](configs/nodes.yaml):
+
+```sh
+docker build -f docker/Dockerfile.base \
+  --build-arg NODES_CONFIG=nodes-live-runner.yaml \
+  -t comfystream-base:live-runner .
+COMFYSTREAM_BASE_IMAGE=comfystream-base:live-runner \
+  docker compose -f docker-compose.live-runner.yml up -d --build
+```
+
+Or overlay on an existing base (still installs the light nodes via `setup_nodes`):
+
+```sh
+docker compose -f docker-compose.live-runner.yml up -d --build
+curl -sk https://ai1.eliteencoder.net:8936/discovery | jq '.[].runners[].app'
+```
+
+Smoke client (after the runner appears in discovery):
+
+```sh
+pip install "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway@ja/live-runner" av aiohttp
+python server/live_runner_client.py sample.mp4 \
+  --workflow path/to/video-in-text-out.json \
+  --discovery https://ai1.eliteencoder.net:8936/discovery
+python server/live_runner_batch_client.py run flux-schnell \
+  --input-json path/to/flux-schnell.json \
+  --discovery https://ai1.eliteencoder.net:8936/discovery \
+  --insecure
+```
+
+Optional dep: `pip install '.[live-runner]'`. Legacy BYOC (`server/byoc.py`) is unchanged.

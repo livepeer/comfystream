@@ -1,0 +1,68 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ltx-25-t2v-fast",
+    "capability": "ltx-25-t2v-fast",
+    "endpoint_id": "lightricks/ltx-2.5/text-to-video/fast",
+    "queue_app_id": "lightricks/ltx-2.5"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "camera_motion": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "object"
+      },
+      "fps": {
+        "type": "integer"
+      },
+      "generate_audio": {
+        "type": "boolean"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "lightricks/ltx-2.5/text-to-video/fast",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.01"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "1a5d4ad33c76bd102f344f69bb474b687fd7d1e9b531c61303c6376fea4f30de"
+  }
+}

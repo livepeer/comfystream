@@ -1,0 +1,70 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-kling-v3-pro-t2v",
+    "capability": "kling-v3-pro-t2v",
+    "endpoint_id": "fal-ai/kling-video/v3/pro/text-to-video",
+    "queue_app_id": "fal-ai/kling-video"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "cfg_scale": {
+        "type": "number"
+      },
+      "duration": {
+        "type": "string"
+      },
+      "generate_audio": {
+        "type": "boolean"
+      },
+      "multi_prompt": {
+        "items": "object",
+        "type": "array"
+      },
+      "negative_prompt": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "shot_type": {
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/kling-video/v3/pro/text-to-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.14"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "16f3ccdf1edc1010af12e2888162e00edc66f0c39999cfb88e1eb298b9c71d82"
+  }
+}

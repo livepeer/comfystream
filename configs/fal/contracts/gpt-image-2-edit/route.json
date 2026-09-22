@@ -1,0 +1,76 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-gpt-image-2-edit",
+    "capability": "gpt-image-2-edit",
+    "endpoint_id": "openai/gpt-image-2/edit",
+    "queue_app_id": "openai/gpt-image-2"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "background": {
+        "type": "string"
+      },
+      "image_size": {
+        "type": "object"
+      },
+      "image_urls": {
+        "items": "string",
+        "type": "array"
+      },
+      "mask_url": {
+        "type": "string"
+      },
+      "num_images": {
+        "type": "integer"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "quality": {
+        "type": "string"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "prompt",
+      "image_urls"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "openai/gpt-image-2/edit",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "1"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "ffef180c58f5af0e99f7aad58de9a338ba7cedf95706397557aa1328e81ec123"
+  }
+}

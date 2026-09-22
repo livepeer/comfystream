@@ -1,0 +1,15 @@
+{
+  "1": {
+    "inputs": {},
+    "class_type": "LoadTensor",
+    "_meta": { "title": "LoadTensor" }
+  },
+  "2": {
+    "inputs": {
+      "data": "comfystream-analyze-ok",
+      "remove_linebreaks": true
+    },
+    "class_type": "SaveTextTensor",
+    "_meta": { "title": "SaveTextTensor" }
+  }
+}

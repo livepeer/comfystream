@@ -1,0 +1,77 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-flux-schnell",
+    "capability": "flux-schnell",
+    "endpoint_id": "fal-ai/flux/schnell",
+    "queue_app_id": "fal-ai/flux"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "acceleration": {
+        "type": "string"
+      },
+      "enable_safety_checker": {
+        "type": "boolean"
+      },
+      "guidance_scale": {
+        "type": "number"
+      },
+      "image_size": {
+        "type": "object"
+      },
+      "num_images": {
+        "type": "integer"
+      },
+      "num_inference_steps": {
+        "type": "integer"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/flux/schnell",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "megapixels",
+    "unit_price": "0.003"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "6a5103a47bb61b39ffadcc8f6ea6f98d1027cc8ba14d1723883dd6c4a6a06658"
+  }
+}

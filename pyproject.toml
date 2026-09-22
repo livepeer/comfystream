@@ -9,6 +9,7 @@ version = "0.1.8"
 license = { file = "LICENSE" }
 dependencies = [
     "asyncio",
+    "setuptools>=70,<81",
     "comfyui @ git+https://github.com/hiddenswitch/ComfyUI.git@7259c252ad745c12dd2412cc67f8e8163d0bbad1",
     "aiortc",
     "aiohttp",
@@ -23,6 +24,11 @@ dependencies = [
 dev = ["pytest", "pytest-cov", "ruff"]
 server = [
     "pytrickle @ git+https://github.com/livepeer/pytrickle.git@v0.1.8"
+]
+live-runner = [
+    "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@ja/live-runner",
+    "av",
+    "pyyaml",
 ]
 
 [project.urls]

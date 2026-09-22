@@ -1,0 +1,77 @@
+# Overlay image: ComfyStream + livepeer-gateway live-runner entrypoint.
+#
+# Prefer a light base built with nodes-live-runner.yaml (faster than full nodes.yaml):
+#   docker build -f docker/Dockerfile.base \
+#     --build-arg NODES_CONFIG=nodes-live-runner.yaml \
+#     -t comfystream-base:live-runner .
+#   docker compose -f docker-compose.live-runner.yml build \
+#     --build-arg BASE_IMAGE=comfystream-base:live-runner
+ARG BASE_IMAGE=livepeer/comfystream:latest
+ARG NODES_CONFIG=nodes-live-runner.yaml
+FROM ${BASE_IMAGE}
+
+ARG NODES_CONFIG
+
+WORKDIR /workspace/comfystream
+
+# New modules win over the base image's installed comfystream package.
+ENV PYTHONPATH=/workspace/comfystream/src:${PYTHONPATH}
+
+# Install the live-runner SDK into the ComfyStream conda env.
+# livepeer-gateway's generated pb2 requires protobuf runtime >= gencode (6.31.1).
+# ComfyUI pins protobuf<5, but the live-runner path still runs with protobuf 6.
+#
+# Pin v1.0.0 for register_runner(price=...) / discovery price_info shape.
+# go-livepeer 0.9.x still returns 402.orchestrator; patch accepts that as payment_url.
+COPY docker/patch_live_runner_payment_url.py /tmp/patch_live_runner_payment_url.py
+COPY docker/fal_api_config.ini /tmp/fal_api_config.ini
+COPY configs/${NODES_CONFIG} /workspace/comfystream/configs/${NODES_CONFIG}
+COPY src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
+ENV COMFYSTREAM_NODES_CONFIG=${NODES_CONFIG}
+# Base --opencv-cuda copies Ubuntu 22.04 libstdc++ (GCC 11, 6.0.30) over
+# conda-forge's GCC 16 library. Force-reinstall so av/openvino get CXXABI_1.3.15.
+RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
+  && conda activate comfystream \
+  && conda install -n comfystream -y -c conda-forge --force-reinstall \
+       "libstdcxx-ng>=14" "libstdcxx>=14" "libgcc-ng>=14" \
+  && strings "${CONDA_PREFIX}/lib/libstdc++.so.6" | grep -q CXXABI_1.3.15 \
+  && pip install --no-cache-dir \
+    uv \
+    "protobuf>=6.31.1" \
+    "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@v1.0.0" \
+    pyyaml \
+    fal-client \
+  && python /tmp/patch_live_runner_payment_url.py \
+  && python src/comfystream/scripts/setup_nodes.py \
+       --workspace /workspace/ComfyUI \
+       --config "${COMFYSTREAM_NODES_CONFIG}" \
+  && test -d /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API \
+  && test -d /workspace/ComfyUI/custom_nodes/ComfyUI-Stream-Pack \
+  && pip install --no-cache-dir "protobuf>=6.31.1" "setuptools>=70,<81" \
+  && python -c "import av, livepeer_gateway, pkg_resources, comfystream.batch_pipeline" \
+  && cp /tmp/fal_api_config.ini /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API/config.ini \
+  && rm -f /tmp/patch_live_runner_payment_url.py /tmp/fal_api_config.ini'
+
+COPY server/live_runner.py /workspace/comfystream/server/live_runner.py
+COPY server/live_runner_client.py /workspace/comfystream/server/live_runner_client.py
+COPY server/live_runner_batch_client.py /workspace/comfystream/server/live_runner_batch_client.py
+COPY server/webrtc_trickle_bridge.py /workspace/comfystream/server/webrtc_trickle_bridge.py
+COPY src/comfystream/batch_client.py /workspace/comfystream/src/comfystream/batch_client.py
+COPY src/comfystream/batch_pipeline.py /workspace/comfystream/src/comfystream/batch_pipeline.py
+COPY src/comfystream/job_pool.py /workspace/comfystream/src/comfystream/job_pool.py
+COPY src/comfystream/modalities.py /workspace/comfystream/src/comfystream/modalities.py
+COPY src/comfystream/capabilities /workspace/comfystream/src/comfystream/capabilities
+COPY configs/fal /workspace/comfystream/configs/fal
+COPY configs/nodes-live-runner.yaml /workspace/comfystream/configs/nodes-live-runner.yaml
+COPY nodes/tensor_utils/invert_image.py /workspace/comfystream/nodes/tensor_utils/invert_image.py
+COPY nodes/tensor_utils/save_fal_result.py /workspace/comfystream/nodes/tensor_utils/save_fal_result.py
+COPY nodes/tensor_utils/__init__.py /workspace/comfystream/nodes/tensor_utils/__init__.py
+COPY workflows/comfystream/av-passthrough-api.json /workspace/comfystream/workflows/comfystream/av-passthrough-api.json
+COPY workflows/comfystream/invert-color-av-passthrough-api.json /workspace/comfystream/workflows/comfystream/invert-color-av-passthrough-api.json
+COPY docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
+RUN chmod +x /workspace/comfystream/docker/entrypoint.sh
+
+EXPOSE 8991
+
+ENTRYPOINT ["/workspace/comfystream/docker/entrypoint.sh"]
+CMD ["--live-runner"]

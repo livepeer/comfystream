@@ -1,11 +1,12 @@
 "use client";
 
 import { PeerConnector } from "@/components/peer";
+import { OrchPeerConnector } from "@/components/orch-peer-connector";
 import { StreamConfig, StreamSettings, DEFAULT_CONFIG } from "@/components/settings";
 import { Webcam } from "@/components/webcam";
 import { usePeerContext } from "@/context/peer-context";
 import { Prompt } from "@/types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Tooltip,
@@ -407,24 +408,42 @@ export const Room = () => {
   useEffect(() => {
     if (connectingRef.current) return;
 
-    if (!config.streamUrl) {
+    const orch = config.connectionMode === "orchestrator";
+    const ready = orch
+      ? Boolean(config.bridgeUrl && config.comfypeerOrigin)
+      : Boolean(config.streamUrl);
+
+    if (!ready) {
       setConnect(false);
-      // Reset ComfyUI ready state when disconnecting
       setIsComfyUIReady(false);
-      // Dismiss any existing toast
       dismissToast();
     } else {
       setConnect(true);
-      showToast("Starting stream...", "loading");
+      showToast(
+        orch ? "Starting orchestrator stream..." : "Starting stream...",
+        "loading",
+      );
       connectingRef.current = true;
     }
-  }, [config.streamUrl, showToast, dismissToast]);
+  }, [
+    config.streamUrl,
+    config.connectionMode,
+    config.bridgeUrl,
+    config.comfypeerOrigin,
+    showToast,
+    dismissToast,
+  ]);
 
   const handleConnected = useCallback(() => {
     setIsConnected(true);
-    showToast("Stream connected, waiting for ComfyUI to initialize...", "loading");
+    if (config.connectionMode === "orchestrator") {
+      showToast("Orchestrator stream connected", "success");
+      setIsComfyUIReady(true);
+    } else {
+      showToast("Stream connected, waiting for ComfyUI to initialize...", "loading");
+    }
     connectingRef.current = false;
-  }, []);
+  }, [config.connectionMode, showToast]);
 
   const handleDisconnected = useCallback(() => {
     setIsConnected(false);
@@ -598,34 +617,45 @@ export const Room = () => {
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
       />
       <div className="fixed inset-0 z-[-1] bg-cover bg-[black]">
-        <PeerConnector
-          url={config.streamUrl}
-          prompts={config.prompts ?? null}
+        <RoomPeerShell
+          config={config}
           connect={connect}
+          localStream={localStream}
           onConnected={handleConnected}
           onDisconnected={handleDisconnected}
-          localStream={localStream}
-          resolution={config.resolution}
         >
-          <div className="min-h-[100dvh] flex flex-col items-center justify-center md:justify-start">
-            <div className="w-full max-h-[100dvh] flex flex-col md:flex-row landscape:flex-row justify-center items-center lg:space-x-4 md:pt-[10vh]">
-              {/* Output stream */}
-              <div 
-                className="relative w-full max-w-[100vw] sm:max-w-[640px] md:max-w-[512px] flex justify-center items-center bg-slate-900 sm:border-[2px] md:border-0 lg:border-2 rounded-md overflow-hidden"
-                style={{
-                  aspectRatio: `${config.resolution.width}/${config.resolution.height}`,
-                }}
-              >
-                <Stage
-                  connected={isConnected}
-                  onStreamReady={onRemoteStreamReady}
-                  onComfyUIReady={onComfyUIReady}
-                  resolution={config.resolution}
-                  onOutputStreamReady={setOutputStream}
-                  prompts={config.prompts || null}
-                />
-                {/* Thumbnail (mobile) */}
-                <div className="absolute bottom-[8px] right-[8px] w-[70px] h-[70px] sm:w-[90px] sm:h-[90px] bg-slate-800 block md:hidden overflow-hidden">
+            <div className="min-h-[100dvh] flex flex-col items-center justify-center md:justify-start">
+              <div className="w-full max-h-[100dvh] flex flex-col md:flex-row landscape:flex-row justify-center items-center lg:space-x-4 md:pt-[10vh]">
+                <div
+                  className="relative w-full max-w-[100vw] sm:max-w-[640px] md:max-w-[512px] flex justify-center items-center bg-slate-900 sm:border-[2px] md:border-0 lg:border-2 rounded-md overflow-hidden"
+                  style={{
+                    aspectRatio: `${config.resolution.width}/${config.resolution.height}`,
+                  }}
+                >
+                  <Stage
+                    connected={isConnected}
+                    onStreamReady={onRemoteStreamReady}
+                    onComfyUIReady={onComfyUIReady}
+                    resolution={config.resolution}
+                    onOutputStreamReady={setOutputStream}
+                    prompts={config.prompts || null}
+                  />
+                  <div className="absolute bottom-[8px] right-[8px] w-[70px] h-[70px] sm:w-[90px] sm:h-[90px] bg-slate-800 block md:hidden overflow-hidden">
+                    <Webcam
+                      onStreamReady={onStreamReady}
+                      deviceId={config.selectedVideoDeviceId}
+                      frameRate={config.frameRate}
+                      selectedAudioDeviceId={config.selectedAudioDeviceId}
+                      resolution={config.resolution}
+                    />
+                  </div>
+                </div>
+                <div
+                  className="hidden md:flex w-full sm:w-full md:w-full max-w-[512px] flex justify-center items-center lg:border-2 lg:rounded-md bg-slate-800 overflow-hidden"
+                  style={{
+                    aspectRatio: `${config.resolution.width}/${config.resolution.height}`,
+                  }}
+                >
                   <Webcam
                     onStreamReady={onStreamReady}
                     deviceId={config.selectedVideoDeviceId}
@@ -635,22 +665,6 @@ export const Room = () => {
                   />
                 </div>
               </div>
-              {/* Input stream (desktop) */}
-              <div 
-                className="hidden md:flex w-full sm:w-full md:w-full max-w-[512px] flex justify-center items-center lg:border-2 lg:rounded-md bg-slate-800 overflow-hidden"
-                style={{
-                  aspectRatio: `${config.resolution.width}/${config.resolution.height}`,
-                }}
-              >
-                <Webcam
-                  onStreamReady={onStreamReady}
-                  deviceId={config.selectedVideoDeviceId}
-                  frameRate={config.frameRate}
-                  selectedAudioDeviceId={config.selectedAudioDeviceId}
-                  resolution={config.resolution}
-                />
-              </div>
-            </div>
 
             {/* Text Output toggle under videos */}
             {isConnected && (
@@ -825,8 +839,54 @@ export const Room = () => {
               onSave={onStreamConfigSave}
             />
           </div>
-        </PeerConnector>
+        </RoomPeerShell>
       </div>
     </main>
   );
 };
+
+function RoomPeerShell({
+  config,
+  connect,
+  localStream,
+  onConnected,
+  onDisconnected,
+  children,
+}: {
+  config: StreamConfig;
+  connect: boolean;
+  localStream: MediaStream | null;
+  onConnected: () => void;
+  onDisconnected: () => void;
+  children: ReactNode;
+}) {
+  if (config.connectionMode === "orchestrator") {
+    return (
+      <OrchPeerConnector
+        connect={connect}
+        localStream={localStream}
+        comfypeerOrigin={config.comfypeerOrigin}
+        bridgeUrl={config.bridgeUrl}
+        pipeline={config.orchPipeline}
+        resolution={config.resolution}
+        onConnected={onConnected}
+        onDisconnected={onDisconnected}
+      >
+        {children}
+      </OrchPeerConnector>
+    );
+  }
+  return (
+    <PeerConnector
+      url={config.streamUrl}
+      prompts={config.prompts ?? null}
+      connect={connect}
+      onConnected={onConnected}
+      onDisconnected={onDisconnected}
+      localStream={localStream}
+      resolution={config.resolution}
+    >
+      {children}
+    </PeerConnector>
+  );
+}

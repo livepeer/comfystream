@@ -41,7 +41,7 @@
             "name": "Run ComfyStream BYOC",
             "type": "debugpy",
             "request": "launch",
-            "cwd": "/workspace/ComfyUI",
+            "cwd": "/workspace/comfystream",
             "program": "/workspace/comfystream/server/byoc.py",
             "console": "integratedTerminal",
             "args": [

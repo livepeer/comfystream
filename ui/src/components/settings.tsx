@@ -52,6 +52,11 @@ export interface StreamConfig {
     width: number;
     height: number;
   };
+  /** local = ComfyUI WebRTC; orchestrator = SignerSession + bridge */
+  connectionMode: "local" | "orchestrator";
+  comfypeerOrigin: string;
+  bridgeUrl: string;
+  orchPipeline: "av-passthrough" | "invert-color-av";
 }
 
 interface AVDevice {
@@ -69,6 +74,12 @@ export const DEFAULT_CONFIG: StreamConfig = {
     width: 512,
     height: 512
   },
+  connectionMode: "local",
+  comfypeerOrigin:
+    process.env.NEXT_PUBLIC_COMFYPEER_ORIGIN || "http://localhost:3000",
+  bridgeUrl:
+    process.env.NEXT_PUBLIC_WEBRTC_BRIDGE_URL || "http://127.0.0.1:8890",
+  orchPipeline: "av-passthrough",
 };
 
 interface StreamSettingsProps {
@@ -147,7 +158,7 @@ function StreamSettingsInner({
 }
 
 const formSchema = z.object({
-  streamUrl: z.string().url(),
+  streamUrl: z.string().url().or(z.literal("")),
   frameRate: z.coerce.number(),
   resolution: z.object({
     width: z.coerce.number().refine(val => val % 64 === 0 && val >= 64 && val <= 2048, {
@@ -156,7 +167,11 @@ const formSchema = z.object({
     height: z.coerce.number().refine(val => val % 64 === 0 && val >= 64 && val <= 2048, {
       message: "Height must be a multiple of 64 (between 64 and 2048)"
     })
-  })
+  }),
+  connectionMode: z.enum(["local", "orchestrator"]),
+  comfypeerOrigin: z.string(),
+  bridgeUrl: z.string().url().or(z.literal("")),
+  orchPipeline: z.enum(["av-passthrough", "invert-color-av"]),
 });
 
 interface ConfigFormProps {
@@ -278,6 +293,10 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
       selectedVideoDeviceId: selectedVideoDevice || "none",
       selectedAudioDeviceId: selectedAudioDevice || "none",
       resolution: values.resolution || DEFAULT_CONFIG.resolution,
+      connectionMode: values.connectionMode,
+      comfypeerOrigin: values.comfypeerOrigin.replace(/\/+$/, ""),
+      bridgeUrl: values.bridgeUrl.replace(/\/+$/, ""),
+      orchPipeline: values.orchPipeline,
     });
   };
 
@@ -329,12 +348,94 @@ function ConfigForm({ config, onSubmit }: ConfigFormProps) {
       <form onSubmit={form.handleSubmit(handleSubmit)} autoComplete="off">
         <FormField
           control={form.control}
+          name="connectionMode"
+          render={({ field }) => (
+            <FormItem className="mt-4">
+              <FormLabel>Connection Mode</FormLabel>
+              <FormControl>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <Select.Trigger className="w-full">
+                    {field.value === "orchestrator"
+                      ? "Orchestrator (ComfyPeer + bridge)"
+                      : "Local WebRTC (ComfyUI)"}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Option value="local">Local WebRTC (ComfyUI)</Select.Option>
+                    <Select.Option value="orchestrator">
+                      Orchestrator (ComfyPeer + bridge)
+                    </Select.Option>
+                  </Select.Content>
+                </Select>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
           name="streamUrl"
           render={({ field }) => (
             <FormItem className="mt-4">
-              <FormLabel>Stream URL</FormLabel>
+              <FormLabel>Stream URL (local mode)</FormLabel>
               <FormControl>
-                <Input placeholder="Stream URL" {...field} />
+                <Input placeholder="http://localhost:8889" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="comfypeerOrigin"
+          render={({ field }) => (
+            <FormItem className="mt-4">
+              <FormLabel>ComfyPeer Origin (orch mode)</FormLabel>
+              <FormControl>
+                <Input placeholder="http://localhost:3000" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="bridgeUrl"
+          render={({ field }) => (
+            <FormItem className="mt-4">
+              <FormLabel>WebRTC Bridge URL (orch mode)</FormLabel>
+              <FormControl>
+                <Input placeholder="http://127.0.0.1:8890" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="orchPipeline"
+          render={({ field }) => (
+            <FormItem className="mt-4">
+              <FormLabel>Orchestrator Pipeline</FormLabel>
+              <FormControl>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <Select.Trigger className="w-full">
+                    {field.value === "invert-color-av"
+                      ? "Inverted Color (audio passthrough)"
+                      : "Video/Audio Passthrough"}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Option value="av-passthrough">
+                      Video/Audio Passthrough
+                    </Select.Option>
+                    <Select.Option value="invert-color-av">
+                      Inverted Color (audio passthrough)
+                    </Select.Option>
+                  </Select.Content>
+                </Select>
               </FormControl>
               <FormMessage />
             </FormItem>

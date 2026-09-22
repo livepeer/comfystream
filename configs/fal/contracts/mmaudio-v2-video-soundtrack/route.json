@@ -1,0 +1,72 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-mmaudio-v2-video-soundtrack",
+    "capability": "mmaudio-v2-video-soundtrack",
+    "endpoint_id": "fal-ai/mmaudio-v2",
+    "queue_app_id": "fal-ai/mmaudio-v2"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "cfg_strength": {
+        "type": "number"
+      },
+      "duration": {
+        "type": "number"
+      },
+      "mask_away_clip": {
+        "type": "boolean"
+      },
+      "negative_prompt": {
+        "type": "string"
+      },
+      "num_steps": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url",
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/mmaudio-v2",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.001"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "31d21a6cca811b80f5f21536634ea9d045c7cb7f67dd8e7ab2e8c2baf734cbf2"
+  }
+}

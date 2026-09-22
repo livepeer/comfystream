@@ -1,0 +1,57 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ffmpeg-merge-audio-video",
+    "capability": "ffmpeg-merge-audio-video",
+    "endpoint_id": "fal-ai/ffmpeg-api/merge-audio-video",
+    "queue_app_id": "fal-ai/ffmpeg-api"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "audio_url": {
+        "type": "string"
+      },
+      "start_offset": {
+        "type": "number"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url",
+      "audio_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/ffmpeg-api/merge-audio-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.0002"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "f2c0e959e38518ad38c442870e17f1ddffb408f3b26bfc5897328c6c48452c00"
+  }
+}
