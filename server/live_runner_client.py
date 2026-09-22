@@ -25,7 +25,12 @@ import av
 from livepeer_gateway.errors import LivepeerGatewayError
 from livepeer_gateway.http import get_json, post_json
 from livepeer_gateway.live_runner import stop_runner_session
-from livepeer_gateway.media_publish import MediaPublish
+from livepeer_gateway.media_publish import (
+    AudioOutputConfig,
+    MediaPublish,
+    MediaPublishConfig,
+    VideoOutputConfig,
+)
 from livepeer_gateway.selection import reserve_session
 
 APP_ID = "comfystream"
@@ -38,6 +43,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("input", help="Input video file.")
     parser.add_argument("--discovery", default=DEFAULT_DISCOVERY)
     parser.add_argument("--signer", default="", help="Remote signer URL for on-chain path.")
+    parser.add_argument(
+        "--signer-auth",
+        default="",
+        help='Authorization header value for signer (e.g. "Bearer pmth_..." or "Bearer app_...").',
+    )
+    parser.add_argument(
+        "--discovery-auth",
+        default="",
+        help="Optional Authorization header for discovery (defaults to --signer-auth).",
+    )
     parser.add_argument("--workflow", required=True, help="ComfyUI API-format workflow JSON.")
     parser.add_argument(
         "--mode",
@@ -48,6 +63,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=30)
     parser.add_argument("--width", type=int, default=512)
     parser.add_argument("--height", type=int, default=512)
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="Publish interleaved audio when the input has an audio stream.",
+    )
     parser.add_argument(
         "--update-workflow",
         default="",
@@ -65,27 +85,59 @@ async def _publish_frames(
     input_path: str,
     *,
     max_frames: int,
+    send_audio: bool,
 ) -> None:
-    publisher = MediaPublish(publish_url)
+    tracks: list[VideoOutputConfig | AudioOutputConfig] = [VideoOutputConfig()]
+    if send_audio:
+        tracks.append(AudioOutputConfig(sample_rate=48000))
+    publisher = MediaPublish(
+        publish_url,
+        config=MediaPublishConfig(tracks=tracks),
+    )
     try:
         container = av.open(input_path)
-        sent = 0
-        for frame in container.decode(video=0):
-            await publisher.write_frame(frame)
-            sent += 1
-            if max_frames and sent >= max_frames:
-                break
+        if send_audio and not container.streams.audio:
+            raise LivepeerGatewayError(
+                f"--audio requested but input has no audio stream: {input_path}"
+            )
+        sent_video = 0
+        frames = container.decode() if send_audio else container.decode(video=0)
+        for frame in frames:
+            if isinstance(frame, av.VideoFrame):
+                await publisher.write_frame(frame)
+                sent_video += 1
+                if max_frames and sent_video >= max_frames:
+                    break
+            else:
+                await publisher.write_frame(frame)
         container.close()
-        log.info("published %d frames to %s", sent, publish_url)
+        log.info(
+            "published %d video frames to %s (audio=%s)",
+            sent_video,
+            publish_url,
+            send_audio,
+        )
     finally:
         await publisher.close()
 
 
+def _auth_headers(args: argparse.Namespace) -> tuple[str | None, dict[str, str] | None, dict[str, str] | None]:
+    signer_url = args.signer.strip() or None
+    auth = args.signer_auth.strip()
+    discovery_auth = args.discovery_auth.strip() or auth
+    signer_headers = {"Authorization": auth} if auth else None
+    discovery_headers = {"Authorization": discovery_auth} if discovery_auth else None
+    return signer_url, signer_headers, discovery_headers
+
+
 async def _run_analyze(args: argparse.Namespace, workflow: Any) -> None:
+    signer_url, signer_headers, discovery_headers = _auth_headers(args)
     session = await reserve_session(  # Livepeer: 1
         discovery_url=args.discovery,
         app=APP_ID,
-        signer_url=args.signer.strip() or None,
+        signer_url=signer_url,
+        signer_headers=signer_headers,
+        discovery_headers=discovery_headers,
     )
     try:
         async with session:
@@ -99,7 +151,12 @@ async def _run_analyze(args: argparse.Namespace, workflow: Any) -> None:
                 timeout=120.0,
             )
             log.info("analyze started: %s", data)
-            await _publish_frames(data["in"], args.input, max_frames=args.max_frames)
+            await _publish_frames(
+                data["in"],
+                args.input,
+                max_frames=args.max_frames,
+                send_audio=False,
+            )
             await asyncio.sleep(2.0)
             texts = await get_json(f"{session.app_url.rstrip('/')}/text", timeout=30.0)
             log.info("analyze texts: %s", texts)
@@ -111,10 +168,13 @@ async def _run_analyze(args: argparse.Namespace, workflow: Any) -> None:
 
 
 async def _run_stream(args: argparse.Namespace, workflow: Any) -> None:
+    signer_url, signer_headers, discovery_headers = _auth_headers(args)
     session = await reserve_session(  # Livepeer: 1
         discovery_url=args.discovery,
         app=APP_ID,
-        signer_url=args.signer.strip() or None,
+        signer_url=signer_url,
+        signer_headers=signer_headers,
+        discovery_headers=discovery_headers,
     )
     try:
         async with session:
@@ -124,13 +184,19 @@ async def _run_stream(args: argparse.Namespace, workflow: Any) -> None:
                     "prompts": workflow,
                     "width": args.width,
                     "height": args.height,
+                    "audio": bool(args.audio),
                 },
                 timeout=120.0,
             )
             log.info("stream started: %s", data)
 
             publish = asyncio.create_task(
-                _publish_frames(data["in"], args.input, max_frames=args.max_frames)
+                _publish_frames(
+                    data["in"],
+                    args.input,
+                    max_frames=args.max_frames,
+                    send_audio=bool(args.audio),
+                )
             )
             if args.update_workflow:
                 await asyncio.sleep(1.0)
