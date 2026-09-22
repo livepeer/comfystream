@@ -68,6 +68,9 @@ DEFAULT_PORT = 8991
 CHANNEL_MIME_VIDEO = "video/mp2t"
 CHANNEL_MIME_JSONL = "application/jsonl"
 TEXT_POLL_INTERVAL = 0.25
+# aiohttp defaults each header field to 8190 bytes. Livepeer payment tickets
+# for higher-priced single-shot routes exceed that and the server answers 400.
+HEADER_LIMIT_BYTES = 262144
 # LoadAudioTensor defaults to a 500ms buffer. JPEG ws_stream has no audio, so
 # each video frame must enqueue at least this much silence or the graph waits
 # 1s per frame and FPS collapses.
@@ -402,7 +405,7 @@ async def _handle_analyze(request: web.Request) -> web.Response:
         raise
     except Exception as exc:
         log.exception("failed to apply analyze workflow")
-        raise web.HTTPBadRequest(text=f"invalid workflow: {exc}") from exc
+        raise web.HTTPBadRequest(text="invalid workflow") from exc
 
     _require_analyze_io(io)
 
@@ -476,7 +479,7 @@ async def _handle_start_stream(request: web.Request) -> web.Response:
         )
     except Exception as exc:
         log.exception("failed to apply stream workflow")
-        raise web.HTTPBadRequest(text=f"invalid workflow: {exc}") from exc
+        raise web.HTTPBadRequest(text="invalid workflow") from exc
 
     _require_stream_io(io)
 
@@ -566,7 +569,7 @@ async def _handle_update_stream(request: web.Request) -> web.Response:
             )
         except Exception as exc:
             log.exception("failed to update stream workflow")
-            raise web.HTTPBadRequest(text=f"invalid workflow update: {exc}") from exc
+            raise web.HTTPBadRequest(text="invalid workflow update") from exc
         session.io = io
         session.prompts = prompts
         if io["text"]["output"] and session.text_task is None:
@@ -863,7 +866,13 @@ def main() -> None:
         with suppress(Exception):
             await app["registration"].close()  # Livepeer: 3
 
-    app = web.Application(client_max_size=client_max_size)
+    app = web.Application(
+        client_max_size=client_max_size,
+        handler_args={
+            "max_line_size": HEADER_LIMIT_BYTES,
+            "max_field_size": HEADER_LIMIT_BYTES,
+        },
+    )
     app.router.add_post("/analyze", _handle_analyze)
     app.router.add_post("/start_stream", _handle_start_stream)
     app.router.add_post("/update_stream", _handle_update_stream)

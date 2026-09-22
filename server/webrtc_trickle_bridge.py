@@ -216,7 +216,7 @@ async def _handle_offer(request: web.Request) -> web.Response:
     try:
         payload = await request.json()
     except Exception as exc:
-        raise web.HTTPBadRequest(text=f"invalid JSON: {exc}") from exc
+        raise web.HTTPBadRequest(text="invalid JSON") from exc
     if not isinstance(payload, dict):
         raise web.HTTPBadRequest(text="body must be a JSON object")
 
@@ -255,7 +255,7 @@ async def _handle_offer(request: web.Request) -> web.Response:
             )
         except Exception as exc:
             log.exception("reserve/start_stream failed")
-            raise web.HTTPBadGateway(text=f"reserve/start_stream failed: {exc}") from exc
+            raise web.HTTPBadGateway(text="reserve/start_stream failed") from exc
         in_url = str(stream.get("in") or "").strip()
         out_url = str(stream.get("out") or "").strip()
         if not in_url or not out_url:
