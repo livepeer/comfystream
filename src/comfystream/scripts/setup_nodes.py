@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,15 @@ from pathlib import Path
 import yaml
 
 CONSTRAINTS_PATH = Path(__file__).parent / "constraints.txt"
+
+
+def pip_install(package_args):
+    uv = shutil.which("uv")
+    if uv:
+        cmd = [uv, "pip", "install", *package_args]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", *package_args]
+    subprocess.run(cmd, check=True)
 
 
 def parse_args():
@@ -140,26 +150,19 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
                     with open(temp_req, "w") as f:
                         f.write("\n".join(package_lines))
 
-                    uv_cmd = ["uv", "pip", "install"]
+                    extra_args = []
                     for url in extra_index_urls:
-                        uv_cmd.extend(["--extra-index-url", url])
-                    uv_cmd.extend(["-r", str(temp_req)])
-                    uv_cmd.extend(constraints_args)
-                    subprocess.run(uv_cmd, check=True)
+                        extra_args.extend(["--extra-index-url", url])
+                    pip_install([*extra_args, "-r", str(temp_req), *constraints_args])
                     temp_req.unlink()
                 else:
-                    uv_cmd = ["uv", "pip", "install", "-r", str(requirements_file)]
-                    uv_cmd.extend(constraints_args)
-                    subprocess.run(uv_cmd, check=True)
+                    pip_install(["-r", str(requirements_file), *constraints_args])
 
             # Install additional dependencies if specified
             if "dependencies" in node_info:
                 for dep in node_info["dependencies"]:
                     print(f"Installing dependency: {dep}")
-                    uv_cmd = ["uv", "pip", "install"]
-                    uv_cmd.extend(constraints_args)
-                    uv_cmd.append(dep)
-                    subprocess.run(uv_cmd, check=True)
+                    pip_install([*constraints_args, dep])
 
             print(f"✓ Installed {node_info['name']}")
         except Exception as e:
@@ -168,9 +171,10 @@ def install_custom_nodes(workspace_dir, config_path=None, pull_branches=False):
             continue
 
     if failed_nodes:
-        print(f"\nWarning: {len(failed_nodes)} node(s) failed to install:")
+        print(f"\nError: {len(failed_nodes)} node(s) failed to install:")
         for name in failed_nodes:
             print(f"  - {name}")
+        sys.exit(1)
 
 
 def setup_nodes():

@@ -3,22 +3,39 @@
 #
 #   docker compose -f docker-compose.live-runner.yml up -d --build
 #
-# Defaults target ai1 (override via .env). Capacity stays 1; price is fair
-# latency pricing, not a batch $/image race.
+# Stream app stays capacity 1. Fal single-shot apps register as
+# comfystream/fal-* from this same container. Static orch runners.json
+# should only keep livepeer-example/flux-klein (see configs/fal/README.md).
+#
+# Faster image: build a light base first (stream-pack + fal-api only), then
+# the overlay:
+#   docker build -f docker/Dockerfile.base \
+#     --build-arg NODES_CONFIG=nodes-live-runner.yaml \
+#     -t comfystream-base:live-runner .
+#   COMFYSTREAM_BASE_IMAGE=comfystream-base:live-runner \
+#     docker compose -f docker-compose.live-runner.yml up -d --build
+#
+# Provide FAL_KEY in the environment or a sibling .env file.
 
 services:
   comfystream-live-runner:
     build:
       context: .
       dockerfile: docker/Dockerfile.live-runner
+      args:
+        BASE_IMAGE: ${COMFYSTREAM_BASE_IMAGE:-livepeer/comfystream:latest}
+        NODES_CONFIG: ${COMFYSTREAM_NODES_CONFIG:-nodes-live-runner.yaml}
     image: comfystream-live-runner:latest
     container_name: live-runner-comfystream
     restart: unless-stopped
     network_mode: host
+    pull_policy: never
     environment:
       - NVIDIA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
       - COMFYUI_CWD=/workspace/ComfyUI
       - PYTHONUNBUFFERED=1
+      - FAL_KEY=${FAL_KEY}
+      - COMFYSTREAM_FAL_CATALOG=/workspace/comfystream/configs/fal
     volumes:
       # Shared model/storage volume used by other AI workloads on this host.
       - ${COMFYSTREAM_MODELS_DIR:-/livepeer/ai/data/models}:/workspace/ComfyUI/models
@@ -29,10 +46,14 @@ services:
       - --port=${COMFYSTREAM_PORT:-8991}
       - --orchestrator=${LIVEPEER_ORCH_URL:-https://ai1.eliteencoder.net:8936}
       - --orchSecret=${LIVEPEER_ORCH_SECRET:-LlFOUpAP8uTDIuz}
-      - --runner-url=${LIVEPEER_RUNNER_URL:-https://ai1.eliteencoder.net:8991}
+      # Orch is host-networked; public :8991 is not DNAT'd, so register loopback.
+      - --runner-url=${LIVEPEER_RUNNER_URL:-http://127.0.0.1:8991}
       - --workspace=/workspace/ComfyUI
       - --capacity=1
-      - --price=${COMFYSTREAM_PRICE:-0.001}
+      - --price=${COMFYSTREAM_PRICE:-0.000001}
+      - --skip-bootstrap
+      - --batch-workers=${COMFYSTREAM_BATCH_WORKERS:-8}
+      - --batch-capacity=${COMFYSTREAM_BATCH_CAPACITY:-4}
     deploy:
       resources:
         reservations:

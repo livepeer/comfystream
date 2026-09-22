@@ -12,6 +12,8 @@ onnx==1.18.0
 onnxruntime==1.23.2
 onnxruntime-gpu==1.23.2
 onnxmltools==1.14.0
+av>=14.2.0,<16
+setuptools>=70,<81
 cuda-python<13.0
 huggingface-hub>=0.25.0
 mediapipe==0.10.21
