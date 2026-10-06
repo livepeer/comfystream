@@ -157,7 +157,7 @@ def parse_session_request(
     control_keys = START_KEYS if start else UPDATE_KEYS
     raw_params = {key: value for key, value in body.items() if key not in control_keys}
     try:
-        params = validate_params(spec.backend, raw_params)
+        params = validate_params(spec.backend, raw_params, spec.options.get("params"))
     except ParamError as exc:
         raise ApiError(400, exc.code, exc.message, exc.field) from exc
     fallbacks = {DEFAULT_FALLBACK: "", **spec.fallbacks}

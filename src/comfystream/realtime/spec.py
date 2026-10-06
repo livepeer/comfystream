@@ -53,7 +53,7 @@ class RealtimePipelineSpec:
     label: str = ""
     model: str = ""
     cold_start_s: float = 0.0
-    session_idle_timeout_s: float = 300.0
+    session_idle_timeout_s: float = 15.0
     fallback_after_s: float = 2.0
     presets: dict[str, dict[str, Any]] = field(default_factory=dict)
     fallbacks: dict[str, str] = field(default_factory=dict)
@@ -128,7 +128,7 @@ def _parse_spec(name: str, raw: Any) -> RealtimePipelineSpec:
         label=str(raw.get("label", name)),
         model=str(raw.get("model", "")),
         cold_start_s=float(raw.get("cold_start_s", 0.0)),
-        session_idle_timeout_s=float(raw.get("session_idle_timeout_s", 300.0)),
+        session_idle_timeout_s=float(raw.get("session_idle_timeout_s", 15.0)),
         fallback_after_s=float(raw.get("fallback_after_s", 2.0)),
         presets=_parse_presets(
             name, str(raw["backend"]), raw.get("presets") or {}, _param_names(raw)

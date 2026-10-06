@@ -122,6 +122,15 @@ class FakePublish:
 class FakeRegistration:
     runner_id = "runner_test"
 
+    def __init__(self) -> None:
+        self.ended: list[str] = []
+
+    async def note_session_ended(self, session_id: str) -> None:
+        self.ended.append(session_id)
+
+    async def update(self, *, metadata=None, capacity=None) -> None:
+        return None
+
     async def create_trickle_channels(self, request, channels):
         return [
             {"name": "in", "url": "https://orch/in"},
@@ -535,5 +544,8 @@ def test_cold_start_limit_and_idle_expiry(monkeypatch, tmp_path):
             session = await (await client.get("/session", headers=headers)).json()
             assert session["status"] == "expired" and session["reason"] == "no_input"
             assert worker.session is None
+            status = await (await client.get("/status")).json()
+            assert status["capacity_used"] == 0
+            assert worker.registration.ended == ["s1"]
 
     asyncio.run(scenario())

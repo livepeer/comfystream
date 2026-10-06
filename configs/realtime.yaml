@@ -15,7 +15,7 @@
 #
 #   model                    advertised model id (discovery metadata)
 #   cold_start_s             startup estimate until a load has been measured
-#   session_idle_timeout_s   expire a session after this long without input
+#   session_idle_timeout_s   expire a session after this long without input (default 15)
 #   fallback_after_s         show the fallback visual once inference stalls this long
 #   presets                  name -> params (validated against the backend schema)
 #   fallbacks                name -> image path or #rrggbb; "default" overrides the
@@ -46,6 +46,7 @@ pipelines:
     policy: warm
     model: black-forest-labs/FLUX.2-klein-4B
     cold_start_s: 20
+    session_idle_timeout_s: 15
     price: 0.35
     currency: usd
     unit: 720p
@@ -78,6 +79,7 @@ pipelines:
     model: stabilityai/sd-turbo
     # ~30 s with cached TensorRT engines; a new GPU arch builds them once (~6 min).
     cold_start_s: 30
+    session_idle_timeout_s: 15
     price: 0.35
     currency: usd
     unit: 720p

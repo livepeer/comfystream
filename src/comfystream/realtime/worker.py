@@ -75,6 +75,10 @@ CHANNEL_MIME_VIDEO = "video/mp2t"
 HEADER_LIMIT_BYTES = 262144
 IDLE_POLL_S = 5.0
 SESSION_WATCH_S = 1.0
+# A killed publisher never calls stop. After this long without input, end the
+# session and release orchestrator capacity with it. An explicit idle_timeout_s
+# on /stream still wins. Pause keeps the slot.
+NO_INPUT_RELEASE_S = 15.0
 # After the publisher closes, finish frames already received before ending the session.
 INPUT_DRAIN_S = 30.0
 ENDED_SESSIONS_KEPT = 64
@@ -406,8 +410,26 @@ class PipelineWorker:
                 self.ended.popitem(last=False)
             self._write_usage(record)
             log_event("session.end", **{k: v for k, v in record.items() if k != "fallback_events"})
-            if release:
-                self._spawn_background(self._release_reservation(current))
+            session_id = current.session_id
+            to_release = current if release else None
+        await self._sync_capacity(session_id, to_release)
+
+    async def _sync_capacity(self, session_id: str, session: StreamSession | None) -> None:
+        """Free this pipeline's slot on the orchestrator in the same step as locally.
+
+        Heartbeat session_ids is what discovery reports as capacity_used. stop
+        releases the reservation that otherwise answers the next /session with
+        'no capacity available'.
+        """
+        if session is not None:
+            await self._release_reservation(session)
+        registration = self.registration
+        if registration is None:
+            return
+        try:
+            await registration.note_session_ended(session_id)
+        except Exception:
+            log.exception("session %s capacity heartbeat failed", session_id)
 
     def build_app(self) -> web.Application:
         app = web.Application(
@@ -715,9 +737,17 @@ class PipelineWorker:
         self._spawn_background(self.end_session(FAILED, "pipeline_crashed", only=session))
 
     async def _watch_session(self, session: StreamSession) -> None:
-        timeout = session.request.idle_timeout_s or self.spec.session_idle_timeout_s
+        requested = session.request.idle_timeout_s
+        timeout = (
+            requested
+            if requested is not None
+            else min(self.spec.session_idle_timeout_s, NO_INPUT_RELEASE_S)
+        )
         while True:
             await asyncio.sleep(SESSION_WATCH_S)
+            if session.status == PAUSED:
+                session.last_input_mono = time.monotonic()
+                continue
             if timeout and time.monotonic() - session.last_input_mono >= timeout:
                 self._spawn_background(self.end_session(EXPIRED, "no_input", only=session))
                 return
