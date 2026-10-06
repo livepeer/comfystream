@@ -3,17 +3,19 @@
 
 The request is a prompt and/or a preset. No Comfy workflow is sent.
 
+  export TOKEN='...'
   python server/realtime_client.py clip.mp4 \\
-    --token "$TOKEN" --app comfystream/sd-turbo --preset neon-stage
+    --app comfystream/sd-turbo --preset neon-stage
 
   python server/realtime_client.py clip.mp4 \\
-    --token "$TOKEN" --app livepeer-example/flux-klein --preset cosmic
+    --app livepeer-example/flux-klein --preset cosmic
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 from contextlib import nullcontext, suppress
@@ -44,8 +46,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("input", help="Local mp4/mov to publish.")
     parser.add_argument(
         "--token",
-        required=True,
-        help="Base64 gateway token (signer, signer headers, discovery).",
+        default=os.environ.get("TOKEN", ""),
+        help="Base64 gateway token; defaults to TOKEN.",
     )
     parser.add_argument(
         "--app",
@@ -174,6 +176,8 @@ async def _publish(input_path: Path, publish_url: str, *, fps: float, max_frames
 
 async def main() -> None:
     args = _parse_args()
+    if not args.token.strip():
+        raise SystemExit("set TOKEN or pass --token")
     input_path = Path(args.input).expanduser()
     if not input_path.exists():
         raise SystemExit(f"input file does not exist: {input_path}")
