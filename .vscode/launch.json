@@ -82,62 +82,6 @@
                 "uriFormat": "http://localhost:3000",
                 "action": "openExternally"
             }
-        },
-        {
-            "name": "Realtime: sd-turbo",
-            "type": "debugpy",
-            "request": "launch",
-            "cwd": "${workspaceFolder:comfystream}",
-            "program": "${workspaceFolder:comfystream}/server/realtime_client.py",
-            "console": "integratedTerminal",
-            "python": "/livepeer/ai/runner-app-examples/flux-klein/.venv/bin/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:livepeer-python-gateway}/src"
-            },
-            "args": [
-                "/tmp/e2e/clip.mp4",
-                "--token",
-                "${env:TOKEN}",
-                "--app",
-                "sd-turbo",
-                "--preset",
-                "neon-stage",
-                "--fps",
-                "15",
-                "--max-frames",
-                "60",
-                "--output",
-                "/tmp/e2e/sd-turbo-out.ts"
-            ],
-            "justMyCode": true
-        },
-        {
-            "name": "Realtime: flux-klein",
-            "type": "debugpy",
-            "request": "launch",
-            "cwd": "${workspaceFolder:comfystream}",
-            "program": "${workspaceFolder:comfystream}/server/realtime_client.py",
-            "console": "integratedTerminal",
-            "python": "/livepeer/ai/runner-app-examples/flux-klein/.venv/bin/python",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:livepeer-python-gateway}/src"
-            },
-            "args": [
-                "/tmp/e2e/clip.mp4",
-                "--token",
-                "${env:TOKEN}",
-                "--app",
-                "flux-klein",
-                "--preset",
-                "cosmic",
-                "--fps",
-                "8",
-                "--max-frames",
-                "40",
-                "--output",
-                "/tmp/e2e/flux-klein-out.ts"
-            ],
-            "justMyCode": true
         }
     ],
     "compounds": [

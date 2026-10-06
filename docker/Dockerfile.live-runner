@@ -39,6 +39,7 @@ RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
     uv \
     "protobuf>=6.31.1" \
     "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@v1.0.0" \
+    "diffusers==0.39.0" \
     pyyaml \
     fal-client \
   && python /tmp/patch_live_runner_payment_url.py \
@@ -48,7 +49,7 @@ RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
   && test -d /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API \
   && test -d /workspace/ComfyUI/custom_nodes/ComfyUI-Stream-Pack \
   && pip install --no-cache-dir "protobuf>=6.31.1" "setuptools>=70,<81" \
-  && python -c "import av, livepeer_gateway, pkg_resources, comfystream.batch_pipeline" \
+  && python -c "import av, livepeer_gateway, pkg_resources" \
   && cp /tmp/fal_api_config.ini /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API/config.ini \
   && rm -f /tmp/patch_live_runner_payment_url.py /tmp/fal_api_config.ini'
 
@@ -61,6 +62,7 @@ ARG STREAMDIFFUSION_NODE_REF=40ebeabb6c7af35025b5026e9019e3554d240dc2
 RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
   && conda activate comfystream \
   && NODE=/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion \
+  && rm -rf "${NODE}" \
   && git clone https://github.com/muxionlabs/ComfyUI-StreamDiffusion "${NODE}" \
   && git -C "${NODE}" checkout "${STREAMDIFFUSION_NODE_REF}" \
   && python -m venv --system-site-packages /workspace/venvs/streamdiffusion \
@@ -80,6 +82,7 @@ COPY src/comfystream/batch_pipeline.py /workspace/comfystream/src/comfystream/ba
 COPY src/comfystream/job_pool.py /workspace/comfystream/src/comfystream/job_pool.py
 COPY src/comfystream/modalities.py /workspace/comfystream/src/comfystream/modalities.py
 COPY src/comfystream/capabilities /workspace/comfystream/src/comfystream/capabilities
+COPY src/comfystream/client.py /workspace/comfystream/src/comfystream/client.py
 COPY src/comfystream/realtime /workspace/comfystream/src/comfystream/realtime
 COPY configs/fal /workspace/comfystream/configs/fal
 COPY configs/realtime.yaml /workspace/comfystream/configs/realtime.yaml

@@ -37,6 +37,7 @@ from typing import Any
 
 import av
 from aiohttp import web
+from livepeer_gateway.errors import LivepeerHTTPError
 from livepeer_gateway.live_runner import register_runner, stop_runner_session
 from livepeer_gateway.media_output import MediaOutput
 from livepeer_gateway.media_publish import MediaPublish, MediaPublishConfig, VideoOutputConfig
@@ -299,15 +300,24 @@ class PipelineWorker:
                 # The SDK's request Protocol declares `headers` mutable; aiohttp's is read-only.
                 await stop_runner_session(session.control)  # pyright: ignore[reportArgumentType]
                 return
+            except LivepeerHTTPError as exc:
+                if exc.status_code == 404:
+                    log.info(
+                        "session %s reservation already released at orchestrator",
+                        session.session_id,
+                    )
+                    return
+                exc_to_log = exc
             except Exception as exc:
-                log.warning(
-                    "releasing session %s failed (attempt %d/%d): %s",
-                    session.session_id,
-                    attempt,
-                    RELEASE_ATTEMPTS,
-                    exc,
-                )
-                await asyncio.sleep(attempt)
+                exc_to_log = exc
+            log.warning(
+                "releasing session %s failed (attempt %d/%d): %s",
+                session.session_id,
+                attempt,
+                RELEASE_ATTEMPTS,
+                exc_to_log,
+            )
+            await asyncio.sleep(attempt)
         log.error(
             "ALERT session %s reservation not released; compute may still be billed",
             session.session_id,
@@ -333,37 +343,38 @@ class PipelineWorker:
         only: StreamSession | None = None,
     ) -> None:
         """End the active session (or only ``only``, if it is still the active one)."""
-        current = self.session
-        if current is None or (only is not None and current is not only):
-            return
-        self.session = None
-        current.finish(status)
-        for task in current.tasks:
-            task.cancel()
-        for task in current.tasks:
-            with suppress(asyncio.CancelledError, Exception):
-                await task
-        with suppress(Exception):
-            await current.publisher.close()
-        with suppress(Exception):
-            await current.output.close()
-        self.backend.reset()
-        await self.backend.idle()
-        self._idle_since = time.monotonic()
-        record = usage_record(
-            current,
-            reason=reason,
-            pipeline=self.pipeline_info() | {"gpu": self.spec.gpu},
-            price_per_hour=self.spec.price,
-            currency=self.spec.currency,
-        )
-        self.ended[current.session_id] = record
-        while len(self.ended) > ENDED_SESSIONS_KEPT:
-            self.ended.popitem(last=False)
-        self._write_usage(record)
-        log_event("session.end", **{k: v for k, v in record.items() if k != "fallback_events"})
-        if release:
-            self._spawn_background(self._release_reservation(current))
+        async with self._session_lock:
+            current = self.session
+            if current is None or (only is not None and current is not only):
+                return
+            self.session = None
+            current.finish(status)
+            for task in current.tasks:
+                task.cancel()
+            for task in current.tasks:
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
+            with suppress(Exception):
+                await current.publisher.close()
+            with suppress(Exception):
+                await current.output.close()
+            self.backend.reset()
+            await self.backend.idle()
+            self._idle_since = time.monotonic()
+            record = usage_record(
+                current,
+                reason=reason,
+                pipeline=self.pipeline_info() | {"gpu": self.spec.gpu},
+                price_per_hour=self.spec.price,
+                currency=self.spec.currency,
+            )
+            self.ended[current.session_id] = record
+            while len(self.ended) > ENDED_SESSIONS_KEPT:
+                self.ended.popitem(last=False)
+            self._write_usage(record)
+            log_event("session.end", **{k: v for k, v in record.items() if k != "fallback_events"})
+            if release:
+                self._spawn_background(self._release_reservation(current))
 
     def build_app(self) -> web.Application:
         app = web.Application(
@@ -536,8 +547,9 @@ class PipelineWorker:
         processor = asyncio.create_task(self._process_latest(session, latest, frame_ready))
         session.tasks = [processor, asyncio.create_task(self._watch_session(session))]
         processor.add_done_callback(lambda task: self._on_processor_done(session, task))
-        for task in output.callback_tasks():
-            task.add_done_callback(
+        input_tasks = output.callback_tasks()
+        if input_tasks:
+            input_tasks[0].add_done_callback(
                 lambda _task: self._spawn_background(self._drain_input(session))
             )
         log_event(
