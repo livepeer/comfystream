@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 import yaml
 
+from comfystream.realtime.capacity import WarmCapacity, parse_capacity
 from comfystream.realtime.params import ParamError, validate_params
 
 WarmPolicy = Literal["warm", "cold"]
@@ -129,7 +130,9 @@ def _parse_spec(name: str, raw: Any) -> RealtimePipelineSpec:
         cold_start_s=float(raw.get("cold_start_s", 0.0)),
         session_idle_timeout_s=float(raw.get("session_idle_timeout_s", 300.0)),
         fallback_after_s=float(raw.get("fallback_after_s", 2.0)),
-        presets=_parse_presets(name, str(raw["backend"]), raw.get("presets") or {}),
+        presets=_parse_presets(
+            name, str(raw["backend"]), raw.get("presets") or {}, _param_names(raw)
+        ),
         fallbacks=_parse_fallbacks(name, raw.get("fallbacks") or {}),
         env={str(key): str(value) for key, value in (raw.get("env") or {}).items()},
         options=dict(raw.get("options") or {}),
@@ -138,7 +141,19 @@ def _parse_spec(name: str, raw: Any) -> RealtimePipelineSpec:
     return spec
 
 
-def _parse_presets(name: str, backend: str, raw: Any) -> dict[str, dict[str, Any]]:
+def _param_names(raw: dict[str, Any]) -> list[str] | None:
+    options = raw.get("options") or {}
+    if not isinstance(options, dict) or not options.get("params"):
+        return None
+    names = options["params"]
+    if not isinstance(names, list) or not all(isinstance(item, str) for item in names):
+        raise RealtimeSpecError("options.params must be a list of parameter names")
+    return [str(item) for item in names]
+
+
+def _parse_presets(
+    name: str, backend: str, raw: Any, names: list[str] | None = None
+) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         raise RealtimeSpecError(f"{name}: presets must map preset name -> params")
     presets: dict[str, dict[str, Any]] = {}
@@ -146,7 +161,7 @@ def _parse_presets(name: str, backend: str, raw: Any) -> dict[str, dict[str, Any
         if not isinstance(params, dict) or not params:
             raise RealtimeSpecError(f"{name}: preset {preset!r} must be a non-empty mapping")
         try:
-            presets[str(preset)] = validate_params(backend, params)
+            presets[str(preset)] = validate_params(backend, params, names)
         except ParamError as exc:
             raise RealtimeSpecError(f"{name}: preset {preset!r}: {exc.message}") from exc
     return presets
@@ -165,8 +180,11 @@ def _parse_fallbacks(name: str, raw: Any) -> dict[str, str]:
     return fallbacks
 
 
-def load_realtime_specs(path: str | Path) -> list[RealtimePipelineSpec]:
+def load_realtime_config(path: str | Path) -> tuple[list[RealtimePipelineSpec], WarmCapacity]:
+    """Load pipeline specs and the operator capacity policy from one file."""
     document = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    if not isinstance(document, dict):
+        raise RealtimeSpecError(f"{path}: document must be a mapping")
     pipelines = document.get("pipelines")
     if not isinstance(pipelines, dict) or not pipelines:
         raise RealtimeSpecError(f"{path}: expected a non-empty 'pipelines' mapping")
@@ -177,4 +195,9 @@ def load_realtime_specs(path: str | Path) -> list[RealtimePipelineSpec]:
     apps = [spec.app for spec in specs]
     if len(set(apps)) != len(apps):
         raise RealtimeSpecError(f"{path}: pipeline app ids must be unique")
+    return specs, parse_capacity(document.get("capacity"), {spec.name for spec in specs})
+
+
+def load_realtime_specs(path: str | Path) -> list[RealtimePipelineSpec]:
+    specs, _capacity = load_realtime_config(path)
     return specs

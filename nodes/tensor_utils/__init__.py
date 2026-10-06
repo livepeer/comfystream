@@ -1,5 +1,6 @@
 """Tensor utility nodes for ComfyStream"""
 
+from .flux_klein_stream import FluxKleinStream
 from .invert_image import InvertImage
 from .load_tensor import LoadTensor
 from .save_fal_result import SaveFalResult
@@ -12,6 +13,7 @@ NODE_CLASS_MAPPINGS = {
     "SaveTextTensor": SaveTextTensor,
     "SaveFalResult": SaveFalResult,
     "InvertImage": InvertImage,
+    "FluxKleinStream": FluxKleinStream,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "InvertImage": "Invert Image",

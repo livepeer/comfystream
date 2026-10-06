@@ -20,10 +20,11 @@ Stop advertising the old static `livepeer-example/fal-*` entries. On
 `ai-realtime-go-livepeer-1`, the `-liveRunnerConfig` file is
 `/opt/fal-adapter/runners.json` (mounted at `/config/runners.json`).
 
-Keep only `livepeer-example/flux-klein` in that file (backup first). The
-73 fal adapters are replaced by dynamic `register_runner` from the
-ComfyStream live-runner (`comfystream/fal-*`). Dual registration of both
-namespaces is out of scope — restart the orch after rewriting the file.
+Remove `livepeer-example/flux-klein` as well (backup first). Flux-klein
+registers dynamically as `comfystream/flux-klein`. The 73 fal adapters are
+replaced by dynamic `register_runner` from the ComfyStream live-runner
+(`comfystream/fal-*`). Dual registration of both namespaces is out of scope
+— restart the orch after rewriting the file.
 
 The ComfyStream live-runner dynamically `register_runner`s each
 `comfystream/fal-*` app as `mode=single-shot` with `unit=fixed`.

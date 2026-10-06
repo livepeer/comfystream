@@ -24,6 +24,7 @@ ENV PYTHONPATH=/workspace/comfystream/src:${PYTHONPATH}
 # Pin v1.0.0 for register_runner(price=...) / discovery price_info shape.
 # go-livepeer 0.9.x still returns 402.orchestrator; patch accepts that as payment_url.
 COPY docker/patch_live_runner_payment_url.py /tmp/patch_live_runner_payment_url.py
+COPY docker/requirements.live-runner.txt /tmp/requirements.live-runner.txt
 COPY docker/fal_api_config.ini /tmp/fal_api_config.ini
 COPY configs/${NODES_CONFIG} /workspace/comfystream/configs/${NODES_CONFIG}
 COPY src/comfystream/scripts /workspace/comfystream/src/comfystream/scripts
@@ -35,9 +36,10 @@ RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
   && conda install -n comfystream -y -c conda-forge --force-reinstall \
        "libstdcxx-ng>=14" "libstdcxx>=14" "libgcc-ng>=14" \
   && strings "${CONDA_PREFIX}/lib/libstdc++.so.6" | grep -q CXXABI_1.3.15 \
-  && pip install --no-cache-dir \
-    uv \
+  && pip install --no-cache-dir uv \
+  && uv pip install --python "$CONDA_PREFIX/bin/python" \
     "protobuf>=6.31.1" \
+    "transformers==4.57.3" \
     "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@v1.0.0" \
     "diffusers==0.39.0" \
     pyyaml \
@@ -48,29 +50,28 @@ RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
        --config "${COMFYSTREAM_NODES_CONFIG}" \
   && test -d /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API \
   && test -d /workspace/ComfyUI/custom_nodes/ComfyUI-Stream-Pack \
-  && pip install --no-cache-dir "protobuf>=6.31.1" "setuptools>=70,<81" \
-  && python -c "import av, livepeer_gateway, pkg_resources" \
+  && uv pip install --python "$CONDA_PREFIX/bin/python" -r /tmp/requirements.live-runner.txt "setuptools>=70,<81" \
+  && python -c "import av, livepeer_gateway, pkg_resources; from diffusers import Flux2KleinPipeline" \
   && cp /tmp/fal_api_config.ini /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API/config.ini \
   && rm -f /tmp/patch_live_runner_payment_url.py /tmp/fal_api_config.ini'
 
-# StreamDiffusion (sd-turbo TensorRT) pins a diffusers fork, transformers and
-# protobuf that conflict with FLUX Klein and livepeer-gateway. Its realtime
-# worker runs under this venv (configs/realtime.yaml `python:`), layered on the
-# comfystream env so torch/TensorRT stay shared. Dropping the venv's protobuf
-# keeps the base env's protobuf>=6.31 that livepeer-gateway requires.
-ARG STREAMDIFFUSION_NODE_REF=40ebeabb6c7af35025b5026e9019e3554d240dc2
+# One interpreter for every realtime pipeline. StreamDiffusion's diffusers fork
+# is not installed: upstream diffusers 0.39 (FLUX.2 Klein) is already in the env.
+# muxionlabs/ComfyUI-StreamDiffusion@d2206e5 pins
+# muxionlabs/StreamDiffusion@233f866 (protobuf>=6.31.1, diffusers>=0.39.0).
+ARG STREAMDIFFUSION_NODE_REF=d2206e59633cfc2790f1ca8c5a06d3ed1dd0d7b7
 RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
   && conda activate comfystream \
   && NODE=/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion \
   && rm -rf "${NODE}" \
-  && git clone https://github.com/muxionlabs/ComfyUI-StreamDiffusion "${NODE}" \
+  && git clone --branch bump-protobuf-for-livepeer-gateway \
+       https://github.com/muxionlabs/ComfyUI-StreamDiffusion "${NODE}" \
   && git -C "${NODE}" checkout "${STREAMDIFFUSION_NODE_REF}" \
-  && python -m venv --system-site-packages /workspace/venvs/streamdiffusion \
-  && grep -v -E "^(torch|torchvision|xformers|insightface|mediapipe|protobuf)([=<> ]|$)" \
+  && grep -v -E "^(torch|torchvision|xformers|insightface)([=<> @]|$)" \
        "${NODE}/requirements.txt" > /tmp/streamdiffusion-requirements.txt \
-  && /workspace/venvs/streamdiffusion/bin/pip install --no-cache-dir -r /tmp/streamdiffusion-requirements.txt \
-  && /workspace/venvs/streamdiffusion/bin/pip uninstall -y protobuf \
-  && /workspace/venvs/streamdiffusion/bin/python -c "import streamdiffusion, tensorrt, livepeer_gateway" \
+  && uv pip install --python "$CONDA_PREFIX/bin/python" -r /tmp/streamdiffusion-requirements.txt \
+  && uv pip install --python "$CONDA_PREFIX/bin/python" -r /tmp/requirements.live-runner.txt \
+  && python -c "import streamdiffusion, tensorrt, livepeer_gateway; from diffusers import Flux2KleinPipeline" \
   && rm -f /tmp/streamdiffusion-requirements.txt'
 
 COPY server/live_runner.py /workspace/comfystream/server/live_runner.py
@@ -87,7 +88,9 @@ COPY src/comfystream/realtime /workspace/comfystream/src/comfystream/realtime
 COPY configs/fal /workspace/comfystream/configs/fal
 COPY configs/realtime.yaml /workspace/comfystream/configs/realtime.yaml
 COPY workflows/comfystream/sd-turbo-streamdiffusion-trt-api.json /workspace/comfystream/workflows/comfystream/sd-turbo-streamdiffusion-trt-api.json
+COPY workflows/comfystream/flux-klein-api.json /workspace/comfystream/workflows/comfystream/flux-klein-api.json
 COPY configs/nodes-live-runner.yaml /workspace/comfystream/configs/nodes-live-runner.yaml
+COPY nodes/tensor_utils/flux_klein_stream.py /workspace/comfystream/nodes/tensor_utils/flux_klein_stream.py
 COPY nodes/tensor_utils/invert_image.py /workspace/comfystream/nodes/tensor_utils/invert_image.py
 COPY nodes/tensor_utils/save_fal_result.py /workspace/comfystream/nodes/tensor_utils/save_fal_result.py
 COPY nodes/tensor_utils/__init__.py /workspace/comfystream/nodes/tensor_utils/__init__.py

@@ -22,11 +22,25 @@
 #                            built-in slate shown while paused or failing
 #
 # Pipelines placed on the same GPU must fit together when warm.
+#
+# capacity is enforced before any pipeline process starts. A pipeline that
+# does not fit is not loaded, so a third stream cannot OOM a card that only
+# has room for two. exclusive pipelines load alone. combinations, when set,
+# require the loaded set to fit inside one group. Order is the pipelines map.
+
+capacity:
+  max_loaded: 2
+  gpus:
+    GPU-745244ef-3615-57bd-458f-299fe2289f5a: 2  # 3090 Ti: two streams, not three
+    GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d: 1  # RTX 4000 Ada
+  exclusive: []
+  combinations:
+    - [flux-klein, sd-turbo]
 
 pipelines:
   flux-klein:
-    app: livepeer-example/flux-klein
-    backend: flux_klein
+    app: comfystream/flux-klein
+    backend: comfy_workflow
     port: 8720
     gpu: GPU-745244ef-3615-57bd-458f-299fe2289f5a  # RTX 3090 Ti, ~16.5 GB
     policy: warm
@@ -49,14 +63,11 @@ pipelines:
       HF_HUB_CACHE: /workspace/flux-klein/models/hf
       HF_HUB_OFFLINE: "1"
     options:
+      workflow: workflows/comfystream/flux-klein-api.json
+      prompt_nodes: ["2"]
+      params: [prompt, seed, input_blend]
       width: 384
       height: 384
-      steps: 4
-      feedback: 0.5
-      guidance: 1.0
-      seed: -1
-      input_blend: 0.5
-      batch: 1
 
   sd-turbo:
     app: comfystream/sd-turbo
@@ -64,7 +75,6 @@ pipelines:
     port: 8721
     gpu: GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d  # RTX 4000 Ada, ~4.5 GB
     policy: warm
-    python: /workspace/venvs/streamdiffusion/bin/python
     model: stabilityai/sd-turbo
     # ~30 s with cached TensorRT engines; a new GPU arch builds them once (~6 min).
     cold_start_s: 30

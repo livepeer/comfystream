@@ -1,0 +1,15 @@
+# One env for sd-turbo TensorRT and FLUX.2 Klein.
+# Spike (2026-10-06): StreamDiffusion's import of AutoPipelineForText2Image on
+# diffusers 0.39.0 fails with transformers 4.55.4 and 4.56.0 because
+# diffusers.pipelines.krea2 imports transformers.Qwen3VLModel, which those
+# releases do not ship. transformers>=4.57.1 provides it.
+# The StreamDiffusion diffusers fork (0.36.0.dev0) is not installed.
+diffusers==0.39.0
+transformers==4.57.3
+accelerate==1.15.0
+huggingface_hub==0.36.2
+# Pins:
+# muxionlabs/ComfyUI-StreamDiffusion@d2206e59633cfc2790f1ca8c5a06d3ed1dd0d7b7
+# muxionlabs/StreamDiffusion@233f866ab068278539cb0149d7ea1e2af5487467
+# mediapipe==0.10.21 is not installed; it requires protobuf<5.
+protobuf>=6.31.1

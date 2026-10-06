@@ -83,9 +83,28 @@ def _coerce(name: str, param: Param, value: Any) -> Any:
     return value
 
 
-def validate_params(backend: str, raw: dict[str, Any]) -> dict[str, Any]:
+def schema_for(backend: str, names: list[str] | None = None) -> dict[str, Param]:
+    """Params a workflow accepts. ``names`` overrides the backend default."""
+    if not names:
+        return PARAM_SCHEMAS[backend]
+    catalog: dict[str, Param] = {}
+    for schema in PARAM_SCHEMAS.values():
+        catalog.update(schema)
+    missing = [name for name in names if name not in catalog]
+    if missing:
+        raise ParamError(
+            "unsupported_param",
+            missing[0],
+            f"unknown params {missing}; known: {sorted(catalog)}",
+        )
+    return {name: catalog[name] for name in names}
+
+
+def validate_params(
+    backend: str, raw: dict[str, Any], names: list[str] | None = None
+) -> dict[str, Any]:
     """Return the validated params, rejecting names the backend does not accept."""
-    schema = PARAM_SCHEMAS[backend]
+    schema = schema_for(backend, names)
     out: dict[str, Any] = {}
     for name, value in raw.items():
         param = schema.get(name)
@@ -99,5 +118,5 @@ def validate_params(backend: str, raw: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def schema_json(backend: str) -> dict[str, Any]:
-    return {name: param.to_json() for name, param in PARAM_SCHEMAS[backend].items()}
+def schema_json(backend: str, names: list[str] | None = None) -> dict[str, Any]:
+    return {name: param.to_json() for name, param in schema_for(backend, names).items()}

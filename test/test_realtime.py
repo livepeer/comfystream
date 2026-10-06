@@ -16,7 +16,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from comfystream.realtime import spec as spec_module
 from comfystream.realtime.params import ParamError, validate_params
-from comfystream.realtime.spec import RealtimeSpecError, load_realtime_specs
+from comfystream.realtime.capacity import WarmCapacity
+from comfystream.realtime.spec import RealtimePipelineSpec, RealtimeSpecError, load_realtime_config, load_realtime_specs
 from comfystream.realtime.supervisor import RealtimeSupervisor
 from comfystream.realtime.worker import SHUTDOWN_HEADER, SHUTDOWN_PATH, PipelineWorker, WorkerConfig
 
@@ -47,6 +48,7 @@ class FakeBackend:
         self.loads = 0
         self.params = {}
         self.fail = False
+        self.scrubbed = False
 
     async def load(self):
         self.loads += 1
@@ -56,6 +58,11 @@ class FakeBackend:
 
     def reset(self):
         self.params = {}
+
+    async def scrub(self):
+        self.reset()
+        self.params = dict(self.defaults())
+        self.scrubbed = True
 
     async def idle(self):
         return None
@@ -127,7 +134,7 @@ class FakeRegistration:
 
 def test_repo_config_parses():
     specs = {spec.name: spec for spec in load_realtime_specs(REPO / "configs" / "realtime.yaml")}
-    assert specs["flux-klein"].app == "livepeer-example/flux-klein"
+    assert specs["flux-klein"].app == "comfystream/flux-klein"
     assert specs["flux-klein"].port == 8720
     assert specs["sd-turbo"].python == "/workspace/venvs/streamdiffusion/bin/python"
     assert specs["sd-turbo"].gpu != specs["flux-klein"].gpu
@@ -181,23 +188,16 @@ def test_invalid_configs(tmp_path, body, message):
 
 
 def test_spawn_pins_gpu_env_and_interpreter(tmp_path):
-    venv = tmp_path / "venv"
-    venv_python = venv / "bin" / "python"
-    subprocess.run(
-        [sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(venv)],
-        check=True,
-    )
     path = _write(
         tmp_path,
-        f"""
+        """
         pipelines:
           pinned:
             app: x/pinned
             backend: flux_klein
             port: 9101
             gpu: GPU-test-uuid
-            python: {venv_python}
-            env: {{COMFYSTREAM_TEST_ENV: from-spec}}
+            env: {COMFYSTREAM_TEST_ENV: from-spec}
         """,
     )
     (spec,) = load_realtime_specs(path)
@@ -206,7 +206,7 @@ def test_spawn_pins_gpu_env_and_interpreter(tmp_path):
         result = supervisor._spawn(spec).result(timeout=60)
     finally:
         supervisor._discard(spec.name)
-    assert result == f"GPU-test-uuid|from-spec|{venv_python}|True|pinned"
+    assert result == f"GPU-test-uuid|from-spec|{sys.executable}|True|pinned"
     assert "COMFYSTREAM_TEST_ENV" not in os.environ
 
 
@@ -329,8 +329,61 @@ def test_params_are_normalized():
     assert validate_params("comfy_workflow", {"negative_prompt": ""}) == {"negative_prompt": ""}
 
 
+def _spec(name: str, gpu: str, policy: str = "warm") -> RealtimePipelineSpec:
+    return RealtimePipelineSpec(
+        name=name,
+        app=f"x/{name}",
+        backend="flux_klein",
+        port=9000 + len(name),
+        gpu=gpu,
+        policy=policy,  # type: ignore[arg-type]
+    )
+
+
+def test_capacity_fits_two_streams_and_holds_a_third():
+    gpu = "GPU-3090"
+    capacity = WarmCapacity(max_loaded=4, gpus={gpu: 2})
+    specs = [_spec("a", gpu), _spec("b", gpu), _spec("c", gpu)]
+    chosen, held = capacity.select(specs)
+    assert chosen == {"a", "b"}
+    assert held[0][0] == "c"
+    assert "max 2" in held[0][1]
+
+
+def test_exclusive_pipeline_loads_alone():
+    capacity = WarmCapacity(max_loaded=4, exclusive=frozenset({"heavy"}))
+    specs = [_spec("heavy", "GPU-3090"), _spec("sd-turbo", "GPU-ada")]
+    chosen, held = capacity.select(specs)
+    assert chosen == {"heavy"}
+    assert held[0][0] == "sd-turbo"
+
+
+def test_combinations_reject_an_unlisted_pairing(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+        capacity:
+          max_loaded: 2
+          combinations:
+            - [flux-klein, sd-turbo]
+            - [heavy]
+        pipelines:
+          flux-klein: {app: x/flux, backend: flux_klein, port: 9001}
+          sd-turbo: {app: x/sd, backend: flux_klein, port: 9002}
+          heavy: {app: x/heavy, backend: flux_klein, port: 9003}
+        """,
+    )
+    specs, capacity = load_realtime_config(path)
+    chosen, held = capacity.select(specs)
+    assert chosen == {"flux-klein", "sd-turbo"}
+    assert held[0][0] == "heavy"
+
+
 def test_repo_config_advertises_capabilities():
-    for spec in load_realtime_specs(REPO / "configs" / "realtime.yaml"):
+    specs, capacity = load_realtime_config(REPO / "configs" / "realtime.yaml")
+    chosen, held = capacity.select(specs)
+    assert chosen == {"flux-klein", "sd-turbo"} and held == []
+    for spec in specs:
         metadata = json.loads(spec.metadata())
         assert metadata["model"] and metadata["streaming"] is True
         assert metadata["inputs"] == ["video"] and metadata["outputs"] == ["video"]
@@ -431,6 +484,8 @@ def test_session_lifecycle_fallback_and_usage(monkeypatch, tmp_path):
 
             stopped = await (await client.post("/stop", headers=headers)).json()
             assert stopped["status"] == "stopped" and stopped["already_stopped"] is False
+            assert worker.backend.scrubbed is True
+            assert worker.backend.params["prompt"] == "default prompt"
             assert (stopped["room_id"], stopped["venue_id"], stopped["environment"]) == (
                 "r12",
                 "v3",

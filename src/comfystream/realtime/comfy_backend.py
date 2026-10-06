@@ -19,6 +19,7 @@ from comfystream.realtime.spec import RealtimePipelineSpec
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 PROMPT_PARAMS = ("prompt", "negative_prompt")
+TEXT_PARAMS = {"prompt", "negative_prompt"}
 # The first frame loads models and may build TensorRT engines for a new GPU arch.
 FIRST_FRAME_TIMEOUT_S = 1800.0
 
@@ -44,6 +45,8 @@ class ComfyWorkflowBackend:
         self.workspace = str(options.get("workspace", "/workspace/ComfyUI"))
         self.engine_root = str(options.get("engine_root", ""))
         self.prompt_nodes = [str(node) for node in options.get("prompt_nodes", [])]
+        declared = options.get("params")
+        self.param_names = [str(name) for name in declared] if declared else list(PROMPT_PARAMS)
         self.blacklist_custom_nodes = list(
             options.get("blacklist_custom_nodes", ["ComfyUI-Manager"])
         )
@@ -84,7 +87,11 @@ class ComfyWorkflowBackend:
         targets = self._prompt_targets()
         if targets:
             inputs = workflow[targets[0]]["inputs"]
-            self._defaults = {key: str(inputs[key]) for key in PROMPT_PARAMS if key in inputs}
+            self._defaults = {
+                key: (str(inputs[key]) if key in TEXT_PARAMS else inputs[key])
+                for key in self.param_names
+                if key in inputs
+            }
         self.params = dict(self._defaults)
         self.pipeline = Pipeline(
             width=self.width,
@@ -95,6 +102,7 @@ class ComfyWorkflowBackend:
             preview_method="none",
             blacklist_custom_nodes=self.blacklist_custom_nodes,
             bootstrap_default_prompt=False,
+            max_workers=1,
         )
         self.applied = self._render_workflow()
         await self.pipeline.apply_prompts([self.applied], skip_warmup=True)
@@ -130,13 +138,26 @@ class ComfyWorkflowBackend:
     def reset(self) -> None:
         self.params = dict(self._defaults)
 
+    async def scrub(self) -> None:
+        """Put the workflow prompt back to the file default. Models stay loaded."""
+        self.reset()
+        await self.apply(self.defaults())
+        try:
+            from nodes.tensor_utils.flux_klein_stream import reset_session
+        except ImportError:
+            return
+        reset_session()
+
     async def idle(self) -> None:
         """Stop prompt execution without unloading the pipeline."""
         if self.pipeline is not None and self.pipeline.are_prompts_running():
             await self.pipeline.stop_streaming()
 
     async def apply(self, params: dict[str, Any]) -> None:
-        self.params.update({key: str(params[key]) for key in PROMPT_PARAMS if key in params})
+        for key, value in params.items():
+            if key not in self.param_names:
+                continue
+            self.params[key] = str(value) if key in TEXT_PARAMS else value
         rendered = self._render_workflow()
         if self.pipeline is None or rendered == self.applied:
             return

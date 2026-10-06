@@ -248,7 +248,7 @@ Agent-shaped endpoints:
 | `GET` | `/fal/{capability}/schema` | Fal route schema |
 | `POST` | `/fal/{capability}` | Fal single-shot execute (provider-native JSON) |
 
-Remove any static `livepeer-example/fal-*` entries from the orchestrator's `-liveRunnerConfig` before this process registers `comfystream/fal-*`. Keep `livepeer-example/flux-klein` if still needed. See [configs/fal/README.md](configs/fal/README.md). Provide `FAL_KEY` for batch jobs.
+Remove any static `livepeer-example/fal-*` and `livepeer-example/flux-klein` entries from the orchestrator's `-liveRunnerConfig` before this process registers `comfystream/fal-*` and `comfystream/flux-klein`. See [configs/fal/README.md](configs/fal/README.md). Provide `FAL_KEY` for batch jobs.
 
 Faster image builds use [configs/nodes-live-runner.yaml](configs/nodes-live-runner.yaml) (stream-pack + fal-api only) instead of the full [configs/nodes.yaml](configs/nodes.yaml):
 

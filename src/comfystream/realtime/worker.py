@@ -99,6 +99,8 @@ class WorkerConfig:
     bind_host: str
     shutdown_token: str
     usage_log: str = ""
+    gpu_max_loaded: int = 2
+    exclusive: bool = False
 
 
 def load_backend(spec: RealtimePipelineSpec) -> Any:
@@ -172,6 +174,30 @@ class PipelineWorker:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    def registration_metadata(self) -> str:
+        """Static capability fields plus the live compute state discovery should show."""
+        payload = json.loads(self.spec.metadata())
+        payload["compute"] = self.compute
+        payload["estimated_startup_s"] = self.estimated_startup_s()
+        if self.last_load_s is not None:
+            payload["last_load_s"] = round(self.last_load_s, 1)
+        payload["capacity_group"] = {
+            "gpu": self.spec.gpu,
+            "max_loaded": self.config.gpu_max_loaded,
+            "exclusive": self.config.exclusive,
+        }
+        encoded = json.dumps(payload, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > 1024:
+            payload.pop("capacity_group", None)
+            encoded = json.dumps(payload, separators=(",", ":"))
+        return encoded
+
+    def _publish_registration(self) -> None:
+        registration = self.registration
+        if registration is None:
+            return
+        self._spawn_background(registration.update(metadata=self.registration_metadata()))
+
     def _set_state(self, state: str) -> None:
         previous, self.state = self.state, state
         self.state_since = time.monotonic()
@@ -182,6 +208,7 @@ class PipelineWorker:
             previous=COMPUTE_BY_STATE[previous],
             compute=COMPUTE_BY_STATE[state],
         )
+        self._publish_registration()
 
     def estimated_startup_s(self) -> float:
         estimate = self.last_load_s if self.last_load_s is not None else self.spec.cold_start_s
@@ -240,7 +267,7 @@ class PipelineWorker:
             currency=self.spec.currency,
             unit=self.spec.unit,
             label=self.spec.label,
-            metadata=self.spec.metadata(),
+            metadata=self.registration_metadata(),
             gpu=pinned_gpu(),
             on_session_release=self._on_session_release,
         )
@@ -251,7 +278,7 @@ class PipelineWorker:
             runner_id=self.registration.runner_id,
             compute=self.compute,
             runner_url=self.runner_url,
-            metadata=json.loads(self.spec.metadata()),
+            metadata=json.loads(self.registration_metadata()),
         )
         if self.spec.policy == "cold" and self.spec.idle_unload_s > 0:
             self._idle_task = asyncio.create_task(self._idle_loop())
@@ -358,7 +385,13 @@ class PipelineWorker:
                 await current.publisher.close()
             with suppress(Exception):
                 await current.output.close()
-            self.backend.reset()
+            try:
+                await self.backend.scrub()
+            except Exception:
+                log.exception(
+                    "resetting customer prompt failed pipeline=%s; weights stay loaded",
+                    self.spec.name,
+                )
             await self.backend.idle()
             self._idle_since = time.monotonic()
             record = usage_record(
@@ -410,7 +443,7 @@ class PipelineWorker:
             "session": self.session.session_id if self.session else None,
             "error": self.error,
             "pipeline": self.pipeline_info(),
-            "params": schema_json(self.spec.backend),
+            "params": schema_json(self.spec.backend, self.spec.options.get("params")),
             "presets": sorted(self.spec.presets),
             "fallbacks": sorted({DEFAULT_FALLBACK, *self.spec.fallbacks}),
             "gpu": gpu_usage(),

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import multiprocessing.spawn
 import os
 import secrets
 import site
@@ -24,6 +23,7 @@ from typing import Any, Callable, Iterator
 
 import aiohttp
 
+from comfystream.realtime.capacity import WarmCapacity
 from comfystream.realtime.spec import RealtimePipelineSpec
 from comfystream.realtime.worker import (
     EXIT_IDLE,
@@ -51,22 +51,18 @@ def _init_worker(gpu: str) -> None:
 
 
 @contextmanager
-def _spawn_overrides(python: str, env: dict[str, str]) -> Iterator[None]:
-    """Apply ``python`` and ``env`` to processes spawned inside this block.
+def _spawn_overrides(env: dict[str, str]) -> Iterator[None]:
+    """Apply ``env`` to processes spawned inside this block.
 
-    ProcessPoolExecutor.submit starts its worker before returning, and the child
-    re-imports __main__ (and huggingface_hub reads its env) before the pool
-    initializer runs, so both must be in place at spawn time.
+    Every pipeline uses this interpreter. ProcessPoolExecutor.submit starts its
+    worker before returning, and the child reads huggingface_hub env before the
+    pool initializer runs.
     """
-    previous_python = multiprocessing.spawn.get_executable()
     previous_env = {key: os.environ.get(key) for key in env}
-    if python:
-        multiprocessing.spawn.set_executable(python)
     os.environ.update(env)
     try:
         yield
     finally:
-        multiprocessing.spawn.set_executable(previous_python)
         for key, value in previous_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -86,8 +82,13 @@ class RealtimeSupervisor:
         usage_log: str = "",
         restart_backoff_s: float = DEFAULT_RESTART_BACKOFF_S,
         serve_fn: Callable[[dict[str, Any]], str] = serve_pipeline,
+        capacity: WarmCapacity | None = None,
     ):
-        self.specs = {spec.name: spec for spec in specs}
+        self.capacity = capacity or WarmCapacity()
+        chosen, held = self.capacity.select(specs)
+        self.specs = {spec.name: spec for spec in specs if spec.name in chosen}
+        for name, reason in held:
+            logger.warning("pipeline=%s stays unloaded: %s", name, reason)
         self._orchestrator = orchestrator
         self._orch_secret = orch_secret
         self._runner_host = runner_host
@@ -109,6 +110,8 @@ class RealtimeSupervisor:
             "bind_host": self._bind_host,
             "shutdown_token": self._shutdown_token,
             "usage_log": self._usage_log,
+            "gpu_max_loaded": self.capacity.gpus.get(spec.gpu, self.capacity.max_loaded),
+            "exclusive": spec.name in self.capacity.exclusive,
         }
 
     def _spawn(self, spec: RealtimePipelineSpec) -> Future:
@@ -119,7 +122,7 @@ class RealtimeSupervisor:
             initargs=(spec.gpu,),
         )
         self._executors[spec.name] = executor
-        with _spawn_overrides(spec.python, spec.env):
+        with _spawn_overrides(spec.env):
             return executor.submit(self._serve_fn, self.worker_config(spec))
 
     def _discard(self, name: str) -> None:

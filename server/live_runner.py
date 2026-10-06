@@ -50,7 +50,7 @@ from comfystream.capabilities.receipts import response_headers
 from comfystream.modalities import WorkflowModality
 from comfystream.pipeline import Pipeline
 from comfystream.realtime.gpu import pinned_gpu
-from comfystream.realtime.spec import load_realtime_specs
+from comfystream.realtime.spec import load_realtime_config
 from comfystream.realtime.supervisor import RealtimeSupervisor
 from comfystream.utils import convert_prompt
 from livepeer_gateway.channel_writer import JSONLWriter
@@ -811,7 +811,9 @@ def main() -> None:
         (item.max_request_bytes for item in batch_catalog.values()),
         default=1024 * 1024,
     )
-    realtime_specs = load_realtime_specs(args.realtime_config) if args.realtime_config else []
+    realtime_specs, realtime_capacity = (
+        load_realtime_config(args.realtime_config) if args.realtime_config else ([], None)
+    )
     runner_parts = urlsplit(args.runner_url)
 
     async def _on_startup(app: web.Application) -> None:
@@ -882,6 +884,7 @@ def main() -> None:
                 orch_secret=args.orchSecret,
                 runner_host=f"{runner_parts.scheme}://{runner_parts.hostname}",
                 usage_log=args.realtime_usage_log,
+                capacity=realtime_capacity,
             )
             await realtime.start()
             app["realtime"] = realtime

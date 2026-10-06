@@ -5,7 +5,7 @@
 #
 # Stream app stays capacity 1. Fal single-shot apps register as
 # comfystream/fal-* from this same container. Realtime pipelines from
-# configs/realtime.yaml (livepeer-example/flux-klein, comfystream/sd-turbo)
+# configs/realtime.yaml (comfystream/flux-klein, comfystream/sd-turbo)
 # register from isolated worker processes, so the orchestrator's static
 # runners.json must not also list them.
 #

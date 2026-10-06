@@ -73,6 +73,11 @@ class FluxKleinBackend:
         self.model.update_seed(self.default_seed)
         self.model.update_input_blend(self.default_input_blend)
 
+    async def scrub(self) -> None:
+        """Restore the default prompt. The loaded weights stay resident."""
+        self.reset()
+        await self.apply(self.defaults())
+
     async def apply(self, params: dict[str, Any]) -> None:
         if "prompt" in params:
             self.model.update_prompt(str(params["prompt"]))
