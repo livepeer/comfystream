@@ -4,8 +4,13 @@
 #   docker compose -f docker-compose.live-runner.yml up -d --build
 #
 # Stream app stays capacity 1. Fal single-shot apps register as
-# comfystream/fal-* from this same container. Static orch runners.json
-# should only keep livepeer-example/flux-klein (see configs/fal/README.md).
+# comfystream/fal-* from this same container. Realtime pipelines from
+# configs/realtime.yaml (livepeer-example/flux-klein, comfystream/sd-turbo)
+# register from isolated worker processes, so the orchestrator's static
+# runners.json must not also list them.
+#
+# Both GPUs are exposed; CUDA_VISIBLE_DEVICES pins the main stream Pipeline,
+# and each realtime pipeline pins its own GPU in configs/realtime.yaml.
 #
 # Faster image: build a light base first (stream-pack + fal-api only), then
 # the overlay:
@@ -31,15 +36,21 @@ services:
     network_mode: host
     pull_policy: never
     environment:
-      - NVIDIA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
+      - NVIDIA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUIDS:-GPU-745244ef-3615-57bd-458f-299fe2289f5a,GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d}
+      - CUDA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
       - COMFYUI_CWD=/workspace/ComfyUI
       - PYTHONUNBUFFERED=1
       - FAL_KEY=${FAL_KEY}
       - COMFYSTREAM_FAL_CATALOG=/workspace/comfystream/configs/fal
+      - COMFYSTREAM_REALTIME_CONFIG=${COMFYSTREAM_REALTIME_CONFIG:-/workspace/comfystream/configs/realtime.yaml}
+      # One JSON line per ended realtime session (room/venue attribution, durations, cost).
+      - COMFYSTREAM_REALTIME_USAGE_LOG=${COMFYSTREAM_REALTIME_USAGE_LOG:-/app/storage/comfystream/realtime-usage.jsonl}
     volumes:
       # Shared model/storage volume used by other AI workloads on this host.
       - ${COMFYSTREAM_MODELS_DIR:-/livepeer/ai/data/models}:/workspace/ComfyUI/models
       - ${COMFYSTREAM_STORAGE_DIR:-/livepeer/ai/data}:/app/storage
+      # FLUX.2-klein-4B HF cache (~15 GB) from the former flux-klein container.
+      - ${FLUX_KLEIN_MODELS_DIR:-/livepeer/ai/runner-app-examples/flux-klein/models}:/workspace/flux-klein/models
     command:
       - --live-runner
       - --host=0.0.0.0
@@ -61,4 +72,5 @@ services:
             - capabilities: [gpu]
               driver: nvidia
               device_ids:
-                - "${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}"
+                - "GPU-745244ef-3615-57bd-458f-299fe2289f5a"
+                - "GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d"

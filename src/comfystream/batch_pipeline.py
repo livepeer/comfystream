@@ -11,6 +11,7 @@ from comfystream.capabilities.prompt import encode_arguments
 from comfystream.capabilities.receipts import error_payload
 from comfystream.job_pool import JobPool, PoolSaturatedError
 from comfystream.modalities import CapabilityModality, detect_capability_modality
+from comfystream.realtime.gpu import pinned_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class BatchPipeline:
         register_runner = self._register_runner_fn
         if register_runner is None:
             from livepeer_gateway.live_runner import register_runner
+        gpu = pinned_gpu()
         try:
             for item in self.catalog.values():
                 registration = await register_runner(
@@ -100,6 +102,7 @@ class BatchPipeline:
                     metadata=item.metadata,
                     label=item.capability,
                     version="livepeer.fal.runner-route.v1",
+                    gpu=gpu,
                     auto_detect_gpu=True,
                 )
                 self._registrations.append(registration)

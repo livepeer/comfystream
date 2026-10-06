@@ -52,6 +52,25 @@ RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
   && cp /tmp/fal_api_config.ini /workspace/ComfyUI/custom_nodes/ComfyUI-fal-API/config.ini \
   && rm -f /tmp/patch_live_runner_payment_url.py /tmp/fal_api_config.ini'
 
+# StreamDiffusion (sd-turbo TensorRT) pins a diffusers fork, transformers and
+# protobuf that conflict with FLUX Klein and livepeer-gateway. Its realtime
+# worker runs under this venv (configs/realtime.yaml `python:`), layered on the
+# comfystream env so torch/TensorRT stay shared. Dropping the venv's protobuf
+# keeps the base env's protobuf>=6.31 that livepeer-gateway requires.
+ARG STREAMDIFFUSION_NODE_REF=40ebeabb6c7af35025b5026e9019e3554d240dc2
+RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
+  && conda activate comfystream \
+  && NODE=/workspace/ComfyUI/custom_nodes/ComfyUI-StreamDiffusion \
+  && git clone https://github.com/muxionlabs/ComfyUI-StreamDiffusion "${NODE}" \
+  && git -C "${NODE}" checkout "${STREAMDIFFUSION_NODE_REF}" \
+  && python -m venv --system-site-packages /workspace/venvs/streamdiffusion \
+  && grep -v -E "^(torch|torchvision|xformers|insightface|mediapipe|protobuf)([=<> ]|$)" \
+       "${NODE}/requirements.txt" > /tmp/streamdiffusion-requirements.txt \
+  && /workspace/venvs/streamdiffusion/bin/pip install --no-cache-dir -r /tmp/streamdiffusion-requirements.txt \
+  && /workspace/venvs/streamdiffusion/bin/pip uninstall -y protobuf \
+  && /workspace/venvs/streamdiffusion/bin/python -c "import streamdiffusion, tensorrt, livepeer_gateway" \
+  && rm -f /tmp/streamdiffusion-requirements.txt'
+
 COPY server/live_runner.py /workspace/comfystream/server/live_runner.py
 COPY server/live_runner_client.py /workspace/comfystream/server/live_runner_client.py
 COPY server/live_runner_batch_client.py /workspace/comfystream/server/live_runner_batch_client.py
@@ -61,7 +80,10 @@ COPY src/comfystream/batch_pipeline.py /workspace/comfystream/src/comfystream/ba
 COPY src/comfystream/job_pool.py /workspace/comfystream/src/comfystream/job_pool.py
 COPY src/comfystream/modalities.py /workspace/comfystream/src/comfystream/modalities.py
 COPY src/comfystream/capabilities /workspace/comfystream/src/comfystream/capabilities
+COPY src/comfystream/realtime /workspace/comfystream/src/comfystream/realtime
 COPY configs/fal /workspace/comfystream/configs/fal
+COPY configs/realtime.yaml /workspace/comfystream/configs/realtime.yaml
+COPY workflows/comfystream/sd-turbo-streamdiffusion-trt-api.json /workspace/comfystream/workflows/comfystream/sd-turbo-streamdiffusion-trt-api.json
 COPY configs/nodes-live-runner.yaml /workspace/comfystream/configs/nodes-live-runner.yaml
 COPY nodes/tensor_utils/invert_image.py /workspace/comfystream/nodes/tensor_utils/invert_image.py
 COPY nodes/tensor_utils/save_fal_result.py /workspace/comfystream/nodes/tensor_utils/save_fal_result.py
@@ -71,7 +93,7 @@ COPY workflows/comfystream/invert-color-av-passthrough-api.json /workspace/comfy
 COPY docker/entrypoint.sh /workspace/comfystream/docker/entrypoint.sh
 RUN chmod +x /workspace/comfystream/docker/entrypoint.sh
 
-EXPOSE 8991
+EXPOSE 8991 8720 8721
 
 ENTRYPOINT ["/workspace/comfystream/docker/entrypoint.sh"]
 CMD ["--live-runner"]

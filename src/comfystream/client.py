@@ -25,6 +25,7 @@ class ComfyStreamClient:
         # PromptRunner state
         self._shutdown_event = asyncio.Event()
         self._run_enabled_event = asyncio.Event()
+        self._input_waiting = asyncio.Event()
         self._runner_task = None
 
     async def set_prompts(self, prompts: List[PromptDictInput]):
@@ -92,7 +93,13 @@ class ComfyStreamClient:
                     except asyncio.CancelledError:
                         raise
                     except ComfyStreamInputTimeoutError:
-                        logger.info(f"Input for prompt {prompt_index} timed out, continuing")
+                        # Park until a frame arrives. Re-queueing here re-runs the whole
+                        # graph once a second and never stops when nobody is sending video.
+                        logger.info(
+                            "Input for prompt %s timed out; waiting for the next frame",
+                            prompt_index,
+                        )
+                        await self._park_until_input()
                         continue
                     except Exception as e:
                         logger.error(f"Error running prompt: {str(e)}")
@@ -202,9 +209,28 @@ class ComfyStreamClient:
         if tensor_cache.image_inputs.full():
             tensor_cache.image_inputs.get(block=True)
         tensor_cache.image_inputs.put(frame)
+        self._input_waiting.set()
 
     def put_audio_input(self, frame):
         tensor_cache.audio_inputs.put(frame)
+        self._input_waiting.set()
+
+    async def _park_until_input(self) -> None:
+        """Block the runner until a frame is queued or streaming is paused.
+
+        The loaded model stays resident. Pausing or stopping streaming ends the
+        wait so an idle pipeline does not keep executing.
+        """
+        while self._run_enabled_event.is_set() and not self._shutdown_event.is_set():
+            if not tensor_cache.image_inputs.empty() or not tensor_cache.audio_inputs.empty():
+                return
+            self._input_waiting.clear()
+            if not tensor_cache.image_inputs.empty() or not tensor_cache.audio_inputs.empty():
+                return
+            try:
+                await asyncio.wait_for(self._input_waiting.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
 
     async def get_video_output(self):
         return await tensor_cache.image_outputs.get()

@@ -37,6 +37,7 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import av
 import numpy as np
@@ -48,6 +49,9 @@ from comfystream.capabilities.catalog import catalog_root, load_catalog
 from comfystream.capabilities.receipts import response_headers
 from comfystream.modalities import WorkflowModality
 from comfystream.pipeline import Pipeline
+from comfystream.realtime.gpu import pinned_gpu
+from comfystream.realtime.spec import load_realtime_specs
+from comfystream.realtime.supervisor import RealtimeSupervisor
 from comfystream.utils import convert_prompt
 from livepeer_gateway.channel_writer import JSONLWriter
 from livepeer_gateway.live_runner import register_runner
@@ -200,6 +204,16 @@ def _parse_args() -> argparse.Namespace:
         "--fal-key",
         default=os.environ.get("FAL_KEY", ""),
         help="Operator fal API key (never accepted from callers).",
+    )
+    parser.add_argument(
+        "--realtime-config",
+        default=os.environ.get("COMFYSTREAM_REALTIME_CONFIG", ""),
+        help="YAML of isolated realtime pipelines (configs/realtime.yaml); empty disables them.",
+    )
+    parser.add_argument(
+        "--realtime-usage-log",
+        default=os.environ.get("COMFYSTREAM_REALTIME_USAGE_LOG", ""),
+        help="JSONL file that receives one usage record per ended realtime session.",
     )
     return parser.parse_args()
 
@@ -797,6 +811,8 @@ def main() -> None:
         (item.max_request_bytes for item in batch_catalog.values()),
         default=1024 * 1024,
     )
+    realtime_specs = load_realtime_specs(args.realtime_config) if args.realtime_config else []
+    runner_parts = urlsplit(args.runner_url)
 
     async def _on_startup(app: web.Application) -> None:
         pipeline = Pipeline(
@@ -806,7 +822,7 @@ def main() -> None:
             disable_cuda_malloc=True,
             gpu_only=True,
             preview_method="none",
-            blacklist_custom_nodes=["ComfyUI-Manager"],
+            blacklist_custom_nodes=["ComfyUI-Manager", "ComfyUI-StreamDiffusion"],
             bootstrap_default_prompt=not args.skip_bootstrap,
         )
         await pipeline.initialize()
@@ -827,6 +843,7 @@ def main() -> None:
             currency="usd",
             unit="hour",
             metadata='{"modalities":"workflow-driven","surfaces":["analyze","start_stream","update_stream","ws_stream"]}',
+            gpu=pinned_gpu(),
             on_session_release=_release,
         )
         log.info(
@@ -857,8 +874,28 @@ def main() -> None:
                 batch.max_request_bytes,
             )
 
+        app["realtime"] = None
+        if realtime_specs:
+            realtime = RealtimeSupervisor(
+                realtime_specs,
+                orchestrator=args.orchestrator,
+                orch_secret=args.orchSecret,
+                runner_host=f"{runner_parts.scheme}://{runner_parts.hostname}",
+                usage_log=args.realtime_usage_log,
+            )
+            await realtime.start()
+            app["realtime"] = realtime
+            log.info(
+                "realtime pipelines=%s",
+                ", ".join(f"{spec.name}:{spec.app}@{spec.port}" for spec in realtime_specs),
+            )
+
     async def _on_cleanup(app: web.Application) -> None:
         await _close_session(app)
+        realtime = app.get("realtime")
+        if realtime is not None:
+            with suppress(Exception):
+                await realtime.close()
         batch = app.get("batch")
         if batch is not None:
             with suppress(Exception):

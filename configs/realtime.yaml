@@ -1,0 +1,92 @@
+# Isolated realtime pipelines served by the ComfyStream live-runner.
+#
+# Each entry runs in its own spawned process (one single-worker
+# ProcessPoolExecutor per pipeline), pinned to `gpu` (CUDA_VISIBLE_DEVICES,
+# index or GPU UUID), optionally under a different interpreter (`python`) so
+# pipelines with conflicting dependencies can share one container.
+#
+#   policy: warm   load at boot, register once ready
+#   policy: cold   register at boot, load inside the first /stream request;
+#                  with idle_unload_s > 0 the process exits after idling and is
+#                  respawned cold, which releases its GPU memory
+#
+# Callers never send workflows: a session is started with a prompt and/or a
+# `preset` from below plus the backend's flat params (GET /status lists them).
+#
+#   model                    advertised model id (discovery metadata)
+#   cold_start_s             startup estimate until a load has been measured
+#   session_idle_timeout_s   expire a session after this long without input
+#   fallback_after_s         show the fallback visual once inference stalls this long
+#   presets                  name -> params (validated against the backend schema)
+#   fallbacks                name -> image path or #rrggbb; "default" overrides the
+#                            built-in slate shown while paused or failing
+#
+# Pipelines placed on the same GPU must fit together when warm.
+
+pipelines:
+  flux-klein:
+    app: livepeer-example/flux-klein
+    backend: flux_klein
+    port: 8720
+    gpu: GPU-745244ef-3615-57bd-458f-299fe2289f5a  # RTX 3090 Ti, ~16.5 GB
+    policy: warm
+    model: black-forest-labs/FLUX.2-klein-4B
+    cold_start_s: 20
+    price: 0.35
+    currency: usd
+    unit: 720p
+    presets:
+      neon-stage:
+        prompt: a neon-lit concert stage, laser beams, glowing haze, vivid magenta and cyan
+        input_blend: 0.4
+      watercolor:
+        prompt: a soft watercolor painting, flowing pastel colors, paper texture
+        input_blend: 0.6
+      cosmic:
+        prompt: a cosmic nebula, swirling galaxies, shimmering stars, deep space colors
+        input_blend: 0.3
+    env:
+      HF_HUB_CACHE: /workspace/flux-klein/models/hf
+      HF_HUB_OFFLINE: "1"
+    options:
+      width: 384
+      height: 384
+      steps: 4
+      feedback: 0.5
+      guidance: 1.0
+      seed: -1
+      input_blend: 0.5
+      batch: 1
+
+  sd-turbo:
+    app: comfystream/sd-turbo
+    backend: comfy_workflow
+    port: 8721
+    gpu: GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d  # RTX 4000 Ada, ~4.5 GB
+    policy: warm
+    python: /workspace/venvs/streamdiffusion/bin/python
+    model: stabilityai/sd-turbo
+    # ~30 s with cached TensorRT engines; a new GPU arch builds them once (~6 min).
+    cold_start_s: 30
+    price: 0.35
+    currency: usd
+    unit: 720p
+    presets:
+      neon-stage:
+        prompt: a neon-lit concert stage, laser beams, glowing haze, vivid magenta and cyan
+        negative_prompt: blurry, low quality, distorted
+      watercolor:
+        prompt: a soft watercolor painting, flowing pastel colors, paper texture
+        negative_prompt: blurry, low quality, photo
+      anime:
+        prompt: masterpiece, high quality, detailed anime character
+        negative_prompt: blurry, low quality, distorted, 3d render
+    env:
+      HF_HUB_CACHE: /workspace/ComfyUI/models
+      HF_HUB_OFFLINE: "1"
+    options:
+      workflow: workflows/comfystream/sd-turbo-streamdiffusion-trt-api.json
+      engine_root: /workspace/ComfyUI/models/ComfyStream--engines
+      prompt_nodes: ["59"]
+      width: 512
+      height: 512
