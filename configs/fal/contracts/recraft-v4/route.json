@@ -1,0 +1,63 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-recraft-v4",
+    "capability": "recraft-v4",
+    "endpoint_id": "fal-ai/recraft/v4/pro/text-to-image",
+    "queue_app_id": "fal-ai/recraft"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "background_color": {
+        "type": "object"
+      },
+      "colors": {
+        "items": "object",
+        "type": "array"
+      },
+      "enable_safety_checker": {
+        "type": "boolean"
+      },
+      "image_size": {
+        "type": "object"
+      },
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/recraft/v4/pro/text-to-image",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "images",
+    "unit_price": "0.25"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "fa2cbd66c51d31e89da0fb218c69a1711061e84df393c9bdfe7372fa9cb0968f"
+  }
+}

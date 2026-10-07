@@ -1,0 +1,73 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-subtitles-veed",
+    "capability": "subtitles-veed",
+    "endpoint_id": "veed/subtitles",
+    "queue_app_id": "veed/subtitles"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "customization": {
+        "type": "object"
+      },
+      "language": {
+        "type": "string"
+      },
+      "preset": {
+        "type": "string"
+      },
+      "srt_content": {
+        "type": "string"
+      },
+      "srt_file_url": {
+        "type": "string"
+      },
+      "translation_language": {
+        "type": "string"
+      },
+      "video_url": {
+        "type": "string"
+      },
+      "vocabulary": {
+        "items": "object",
+        "type": "array"
+      }
+    },
+    "required": [
+      "video_url",
+      "preset"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "veed/subtitles",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.1"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "e9f816206d57cfefeafa90b880a9c72ed98db8c53777071a2e7534d432b3fd1b"
+  }
+}

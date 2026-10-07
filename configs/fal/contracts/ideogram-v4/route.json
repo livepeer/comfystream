@@ -1,0 +1,77 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ideogram-v4",
+    "capability": "ideogram-v4",
+    "endpoint_id": "ideogram/v4",
+    "queue_app_id": "ideogram/v4"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "acceleration": {
+        "type": "string"
+      },
+      "enable_safety_checker": {
+        "type": "boolean"
+      },
+      "expansion_model": {
+        "type": "string"
+      },
+      "image_size": {
+        "type": "object"
+      },
+      "num_images": {
+        "type": "integer"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "rendering_speed": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "ideogram/v4",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.01"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "f20f37457fb45154eeebd6692274f5473964500bd75d03b19e4057538d528727"
+  }
+}

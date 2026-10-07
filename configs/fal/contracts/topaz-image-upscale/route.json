@@ -1,0 +1,86 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-topaz-image-upscale",
+    "capability": "topaz-image-upscale",
+    "endpoint_id": "topaz/upscale/image/precision",
+    "queue_app_id": "topaz/upscale"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "crop_to_fill": {
+        "type": "boolean"
+      },
+      "denoise": {
+        "type": "number"
+      },
+      "face_enhancement": {
+        "type": "boolean"
+      },
+      "face_enhancement_creativity": {
+        "type": "number"
+      },
+      "face_enhancement_strength": {
+        "type": "number"
+      },
+      "fix_compression": {
+        "type": "number"
+      },
+      "image_url": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "sharpen": {
+        "type": "number"
+      },
+      "strength": {
+        "type": "number"
+      },
+      "subject_detection": {
+        "type": "string"
+      },
+      "upscale_factor": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "image_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "topaz/upscale/image/precision",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.01"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "77c940126cd211765f75e51695b98a3339fc75c9feeb7b726b8a79fa05fb495b"
+  }
+}

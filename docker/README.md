@@ -45,7 +45,19 @@ docker build -f docker/Dockerfile.base \
 ### Configuration Files in configs/
 
 - **`nodes.yaml`** - Full node configuration (default)
-- **`nodes-streamdiffusion.yaml`** - Minimal set of nodes for faster builds
+- **`nodes-streamdiffusion.yaml`** - Minimal set of nodes for faster StreamDiffusion builds
+- **`nodes-live-runner.yaml`** - Live-runner only (stream-pack + ComfyUI-fal-API); used by
+  `Dockerfile.live-runner` / `docker-compose.live-runner.yml`
+
+### Live-runner (light base)
+
+```bash
+docker build -f docker/Dockerfile.base \
+  --build-arg NODES_CONFIG=nodes-live-runner.yaml \
+  -t comfystream-base:live-runner .
+COMFYSTREAM_BASE_IMAGE=comfystream-base:live-runner \
+  docker compose -f docker-compose.live-runner.yml up -d --build
+```
 
 ### Examples
 

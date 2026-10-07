@@ -1,0 +1,84 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-minimax-h3-max-ref2v",
+    "capability": "minimax-h3-max-ref2v",
+    "endpoint_id": "minimax/h3-max/reference-to-video",
+    "queue_app_id": "minimax/h3-max"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "integer"
+      },
+      "enable_safety_checker": {
+        "type": "boolean"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "prompt_expansion_mode": {
+        "type": "string"
+      },
+      "reference_audio_urls": {
+        "items": "string",
+        "type": "array"
+      },
+      "reference_image_urls": {
+        "items": "string",
+        "type": "array"
+      },
+      "reference_video_urls": {
+        "items": "string",
+        "type": "array"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "prompt",
+      "prompt_expansion_mode"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "minimax/h3-max/reference-to-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.05"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "507bc3faf6808b2a7e3ecfea8556cf68454fb6fa55a0bb7de2b0bcfbf6265835"
+  }
+}

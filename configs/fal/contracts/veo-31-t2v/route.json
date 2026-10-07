@@ -1,0 +1,74 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-veo-31-t2v",
+    "capability": "veo-31-t2v",
+    "endpoint_id": "fal-ai/veo3.1",
+    "queue_app_id": "fal-ai/veo3.1"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "auto_fix": {
+        "type": "boolean"
+      },
+      "duration": {
+        "type": "string"
+      },
+      "generate_audio": {
+        "type": "boolean"
+      },
+      "negative_prompt": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "safety_tolerance": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/veo3.1",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.4"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "d2f817bb0bf62c1bb558873d1d9e9a548765659ede6519c85cab56fc40b40f04"
+  }
+}

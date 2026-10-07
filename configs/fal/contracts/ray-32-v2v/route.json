@@ -1,0 +1,86 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ray-32-v2v",
+    "capability": "ray-32-v2v",
+    "endpoint_id": "luma/agent/ray/v3.2/video-to-video",
+    "queue_app_id": "luma/agent"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "auto_controls": {
+        "type": "boolean"
+      },
+      "controls": {
+        "type": "object"
+      },
+      "duration": {
+        "type": "string"
+      },
+      "edit_strength": {
+        "type": "string"
+      },
+      "exr_export": {
+        "type": "boolean"
+      },
+      "hdr": {
+        "type": "boolean"
+      },
+      "keyframe_indexes": {
+        "items": "integer",
+        "type": "array"
+      },
+      "keyframes": {
+        "items": "string",
+        "type": "array"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "start_image_url": {
+        "type": "string"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt",
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "luma/agent/ray/v3.2/video-to-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.03"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "30dc4e45a5061f02b6ae4f2402a3a8cdeb1b7efe9aa2b63885a37100b70fcaf0"
+  }
+}

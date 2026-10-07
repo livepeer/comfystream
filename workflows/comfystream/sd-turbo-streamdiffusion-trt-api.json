@@ -1,0 +1,113 @@
+{
+  "1": {
+    "inputs": {},
+    "class_type": "LoadTensor",
+    "_meta": {
+      "title": "LoadTensor"
+    }
+  },
+  "6": {
+    "inputs": {
+      "width": 64,
+      "height": 64,
+      "batch_size": 1,
+      "color": 0
+    },
+    "class_type": "EmptyImage",
+    "_meta": {
+      "title": "Unused IPAdapter style image"
+    }
+  },
+  "52": {
+    "inputs": {
+      "model_id": "stabilityai/sd-turbo",
+      "controlnet_model_id": "",
+      "conditioning_scale": 0.0,
+      "preprocessor": "passthrough",
+      "low_threshold": 100,
+      "high_threshold": 200,
+      "height": 512,
+      "width": 512,
+      "t_index_list": "16,32",
+      "frame_buffer_size": 1,
+      "warmup": 10,
+      "acceleration": "tensorrt",
+      "use_denoising_batch": true,
+      "do_add_noise": true,
+      "enable_similar_image_filter": false,
+      "similar_image_filter_threshold": 0.98,
+      "similar_image_filter_max_skip_frame": 10,
+      "use_safety_checker": false,
+      "seed": 789,
+      "num_inference_steps": 50,
+      "use_lcm_lora": false,
+      "lora_dict_str": "",
+      "prompt": "masterpiece, high quality, detailed anime character",
+      "negative_prompt": "blurry, low quality, distorted, 3d render",
+      "guidance_scale": 1.0,
+      "ipadapter_model_path": "",
+      "image_encoder_path": "",
+      "ipadapter_scale": 0.0,
+      "ipadapter_enabled": false,
+      "use_controlnet": false,
+      "num_image_tokens": 4,
+      "engine_dir": "/workspace/ComfyUI/models/ComfyStream--engines/sm86",
+      "device": "cuda",
+      "dtype": "float16",
+      "use_tiny_vae": true,
+      "cfg_type": "self",
+      "delta": 0.7,
+      "compile_engines_only": false,
+      "style_image": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "ControlNetTRTConfig",
+    "_meta": {
+      "title": "SD-Turbo TRT Config"
+    }
+  },
+  "47": {
+    "inputs": {
+      "config": [
+        "52",
+        0
+      ]
+    },
+    "class_type": "ControlNetTRTModelLoader",
+    "_meta": {
+      "title": "SD-Turbo TRT Model Loader"
+    }
+  },
+  "59": {
+    "inputs": {
+      "prompt": "masterpiece, high quality, detailed anime character",
+      "negative_prompt": "blurry, low quality, distorted, 3d render",
+      "model": [
+        "47",
+        0
+      ],
+      "input_image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ControlNetTRTStreamingSampler",
+    "_meta": {
+      "title": "SD-Turbo Streaming Sampler"
+    }
+  },
+  "2": {
+    "inputs": {
+      "images": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "SaveTensor",
+    "_meta": {
+      "title": "SaveTensor"
+    }
+  }
+}

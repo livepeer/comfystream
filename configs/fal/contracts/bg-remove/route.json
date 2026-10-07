@@ -1,0 +1,68 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-bg-remove",
+    "capability": "bg-remove",
+    "endpoint_id": "fal-ai/birefnet",
+    "queue_app_id": "fal-ai/birefnet"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "image_url": {
+        "type": "string"
+      },
+      "model": {
+        "type": "string"
+      },
+      "operating_resolution": {
+        "type": "string"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "output_mask": {
+        "type": "boolean"
+      },
+      "refine_foreground": {
+        "type": "boolean"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "image_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/birefnet",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "compute seconds",
+    "unit_price": "0.0008"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "d67b3cba3adfd498b568d9aaf8fd1a2f616bb352bee4d7ad117eaf5a728f9823"
+  }
+}

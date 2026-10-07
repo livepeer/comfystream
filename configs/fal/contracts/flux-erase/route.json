@@ -1,0 +1,63 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-flux-erase",
+    "capability": "flux-erase",
+    "endpoint_id": "fal-ai/flux-pro/v1/erase",
+    "queue_app_id": "fal-ai/flux-pro"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "dilate_pixels": {
+        "type": "integer"
+      },
+      "image_url": {
+        "type": "string"
+      },
+      "mask_url": {
+        "type": "string"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "image_url",
+      "mask_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/flux-pro/v1/erase",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "megapixels",
+    "unit_price": "0.004"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "422fa1b28027aff5b2673f1231fa68facea71bac7d24d7f02242df294455af4d"
+  }
+}

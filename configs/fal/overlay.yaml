@@ -1,0 +1,20 @@
+# Operator policy for ComfyStream fal single-shot capabilities.
+# Catalog identity and schema bytes live in contracts/; this file only
+# supplies capacity, deadlines, request limits, and sell-price knobs.
+#
+# Sell price = unit_price * expected_units * (1 + upcharge_bps / 10000)
+# advertised as unit=fixed. Explicit price_info on a route wins.
+
+defaults:
+  capacity: 4
+  deadline_seconds: 180
+  max_request_bytes: 1048576
+  upcharge_bps: 0
+  expected_units: 1
+
+# Example per-route override:
+# routes:
+#   kling-v3-pro-i2v:
+#     deadline_seconds: 300
+#     expected_units: 5
+routes: {}

@@ -1,0 +1,53 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ffmpeg-metadata",
+    "capability": "ffmpeg-metadata",
+    "endpoint_id": "fal-ai/ffmpeg-api/metadata",
+    "queue_app_id": "fal-ai/ffmpeg-api"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "extract_frames": {
+        "type": "boolean"
+      },
+      "media_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "media_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/ffmpeg-api/metadata",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "compute seconds",
+    "unit_price": "0.00017"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "6a0ea851c4da847e88cffc675627ea6f92be2cefd3a7a6f3224bf78be94d4e0c"
+  }
+}

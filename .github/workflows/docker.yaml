@@ -17,7 +17,6 @@ concurrency:
 jobs:
   base:
     name: comfyui-base image
-    if: ${{ github.repository == 'livepeer/comfystream' }}
     outputs:
       repository: ${{ steps.repo.outputs.repository }}
       image-digest: ${{ steps.build.outputs.digest }}
@@ -36,7 +35,7 @@ jobs:
         id: repo
         shell: bash
         run: |
-          echo "repository=livepeer/comfyui-base" >> "$GITHUB_OUTPUT"
+          echo "repository=${{ github.repository_owner }}/comfyui-base" >> "$GITHUB_OUTPUT"
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
@@ -80,13 +79,12 @@ jobs:
             CACHEBUST=${{ github.run_id }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=registry,ref=livepeer/comfyui-base:build-cache
-          cache-to: type=registry,mode=max,ref=livepeer/comfyui-base:build-cache
+          cache-from: type=registry,ref=${{ github.repository_owner }}/comfyui-base:build-cache
+          cache-to: type=registry,mode=max,ref=${{ github.repository_owner }}/comfyui-base:build-cache
 
   comfystream:
     name: comfystream image
     needs: base
-    if: ${{ github.repository == 'livepeer/comfystream' }}
     permissions:
       packages: write
       contents: read

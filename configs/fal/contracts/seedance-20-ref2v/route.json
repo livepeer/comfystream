@@ -1,0 +1,80 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-seedance-20-ref2v",
+    "capability": "seedance-20-ref2v",
+    "endpoint_id": "bytedance/seedance-2.0/reference-to-video",
+    "queue_app_id": "bytedance/seedance-2.0"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "audio_urls": {
+        "items": "string",
+        "type": "array"
+      },
+      "bitrate_mode": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "string"
+      },
+      "end_user_id": {
+        "type": "string"
+      },
+      "generate_audio": {
+        "type": "boolean"
+      },
+      "image_urls": {
+        "items": "string",
+        "type": "array"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "video_urls": {
+        "items": "string",
+        "type": "array"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "bytedance/seedance-2.0/reference-to-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "1000 tokens",
+    "unit_price": "0.014"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "7fe52abf70856fad3666ffc15f7aa7ae89d193bcc24319c1db8ab8c63e4b1257"
+  }
+}

@@ -6,7 +6,8 @@ from pathlib import Path
 import requests
 import yaml
 from tqdm import tqdm
-from utils import get_config_path, load_model_config
+
+from .utils import get_config_path, load_model_config
 
 try:
     from huggingface_hub import snapshot_download, hf_hub_download
@@ -20,8 +21,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Setup ComfyUI models")
     parser.add_argument(
         "--workspace",
-        default=os.environ.get("COMFY_UI_WORKSPACE", os.path.expanduser("~/comfyui")),
-        help="ComfyUI workspace directory (default: ~/comfyui or $COMFY_UI_WORKSPACE)",
+        "--cwd",
+        dest="workspace",
+        default=os.environ.get("COMFYUI_CWD", os.path.expanduser("~/comfyui")),
+        help="ComfyUI workspace directory (default: ~/comfyui or $COMFYUI_CWD)",
     )
     parser.add_argument('--config',
                        default=None,
@@ -206,6 +209,8 @@ def setup_models():
             sys.exit(1)
 
     setup_directories(workspace_dir)
-    setup_model_files(workspace_dir)
+    setup_model_files(workspace_dir, config_path)
 
-setup_models()
+
+if __name__ == "__main__":
+    setup_models()

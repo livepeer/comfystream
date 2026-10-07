@@ -1,0 +1,69 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-flux-3-extend",
+    "capability": "flux-3-extend",
+    "endpoint_id": "blackforestlabs/flux-3/extend-video",
+    "queue_app_id": "blackforestlabs/flux-3"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "duration": {
+        "type": "object"
+      },
+      "generate_audio": {
+        "type": "boolean"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "safety_tolerance": {
+        "type": "integer"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt",
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "blackforestlabs/flux-3/extend-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.205"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "59d6ee45e70ee3f50b5e8d2f55801086ab56ee6a04ce606b0ae2ffbdaf93e982"
+  }
+}

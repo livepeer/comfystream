@@ -1,0 +1,59 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ffmpeg-trim-video",
+    "capability": "ffmpeg-trim-video",
+    "endpoint_id": "fal-ai/workflow-utilities/trim-video",
+    "queue_app_id": "fal-ai/workflow-utilities"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "duration": {
+        "type": "number"
+      },
+      "end_time": {
+        "type": "number"
+      },
+      "start_time": {
+        "type": "number"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/workflow-utilities/trim-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "compute seconds",
+    "unit_price": "0.001"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "1eb55e5ad3e4335c49e4e27c3488cc2fe18d998b5d20f3f9dc5bbb92f42d4942"
+  }
+}

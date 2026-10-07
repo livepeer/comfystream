@@ -1,0 +1,71 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-whisper-transcribe",
+    "capability": "whisper-transcribe",
+    "endpoint_id": "fal-ai/whisper",
+    "queue_app_id": "fal-ai/whisper"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "audio_url": {
+        "type": "string"
+      },
+      "batch_size": {
+        "type": "integer"
+      },
+      "chunk_level": {
+        "type": "string"
+      },
+      "diarize": {
+        "type": "boolean"
+      },
+      "language": {
+        "type": "string"
+      },
+      "num_speakers": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "task": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "audio_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/whisper",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "compute seconds",
+    "unit_price": "0.0008"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "929dd25b4246701e480e31a9e38de7d9589e675fd3d6c35aeedda3e475ddd79b"
+  }
+}

@@ -84,3 +84,6 @@ nodes:
     url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
     branch: "main"
     type: "utility"
+
+  # Live-runner / fal batch: use configs/nodes-live-runner.yaml instead
+  # (docker-compose.live-runner.yml and Dockerfile.live-runner).

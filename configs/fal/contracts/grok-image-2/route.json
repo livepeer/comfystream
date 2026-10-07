@@ -1,0 +1,68 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-grok-image-2",
+    "capability": "grok-image-2",
+    "endpoint_id": "xai/grok-imagine-image/v2.0/text-to-image",
+    "queue_app_id": "xai/grok-imagine-image"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "aspect_ratio": {
+        "type": "string"
+      },
+      "num_images": {
+        "type": "integer"
+      },
+      "output_format": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "quality": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "sync_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "xai/grok-imagine-image/v2.0/text-to-image",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.01"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "ccb9a3c4082af2f27196cedb3cdf2e5c2aeba4d8a374b67a134b7a6d092fd563"
+  }
+}

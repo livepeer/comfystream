@@ -15,6 +15,7 @@ show_help() {
   echo "  --server                Start ComfyUI only"
   echo "  --api                   Start ComfyStream API Server only"
   echo "  --ui                    Start ComfyStream UI only"
+  echo "  --live-runner           Start ComfyStream as a Livepeer live-runner"
   echo "  --help                  Show this help message"
   echo ""
 }
@@ -29,11 +30,13 @@ WORKSPACE_STORAGE="/app/storage"
 COMFYUI_DIR="/workspace/ComfyUI"
 MODELS_DIR="$COMFYUI_DIR/models"
 OUTPUT_DIR="$COMFYUI_DIR/output"
+export COMFYUI_CWD="$COMFYUI_DIR"
 
 # Initialize variables to track which services to start
 START_COMFYUI=false
 START_API=false
 START_UI=false
+START_LIVE_RUNNER=false
 
 # First pass: check for service flags and set variables
 for arg in "$@"; do
@@ -46,6 +49,9 @@ for arg in "$@"; do
       ;;
     --ui)
       START_UI=true
+      ;;
+    --live-runner)
+      START_LIVE_RUNNER=true
       ;;
   esac
 done
@@ -213,10 +219,25 @@ if [ "$1" = "--opencv-cuda" ]; then
 
   # Handle library dependencies
   CONDA_ENV_LIB="/workspace/miniconda3/envs/comfystream/lib"
+  CONDA_LIBSTDCXX="${CONDA_ENV_LIB}/libstdc++.so.6"
+  SYSTEM_LIBSTDCXX="/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
 
-  # Remove existing libstdc++ and copy system one
-  rm -f "${CONDA_ENV_LIB}/libstdc++.so"*
-  cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
+  # Ubuntu 22.04 ships GCC 11 (libstdc++ 6.0.30). conda-forge libstdcxx 16
+  # already has CXXABI_1.3.15; copying the system library over it breaks av.
+  highest_glibcxx() {
+    strings "$1" | grep -oE 'GLIBCXX_[0-9.]+' | sort -V | tail -1
+  }
+  if [ -e "$CONDA_LIBSTDCXX" ] && [ -e "$SYSTEM_LIBSTDCXX" ]; then
+    conda_cxx="$(highest_glibcxx "$CONDA_LIBSTDCXX")"
+    system_cxx="$(highest_glibcxx "$SYSTEM_LIBSTDCXX")"
+    if [ "$(printf '%s\n' "$conda_cxx" "$system_cxx" | sort -V | tail -1)" = "$system_cxx" ] \
+      && [ "$system_cxx" != "$conda_cxx" ]; then
+      rm -f "${CONDA_ENV_LIB}/libstdc++.so"*
+      cp /usr/lib/x86_64-linux-gnu/libstdc++.so* "${CONDA_ENV_LIB}/"
+    else
+      echo "Keeping conda libstdc++ (${conda_cxx} >= ${system_cxx})"
+    fi
+  fi
 
   # Copy OpenCV libraries
   cp /workspace/comfystream/opencv/build/lib/libopencv_* /usr/lib/x86_64-linux-gnu/
@@ -230,6 +251,21 @@ if [ "$1" = "--opencv-cuda" ]; then
 fi
 
 cd /workspace/comfystream
+
+# Live-runner path: register with go-livepeer -useLiveRunners and drive Pipeline
+# in-process (analyze / start_stream / update_stream). Remaining args after the
+# flag are forwarded to server/live_runner.py.
+if [ "$START_LIVE_RUNNER" = true ]; then
+  conda activate comfystream
+  # Drop the --live-runner flag; pass the rest through.
+  shift_args=()
+  for arg in "$@"; do
+    if [ "$arg" != "--live-runner" ]; then
+      shift_args+=("$arg")
+    fi
+  done
+  exec python server/live_runner.py "${shift_args[@]}"
+fi
 
 # If any service flags were specified, start supervisord and the requested services
 if [ "$START_COMFYUI" = true ] || [ "$START_API" = true ] || [ "$START_UI" = true ]; then

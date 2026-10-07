@@ -1,0 +1,84 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-void-inpaint",
+    "capability": "void-inpaint",
+    "endpoint_id": "fal-ai/void-video-inpainting",
+    "queue_app_id": "fal-ai/void-video-inpainting"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "enable_pass2_refinement": {
+        "type": "boolean"
+      },
+      "enable_safety_checker": {
+        "type": "boolean"
+      },
+      "guidance_scale": {
+        "type": "number"
+      },
+      "mask_prompt": {
+        "type": "string"
+      },
+      "negative_prompt": {
+        "type": "string"
+      },
+      "num_frames": {
+        "type": "integer"
+      },
+      "num_inference_steps": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "quad_mask_video_url": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      },
+      "strength": {
+        "type": "number"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url",
+      "prompt"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/void-video-inpainting",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "units",
+    "unit_price": "0.05"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "9a56f0642b8a6407cf1382b47821843602f75bb1d24d7e4fc187cd8522e8e723"
+  }
+}

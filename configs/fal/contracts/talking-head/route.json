@@ -1,0 +1,66 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-talking-head",
+    "capability": "talking-head",
+    "endpoint_id": "fal-ai/bytedance/omnihuman/v1.5",
+    "queue_app_id": "fal-ai/bytedance"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "audio_url": {
+        "type": "string"
+      },
+      "image_url": {
+        "type": "string"
+      },
+      "mask_url": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "resolution": {
+        "type": "string"
+      },
+      "turbo_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "image_url",
+      "audio_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/bytedance/omnihuman/v1.5",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.16"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "797e650ec127c941815ae0efa523b6df071578e753bf9ef5d4f56d85ad010dc0"
+  }
+}
