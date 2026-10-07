@@ -115,8 +115,8 @@ class RealtimeSupervisor:
         self.loaded: set[str] = boot
         self._exited: dict[str, asyncio.Event] = {}
         self._acquire_lock = asyncio.Lock()
-        # Latest worker report per pipeline: (seq, state, sessions).
-        self._reports: dict[str, tuple[int, str, int]] = {}
+        # Latest worker report per pipeline: (seq, state, sessions, starting).
+        self._reports: dict[str, tuple[int, str, int, bool]] = {}
         self._acquiring: set[str] = set()
         # Registration status each live worker was last told to advertise.
         self.advertised: dict[str, str] = {}
@@ -197,8 +197,8 @@ class RealtimeSupervisor:
         report = self._reports.get(name)
         if report is None:
             return name in self.loaded
-        _seq, state, sessions = report
-        return sessions > 0 or state == "loading"
+        _seq, state, sessions, starting = report
+        return sessions > 0 or starting or state == "loading"
 
     def status_for(self, spec: RealtimePipelineSpec) -> str:
         """``ready`` when a stream for ``spec`` could start now, evicting idle pipelines."""
@@ -259,9 +259,16 @@ class RealtimeSupervisor:
         if not isinstance(body, dict) or name not in self.specs:
             raise web.HTTPNotFound()
         try:
-            report = (int(body["seq"]), str(body["state"]), int(body["sessions"]))
+            report = (
+                int(body["seq"]),
+                str(body["state"]),
+                int(body["sessions"]),
+                bool(body["starting"]),
+            )
         except (KeyError, TypeError, ValueError):
-            raise web.HTTPBadRequest(text="report needs seq, state and sessions") from None
+            raise web.HTTPBadRequest(
+                text="report needs seq, state, sessions and starting"
+            ) from None
         current = self._reports.get(name)
         if current is None or report[0] > current[0]:
             self._reports[name] = report
@@ -275,7 +282,7 @@ class RealtimeSupervisor:
             report = self._reports.get(name)
             if reason is None and (report is None or report[1] == "cold"):
                 # The worker loads next; it is busy before its own report lands.
-                self._reports[name] = (time.monotonic_ns(), "loading", 0)
+                self._reports[name] = (time.monotonic_ns(), "loading", 0, True)
             return reason
         finally:
             self._acquiring.discard(name)

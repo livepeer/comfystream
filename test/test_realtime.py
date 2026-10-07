@@ -145,6 +145,7 @@ class FakeRegistration:
     def __init__(self, status: str = "ready") -> None:
         self.ended: list[str] = []
         self.status = status
+        self.history: list[str] = []
 
     async def note_session_ended(self, session_id: str) -> None:
         self.ended.append(session_id)
@@ -152,6 +153,7 @@ class FakeRegistration:
     async def update(self, *, metadata=None, capacity=None, status=None) -> None:
         if status is not None:
             self.status = status
+            self.history.append(status)
 
     async def create_trickle_channels(self, request, channels):
         return [
@@ -639,17 +641,20 @@ def test_cold_stream_evicts_the_idle_warm_pipeline_on_a_full_gpu(monkeypatch, tm
         supervisor = RealtimeSupervisor(
             specs, orchestrator="", orch_secret="", restart_backoff_s=0, capacity=capacity
         )
-        supervisor._spawn = (
-            lambda spec, preload=False, status="ready": asyncio.run_coroutine_threadsafe(
+        supervisor._spawn = lambda spec, preload=False, status="ready": (
+            asyncio.run_coroutine_threadsafe(
                 serve_in_process(supervisor.worker_config(spec, preload, status)), loop
             )
         )
 
         def registered(flux: str, sd: str):
             return lambda: (
-                workers["flux-klein"].registration.status,
-                workers["sd-turbo"].registration.status,
-            ) == (flux, sd)
+                (
+                    workers["flux-klein"].registration.status,
+                    workers["sd-turbo"].registration.status,
+                )
+                == (flux, sd)
+            )
 
         await supervisor.start()
         await _until(lambda: len(workers) == 2)
@@ -674,6 +679,8 @@ def test_cold_stream_evicts_the_idle_warm_pipeline_on_a_full_gpu(monkeypatch, tm
             assert supervisor.loaded == {"sd-turbo"}
             # sd-turbo is streaming, so flux-klein is hidden from the orchestrator.
             await _until(registered("busy", "ready"))
+            await asyncio.sleep(0.2)
+            assert "ready" not in workers["flux-klein"].registration.history
 
             status, body = await stream("flux-klein", "flux-1")
             assert status == 503 and body["error"]["code"] == "capacity_unavailable"

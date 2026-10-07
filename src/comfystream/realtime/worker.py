@@ -178,6 +178,8 @@ class PipelineWorker:
         self._media_output = media_output
         self._media_publish = media_publish
         self._session_lock = asyncio.Lock()
+        # /stream requests not yet attached as sessions; they block eviction like a session.
+        self._starting = 0
         self._load_lock = asyncio.Lock()
         self._slot_held = config.preload or not config.supervisor_url
         self._idle_since = time.monotonic()
@@ -248,6 +250,7 @@ class PipelineWorker:
             "seq": time.monotonic_ns(),
             "state": self.state,
             "sessions": len(self.sessions),
+            "starting": self._starting > 0,
         }
         self._spawn_background(self._post_report(report))
 
@@ -587,7 +590,12 @@ class PipelineWorker:
         token = request.headers.get(SHUTDOWN_HEADER, "")
         if not hmac.compare_digest(token, self.config.shutdown_token):
             raise web.HTTPNotFound()
-        if self._session_lock.locked() or self.sessions or self.state == "loading":
+        if (
+            self._starting
+            or self._session_lock.locked()
+            or self.sessions
+            or self.state == "loading"
+        ):
             return web.json_response({"ok": False, "reason": "busy"}, status=409)
         log.info("pipeline=%s evicted to free its gpu slot", self.spec.name)
         self.stop(EXIT_EVICTED)
@@ -623,8 +631,13 @@ class PipelineWorker:
         return session
 
     async def handle_stream(self, request: web.Request) -> web.Response:
-        async with self._session_lock:
-            return await self._start_session(request)
+        self._starting += 1
+        try:
+            async with self._session_lock:
+                return await self._start_session(request)
+        finally:
+            self._starting -= 1
+            self._report()
 
     async def _start_session(self, request: web.Request) -> web.Response:
         session_id = session_id_from(request)
