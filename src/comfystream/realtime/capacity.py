@@ -8,6 +8,10 @@ only a set that satisfies them and leaves the rest unloaded.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from comfystream.realtime.spec import RealtimePipelineSpec
 
 @dataclass(frozen=True, slots=True)
 class WarmCapacity:

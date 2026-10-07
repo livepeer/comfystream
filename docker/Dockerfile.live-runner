@@ -40,7 +40,7 @@ RUN /bin/bash -lc 'source /workspace/miniconda3/etc/profile.d/conda.sh \
   && uv pip install --python "$CONDA_PREFIX/bin/python" \
     "protobuf>=6.31.1" \
     "transformers==4.57.3" \
-    "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@v1.0.0" \
+    "livepeer-gateway @ git+https://github.com/eliteprox/livepeer-python-gateway.git@796ca2dc833ef3c5981260c50d948639640f2895" \
     "diffusers==0.39.0" \
     pyyaml \
     fal-client \

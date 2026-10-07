@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import site
+import socket
 import subprocess
 import sys
 import textwrap
@@ -9,17 +10,31 @@ from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 
+import aiohttp
 import av
 import numpy as np
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from comfystream.realtime import spec as spec_module
-from comfystream.realtime.params import ParamError, validate_params
+from comfystream.realtime import worker as worker_module
 from comfystream.realtime.capacity import WarmCapacity
-from comfystream.realtime.spec import RealtimePipelineSpec, RealtimeSpecError, load_realtime_config, load_realtime_specs
+from comfystream.realtime.params import ParamError, validate_params
+from comfystream.realtime.spec import (
+    RealtimePipelineSpec,
+    RealtimeSpecError,
+    load_realtime_config,
+    load_realtime_specs,
+)
 from comfystream.realtime.supervisor import RealtimeSupervisor
-from comfystream.realtime.worker import SHUTDOWN_HEADER, SHUTDOWN_PATH, PipelineWorker, WorkerConfig
+from comfystream.realtime.worker import (
+    EVICT_PATH,
+    SHUTDOWN_HEADER,
+    SHUTDOWN_PATH,
+    PipelineWorker,
+    WorkerConfig,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -49,6 +64,9 @@ class FakeBackend:
         self.params = {}
         self.fail = False
         self.scrubbed = False
+        self.scrubbed_sessions: list[str] = []
+        self.processed_sessions: list[str] = []
+        self.idles = 0
 
     async def load(self):
         self.loads += 1
@@ -59,23 +77,25 @@ class FakeBackend:
     def reset(self):
         self.params = {}
 
-    async def scrub(self):
+    async def scrub(self, session_id=""):
         self.reset()
         self.params = dict(self.defaults())
         self.scrubbed = True
+        self.scrubbed_sessions.append(session_id)
 
     async def idle(self):
-        return None
+        self.idles += 1
 
-    async def apply(self, params):
+    async def apply(self, params, session_id=""):
         self.params.update(params)
 
     def describe(self):
         return {"resolution": "8x8"}
 
-    async def process(self, frames):
+    async def process(self, frames, session_id=""):
         if self.fail:
             raise RuntimeError("CUDA error: illegal memory access")
+        self.processed_sessions.append(session_id)
         outs = []
         for frame in frames:
             out = av.VideoFrame.from_ndarray(np.full((8, 8, 3), 255, np.uint8), format="rgb24")
@@ -122,14 +142,16 @@ class FakePublish:
 class FakeRegistration:
     runner_id = "runner_test"
 
-    def __init__(self) -> None:
+    def __init__(self, status: str = "ready") -> None:
         self.ended: list[str] = []
+        self.status = status
 
     async def note_session_ended(self, session_id: str) -> None:
         self.ended.append(session_id)
 
-    async def update(self, *, metadata=None, capacity=None) -> None:
-        return None
+    async def update(self, *, metadata=None, capacity=None, status=None) -> None:
+        if status is not None:
+            self.status = status
 
     async def create_trickle_channels(self, request, channels):
         return [
@@ -142,12 +164,13 @@ class FakeRegistration:
 
 
 def test_repo_config_parses():
-    specs = {spec.name: spec for spec in load_realtime_specs(REPO / "configs" / "realtime.yaml")}
-    assert specs["flux-klein"].app == "comfystream/flux-klein"
-    assert specs["flux-klein"].port == 8720
-    assert specs["sd-turbo"].python == "/workspace/venvs/streamdiffusion/bin/python"
-    assert specs["sd-turbo"].gpu != specs["flux-klein"].gpu
-    assert all(spec.capacity == 1 for spec in specs.values())
+    specs, capacity = load_realtime_config(REPO / "configs" / "realtime.yaml")
+    by_name = {spec.name: spec for spec in specs}
+    assert by_name["flux-klein"].app == "comfystream/flux-klein"
+    assert by_name["flux-klein"].port == 8720
+    assert by_name["sd-turbo"].gpu == by_name["flux-klein"].gpu
+    assert capacity.max_loaded == 1 and capacity.gpus[by_name["sd-turbo"].gpu] == 1
+    assert all(spec.capacity == 1 for spec in specs)
 
 
 @pytest.mark.parametrize(
@@ -256,9 +279,10 @@ def _frame(pts: int) -> SimpleNamespace:
     return SimpleNamespace(kind="video", frame=frame)
 
 
-async def _feed(worker: PipelineWorker, *pts: int) -> None:
+async def _feed(worker: PipelineWorker, *pts: int, session_id: str = "") -> None:
+    session = worker.sessions[session_id] if session_id else next(iter(worker.sessions.values()))
     for value in pts:
-        await worker.session.output.on_frame(_frame(value))
+        await session.output.on_frame(_frame(value))
         for _ in range(5):
             await asyncio.sleep(0)
 
@@ -390,8 +414,11 @@ def test_combinations_reject_an_unlisted_pairing(tmp_path):
 
 def test_repo_config_advertises_capabilities():
     specs, capacity = load_realtime_config(REPO / "configs" / "realtime.yaml")
-    chosen, held = capacity.select(specs)
-    assert chosen == {"flux-klein", "sd-turbo"} and held == []
+    by_name = {spec.name: spec for spec in specs}
+    assert (by_name["flux-klein"].policy, by_name["sd-turbo"].policy) == ("warm", "cold")
+    warm = [spec for spec in specs if spec.policy == "warm"]
+    assert capacity.select(warm) == ({"flux-klein"}, [])
+    assert capacity.refuse([by_name["flux-klein"]], by_name["sd-turbo"])
     for spec in specs:
         metadata = json.loads(spec.metadata())
         assert metadata["model"] and metadata["streaming"] is True
@@ -543,9 +570,163 @@ def test_cold_start_limit_and_idle_expiry(monkeypatch, tmp_path):
             await asyncio.sleep(1.6)
             session = await (await client.get("/session", headers=headers)).json()
             assert session["status"] == "expired" and session["reason"] == "no_input"
-            assert worker.session is None
+            assert not worker.sessions
             status = await (await client.get("/status")).json()
             assert status["capacity_used"] == 0
             assert worker.registration.ended == ["s1"]
+
+    asyncio.run(scenario())
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+async def _until(predicate, timeout: float = 5.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, "condition not reached"
+        await asyncio.sleep(0.02)
+
+
+def test_cold_stream_evicts_the_idle_warm_pipeline_on_a_full_gpu(monkeypatch, tmp_path):
+    monkeypatch.setitem(spec_module.BACKENDS, "flux_klein", f"{__name__}:FakeBackend")
+
+    async def fake_register(*_args, status="ready", **_kwargs):
+        return FakeRegistration(status)
+
+    monkeypatch.setattr(worker_module, "register_runner", fake_register)
+    path = _write(
+        tmp_path,
+        f"""
+        capacity:
+          max_loaded: 1
+        pipelines:
+          flux-klein: {{app: x/flux, backend: flux_klein, port: {_free_port()}, gpu: GPU-3090}}
+          sd-turbo:
+            app: x/sd
+            backend: flux_klein
+            port: {_free_port()}
+            gpu: GPU-3090
+            policy: cold
+        """,
+    )
+    specs, capacity = load_realtime_config(path)
+    ports = {spec.name: spec.port for spec in specs}
+    workers: dict[str, PipelineWorker] = {}
+
+    async def serve_in_process(config: dict) -> str:
+        worker_config = WorkerConfig(**config)
+        spec = RealtimePipelineSpec.from_dict(worker_config.spec)
+        worker = PipelineWorker(
+            spec, worker_config, media_output=FakeOutput, media_publish=FakePublish
+        )
+        runner = web.AppRunner(worker.build_app())
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", spec.port).start()
+        try:
+            await worker.start()
+            workers[spec.name] = worker
+            return await worker.stopped
+        finally:
+            await worker.close()
+            await runner.cleanup()
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        supervisor = RealtimeSupervisor(
+            specs, orchestrator="", orch_secret="", restart_backoff_s=0, capacity=capacity
+        )
+        supervisor._spawn = (
+            lambda spec, preload=False, status="ready": asyncio.run_coroutine_threadsafe(
+                serve_in_process(supervisor.worker_config(spec, preload, status)), loop
+            )
+        )
+
+        def registered(flux: str, sd: str):
+            return lambda: (
+                workers["flux-klein"].registration.status,
+                workers["sd-turbo"].registration.status,
+            ) == (flux, sd)
+
+        await supervisor.start()
+        await _until(lambda: len(workers) == 2)
+        assert (workers["flux-klein"].state, workers["sd-turbo"].state) == ("ready", "cold")
+        assert supervisor.loaded == {"flux-klein"}
+        await _until(registered("ready", "ready"))
+        flux = workers["flux-klein"]
+
+        async with aiohttp.ClientSession() as client:
+
+            async def stream(name: str, session_id: str):
+                url = f"http://127.0.0.1:{ports[name]}/stream"
+                async with client.post(url, headers={"Livepeer-Session-Id": session_id}) as resp:
+                    return resp.status, await resp.json()
+
+            status, body = await stream("sd-turbo", "sd-1")
+            assert status == 200 and body["compute"] == "cold"
+            assert workers["sd-turbo"].backend.loads == 1
+            assert flux.stopped.result() == "evicted"
+            await _until(lambda: workers["flux-klein"] is not flux)
+            assert workers["flux-klein"].state == "cold"
+            assert supervisor.loaded == {"sd-turbo"}
+            # sd-turbo is streaming, so flux-klein is hidden from the orchestrator.
+            await _until(registered("busy", "ready"))
+
+            status, body = await stream("flux-klein", "flux-1")
+            assert status == 503 and body["error"]["code"] == "capacity_unavailable"
+            assert workers["sd-turbo"].sessions
+            assert supervisor.loaded == {"sd-turbo"}
+
+            refused = await workers["sd-turbo"].advertise("busy")
+            assert refused is None and workers["sd-turbo"].registration.status == "ready"
+
+            await workers["sd-turbo"].end_all("stopped", "test")
+            await _until(registered("ready", "ready"))
+            assert workers["sd-turbo"].state == "ready" and supervisor.loaded == {"sd-turbo"}
+
+            status, body = await stream("flux-klein", "flux-2")
+            assert status == 200 and workers["flux-klein"].backend.loads == 1
+            assert supervisor.loaded == {"flux-klein"}
+            await _until(lambda: workers["sd-turbo"].state == "cold")
+            await _until(registered("ready", "busy"))
+
+        await supervisor.close()
+
+    asyncio.run(scenario())
+
+
+def test_multi_session_pipeline_isolates_sessions_and_blocks_eviction(monkeypatch, tmp_path):
+    monkeypatch.setitem(spec_module.SESSION_LIMITS, "flux_klein", 2)
+
+    async def scenario():
+        worker = _worker(monkeypatch, tmp_path, "warm", "capacity: 2")
+        await worker.ensure_loaded()
+        token = {SHUTDOWN_HEADER: "secret-token"}
+        async with TestClient(TestServer(worker.build_app())) as client:
+            for session_id in ("a", "b"):
+                started = await client.post("/stream", headers={"Livepeer-Session-Id": session_id})
+                assert started.status == 200
+            full = await client.post("/stream", headers={"Livepeer-Session-Id": "c"})
+            assert (await full.json())["error"]["code"] == "session_conflict"
+            status = await (await client.get("/status")).json()
+            assert (status["capacity"], status["capacity_used"]) == (2, 2)
+            assert status["sessions"] == ["a", "b"]
+
+            await _feed(worker, 1, session_id="b")
+            await _feed(worker, 1, session_id="a")
+            assert worker.backend.processed_sessions == ["b", "a"]
+
+            await client.post("/stop", headers={"Livepeer-Session-Id": "a"})
+            assert worker.backend.scrubbed_sessions == ["a"] and worker.backend.idles == 0
+            assert list(worker.sessions) == ["b"]
+            assert (await client.post(EVICT_PATH, headers=token)).status == 409
+
+            await client.post("/stop", headers={"Livepeer-Session-Id": "b"})
+            assert worker.backend.idles == 1
+            assert (await client.post(EVICT_PATH, headers=token)).status == 200
+            assert await worker.stopped == "evicted"
 
     asyncio.run(scenario())

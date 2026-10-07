@@ -73,12 +73,12 @@ class FluxKleinBackend:
         self.model.update_seed(self.default_seed)
         self.model.update_input_blend(self.default_input_blend)
 
-    async def scrub(self) -> None:
+    async def scrub(self, session_id: str = "") -> None:
         """Restore the default prompt. The loaded weights stay resident."""
         self.reset()
-        await self.apply(self.defaults())
+        await self.apply(self.defaults(), session_id)
 
-    async def apply(self, params: dict[str, Any]) -> None:
+    async def apply(self, params: dict[str, Any], session_id: str = "") -> None:
         if "prompt" in params:
             self.model.update_prompt(str(params["prompt"]))
         if "seed" in params and int(params["seed"]) != self.model.seed:
@@ -108,5 +108,7 @@ class FluxKleinBackend:
             outs.append(out)
         return outs
 
-    async def process(self, frames: list[av.VideoFrame]) -> list[av.VideoFrame]:
+    async def process(
+        self, frames: list[av.VideoFrame], session_id: str = ""
+    ) -> list[av.VideoFrame]:
         return await asyncio.to_thread(self._transform, frames)

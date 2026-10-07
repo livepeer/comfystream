@@ -5,7 +5,7 @@
 # index or GPU UUID), optionally under a different interpreter (`python`) so
 # pipelines with conflicting dependencies can share one container.
 #
-#   policy: warm   load at boot, register once ready
+#   policy: warm   load at boot when capacity allows (else start cold), register once ready
 #   policy: cold   register at boot, load inside the first /stream request;
 #                  with idle_unload_s > 0 the process exits after idling and is
 #                  respawned cold, which releases its GPU memory
@@ -13,6 +13,9 @@
 # Callers never send workflows: a session is started with a prompt and/or a
 # `preset` from below plus the backend's flat params (GET /status lists them).
 #
+#   capacity                 concurrent sessions on one loaded model (default 1), up
+#                            to what the backend isolates (spec.SESSION_LIMITS);
+#                            eviction skips a pipeline while any session is active
 #   model                    advertised model id (discovery metadata)
 #   cold_start_s             startup estimate until a load has been measured
 #   session_idle_timeout_s   expire a session after this long without input (default 15)
@@ -21,21 +24,21 @@
 #   fallbacks                name -> image path or #rrggbb; "default" overrides the
 #                            built-in slate shown while paused or failing
 #
-# Pipelines placed on the same GPU must fit together when warm.
-#
-# capacity is enforced before any pipeline process starts. A pipeline that
-# does not fit is not loaded, so a third stream cannot OOM a card that only
-# has room for two. exclusive pipelines load alone. combinations, when set,
-# require the loaded set to fit inside one group. Order is the pipelines map.
+# capacity decides which pipelines hold GPU memory. Every pipeline registers;
+# warm pipelines that fit load at boot (in pipelines-map order) and the rest
+# start cold. A stream for a cold pipeline evicts loaded pipelines that are
+# not streaming until it fits, waits for their processes to exit, then loads.
+# Evicted pipelines re-register cold. If the blockers are streaming, the
+# stream is refused with capacity_unavailable. exclusive pipelines load alone.
+# combinations, when set, require the loaded set to fit inside one group.
 
 capacity:
-  max_loaded: 2
+  max_loaded: 1
   gpus:
-    GPU-745244ef-3615-57bd-458f-299fe2289f5a: 2  # 3090 Ti: two streams, not three
-    GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d: 1  # RTX 4000 Ada
+    # 3090 Ti: flux-klein (~16 GB) and sd-turbo (~4.5 GB) swap instead of sharing.
+    GPU-745244ef-3615-57bd-458f-299fe2289f5a: 1
+    # RTX 4000 Ada is reserved for go-livepeer transcoding (orch + live-runner-transcode).
   exclusive: []
-  combinations:
-    - [flux-klein, sd-turbo]
 
 pipelines:
   flux-klein:
@@ -43,7 +46,10 @@ pipelines:
     backend: comfy_workflow
     port: 8720
     gpu: GPU-745244ef-3615-57bd-458f-299fe2289f5a  # RTX 3090 Ti, ~16.5 GB
+    # The resident pipeline: loads at boot and holds the 3090 Ti's single slot.
     policy: warm
+    # Raise once the FluxKleinStream node keeps prompt and feedback per session.
+    capacity: 1
     model: black-forest-labs/FLUX.2-klein-4B
     cold_start_s: 20
     session_idle_timeout_s: 15
@@ -74,8 +80,12 @@ pipelines:
     app: comfystream/sd-turbo
     backend: comfy_workflow
     port: 8721
-    gpu: GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d  # RTX 4000 Ada, ~4.5 GB
-    policy: warm
+    gpu: GPU-745244ef-3615-57bd-458f-299fe2289f5a  # RTX 3090 Ti, ~4.5 GB (swaps with flux-klein)
+    # Loads on its first stream by evicting an idle flux-klein, and stays loaded
+    # until a flux-klein stream evicts it back.
+    policy: cold
+    # The StreamDiffusion TensorRT workflow runs one stream at a time.
+    capacity: 1
     model: stabilityai/sd-turbo
     # ~30 s with cached TensorRT engines; a new GPU arch builds them once (~6 min).
     cold_start_s: 30

@@ -26,7 +26,7 @@ server = [
     "pytrickle @ git+https://github.com/livepeer/pytrickle.git@v0.1.8"
 ]
 live-runner = [
-    "livepeer-gateway @ git+https://github.com/livepeer/livepeer-python-gateway.git@ja/live-runner",
+    "livepeer-gateway @ git+https://github.com/eliteprox/livepeer-python-gateway.git@796ca2dc833ef3c5981260c50d948639640f2895",
     "av",
     "pyyaml",
 ]

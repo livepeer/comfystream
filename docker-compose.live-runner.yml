@@ -9,8 +9,9 @@
 # register from isolated worker processes, so the orchestrator's static
 # runners.json must not also list them.
 #
-# Both GPUs are exposed; CUDA_VISIBLE_DEVICES pins the main stream Pipeline,
-# and each realtime pipeline pins its own GPU in configs/realtime.yaml.
+# Only the RTX 3090 Ti is exposed: the main stream Pipeline, fal apps and every
+# realtime pipeline in configs/realtime.yaml run there. The RTX 4000 Ada is
+# reserved for go-livepeer transcoding (orch + live-runner-transcode).
 #
 # Faster image: build a light base first (stream-pack + fal-api only), then
 # the overlay:
@@ -36,7 +37,7 @@ services:
     network_mode: host
     pull_policy: never
     environment:
-      - NVIDIA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUIDS:-GPU-745244ef-3615-57bd-458f-299fe2289f5a,GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d}
+      - NVIDIA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUIDS:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
       - CUDA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
       - COMFYUI_CWD=/workspace/ComfyUI
       - PYTHONUNBUFFERED=1
@@ -73,4 +74,3 @@ services:
               driver: nvidia
               device_ids:
                 - "GPU-745244ef-3615-57bd-458f-299fe2289f5a"
-                - "GPU-e2a79bd9-f38b-af53-eb4b-9a7420ed3f1d"

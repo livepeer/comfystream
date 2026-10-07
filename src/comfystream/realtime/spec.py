@@ -19,6 +19,12 @@ BACKENDS = {
     "flux_klein": "comfystream.realtime.flux_klein_backend:FluxKleinBackend",
     "comfy_workflow": "comfystream.realtime.comfy_backend:ComfyWorkflowBackend",
 }
+# Concurrent sessions a backend keeps isolated (prompt, seed, feedback frame) on
+# one loaded model. A pipeline's capacity may not exceed its backend's limit.
+SESSION_LIMITS = {
+    "flux_klein": 1,
+    "comfy_workflow": 1,
+}
 METADATA_LIMIT_BYTES = 1024
 SURFACES = ("stream", "update", "pause", "resume", "stop", "session", "status", "stats")
 DEFAULT_FALLBACK = "default"
@@ -110,8 +116,13 @@ def _parse_spec(name: str, raw: Any) -> RealtimePipelineSpec:
     policy = raw.get("policy", "warm")
     if policy not in ("warm", "cold"):
         raise RealtimeSpecError(f"{name}: policy must be 'warm' or 'cold'")
-    if int(raw.get("capacity", 1)) != 1:
-        raise RealtimeSpecError(f"{name}: realtime pipelines hold one session; capacity must be 1")
+    capacity = int(raw.get("capacity", 1))
+    limit = SESSION_LIMITS[raw["backend"]]
+    if not 1 <= capacity <= limit:
+        raise RealtimeSpecError(
+            f"{name}: backend {raw['backend']} isolates up to {limit} sessions; "
+            f"capacity must be 1..{limit}"
+        )
     spec = RealtimePipelineSpec(
         name=name,
         app=str(raw["app"]),
@@ -124,7 +135,7 @@ def _parse_spec(name: str, raw: Any) -> RealtimePipelineSpec:
         price=float(raw.get("price", 0.0)),
         currency=str(raw.get("currency", "usd")),
         unit=str(raw.get("unit", "hour")),
-        capacity=1,
+        capacity=capacity,
         label=str(raw.get("label", name)),
         model=str(raw.get("model", "")),
         cold_start_s=float(raw.get("cold_start_s", 0.0)),

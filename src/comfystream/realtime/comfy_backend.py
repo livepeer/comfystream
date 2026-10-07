@@ -138,10 +138,10 @@ class ComfyWorkflowBackend:
     def reset(self) -> None:
         self.params = dict(self._defaults)
 
-    async def scrub(self) -> None:
+    async def scrub(self, session_id: str = "") -> None:
         """Put the workflow prompt back to the file default. Models stay loaded."""
         self.reset()
-        await self.apply(self.defaults())
+        await self.apply(self.defaults(), session_id)
         try:
             from nodes.tensor_utils.flux_klein_stream import reset_session
         except ImportError:
@@ -153,7 +153,7 @@ class ComfyWorkflowBackend:
         if self.pipeline is not None and self.pipeline.are_prompts_running():
             await self.pipeline.stop_streaming()
 
-    async def apply(self, params: dict[str, Any]) -> None:
+    async def apply(self, params: dict[str, Any], session_id: str = "") -> None:
         for key, value in params.items():
             if key not in self.param_names:
                 continue
@@ -176,7 +176,9 @@ class ComfyWorkflowBackend:
             "batch": self.batch,
         }
 
-    async def process(self, frames: list[av.VideoFrame]) -> list[av.VideoFrame]:
+    async def process(
+        self, frames: list[av.VideoFrame], session_id: str = ""
+    ) -> list[av.VideoFrame]:
         if self.pipeline is None:
             raise RuntimeError("pipeline not loaded")
         async with self._frame_lock:

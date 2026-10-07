@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import av
-from aiohttp import web
+from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from livepeer_gateway.errors import LivepeerHTTPError
 from livepeer_gateway.live_runner import register_runner, stop_runner_session
 from livepeer_gateway.media_output import MediaOutput
@@ -69,7 +69,17 @@ from comfystream.realtime.spec import DEFAULT_FALLBACK, RealtimePipelineSpec, ru
 log = logging.getLogger("comfystream.realtime.worker")
 
 SHUTDOWN_PATH = "/_worker/shutdown"
+EVICT_PATH = "/_worker/evict"
+ADVERTISE_PATH = "/_worker/advertise"
+ACQUIRE_PATH = "/_supervisor/acquire"
+REPORT_PATH = "/_supervisor/report"
+# The orchestrator routes only "ready" runners; "busy" hides one that cannot load now.
+STATUS_READY = "ready"
+STATUS_BUSY = "busy"
+REPORT_TIMEOUT_S = 5.0
 SHUTDOWN_HEADER = "X-Comfystream-Worker-Token"
+# Covers the supervisor evicting an idle pipeline and waiting for its process to exit.
+ACQUIRE_TIMEOUT_S = 120.0
 CHANNEL_MIME_VIDEO = "video/mp2t"
 # Livepeer payment tickets exceed aiohttp's default 8190-byte header limit.
 HEADER_LIMIT_BYTES = 262144
@@ -84,6 +94,7 @@ INPUT_DRAIN_S = 30.0
 ENDED_SESSIONS_KEPT = 64
 RELEASE_ATTEMPTS = 3
 EXIT_IDLE = "idle"
+EXIT_EVICTED = "evicted"
 EXIT_SHUTDOWN = "shutdown"
 EXIT_ERROR = "error"
 COMPUTE_BY_STATE = {
@@ -105,6 +116,16 @@ class WorkerConfig:
     usage_log: str = ""
     gpu_max_loaded: int = 2
     exclusive: bool = False
+    # Empty runs standalone: the worker loads without asking for a GPU slot.
+    supervisor_url: str = ""
+    # The supervisor reserved a slot at spawn, so a warm pipeline loads at boot.
+    preload: bool = False
+    # Registration status at spawn; the supervisor pushes changes after that.
+    status: str = STATUS_READY
+
+
+class SlotUnavailable(RuntimeError):
+    """The supervisor could not free GPU capacity for this pipeline."""
 
 
 def load_backend(spec: RealtimePipelineSpec) -> Any:
@@ -149,14 +170,16 @@ class PipelineWorker:
         self.error: str | None = None
         self.last_load_s: float | None = None
         self.load_started: float | None = None
-        self.session: StreamSession | None = None
+        self.sessions: dict[str, StreamSession] = {}
         self.ended: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.registration: Any = None
+        self.advertised_status = config.status
         self.stopped: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._media_output = media_output
         self._media_publish = media_publish
         self._session_lock = asyncio.Lock()
         self._load_lock = asyncio.Lock()
+        self._slot_held = config.preload or not config.supervisor_url
         self._idle_since = time.monotonic()
         self._idle_task: asyncio.Task | None = None
         self._background: set[asyncio.Task] = set()
@@ -213,6 +236,49 @@ class PipelineWorker:
             compute=COMPUTE_BY_STATE[state],
         )
         self._publish_registration()
+        self._report()
+
+    def _report(self) -> None:
+        """Send the supervisor this pipeline's state so it keeps every registration honest."""
+        if not self.config.supervisor_url:
+            return
+        report = {
+            "pipeline": self.spec.name,
+            # Monotonic across processes on one host, so a stale report never wins.
+            "seq": time.monotonic_ns(),
+            "state": self.state,
+            "sessions": len(self.sessions),
+        }
+        self._spawn_background(self._post_report(report))
+
+    async def _post_report(self, report: dict[str, Any]) -> None:
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=REPORT_TIMEOUT_S)) as client:
+                async with client.post(
+                    f"{self.config.supervisor_url}{REPORT_PATH}",
+                    headers={SHUTDOWN_HEADER: self.config.shutdown_token},
+                    json=report,
+                ) as response:
+                    await response.read()
+        except (ClientError, asyncio.TimeoutError) as exc:
+            log.warning("pipeline=%s state report failed: %r", self.spec.name, exc)
+
+    async def advertise(self, status: str) -> None:
+        """Set the registration status; a pipeline holding sessions always stays routable."""
+        if status != STATUS_READY and self.sessions:
+            return
+        if status == self.advertised_status:
+            return
+        self.advertised_status = status
+        log_event("capability.status", pipeline=self.spec.name, app=self.spec.app, status=status)
+        if self.registration is None:
+            return
+        try:
+            await self.registration.update(status=status)
+        except Exception:
+            log.exception(
+                "pipeline=%s status heartbeat failed; retried next interval", self.spec.name
+            )
 
     def estimated_startup_s(self) -> float:
         estimate = self.last_load_s if self.last_load_s is not None else self.spec.cold_start_s
@@ -237,6 +303,8 @@ class PipelineWorker:
                 return
             if self.state == "error":
                 raise RuntimeError(self.error or "pipeline failed to load")
+            if not self._slot_held:
+                await self._acquire_slot()
             self.load_started = time.monotonic()
             self._set_state("loading")
             log.info(
@@ -257,8 +325,26 @@ class PipelineWorker:
             self._idle_since = time.monotonic()
             log.info("pipeline=%s ready in %.1fs", self.spec.name, self.last_load_s)
 
+    async def _acquire_slot(self) -> None:
+        """Ask the supervisor for GPU capacity, evicting idle pipelines if needed."""
+        log.info("pipeline=%s requesting a gpu slot", self.spec.name)
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=ACQUIRE_TIMEOUT_S)) as client:
+                async with client.post(
+                    f"{self.config.supervisor_url}{ACQUIRE_PATH}",
+                    headers={SHUTDOWN_HEADER: self.config.shutdown_token},
+                    json={"pipeline": self.spec.name},
+                ) as response:
+                    body = await response.json(content_type=None)
+        except (ClientError, asyncio.TimeoutError, ValueError) as exc:
+            raise SlotUnavailable(f"supervisor unreachable: {exc!r}") from exc
+        if response.status != 200:
+            reason = body.get("reason") if isinstance(body, dict) else None
+            raise SlotUnavailable(reason or "no gpu capacity available")
+        self._slot_held = True
+
     async def start(self) -> None:
-        if self.spec.policy == "warm":
+        if self.spec.policy == "warm" and self._slot_held:
             await self.ensure_loaded()
         self.registration = await register_runner(
             self.config.orchestrator,
@@ -272,9 +358,11 @@ class PipelineWorker:
             unit=self.spec.unit,
             label=self.spec.label,
             metadata=self.registration_metadata(),
+            status=self.advertised_status,
             gpu=pinned_gpu(),
             on_session_release=self._on_session_release,
         )
+        self._report()
         log_event(
             "capability.registered",
             pipeline=self.spec.name,
@@ -292,7 +380,7 @@ class PipelineWorker:
             self._idle_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._idle_task
-        await self.end_session(STOPPED, "worker_shutdown")
+        await self.end_all(STOPPED, "worker_shutdown")
         if self._background:
             await asyncio.gather(*self._background, return_exceptions=True)
         if self.registration is not None:
@@ -309,19 +397,19 @@ class PipelineWorker:
         while not self.stopped.done():
             await asyncio.sleep(IDLE_POLL_S)
             idle_for = time.monotonic() - self._idle_since
-            if (
-                self.state == "ready"
-                and self.session is None
-                and idle_for >= self.spec.idle_unload_s
-            ):
+            if self.state == "ready" and not self.sessions and idle_for >= self.spec.idle_unload_s:
                 log.info("pipeline=%s idle for %.0fs; unloading", self.spec.name, idle_for)
                 self.stop(EXIT_IDLE)
                 return
 
     async def _on_session_release(self, event: Any) -> None:
         session_id = getattr(event, "session_id", "") or ""
-        if self.session is not None and (not session_id or self.session.session_id == session_id):
-            await self.end_session(COMPLETED, "orchestrator_release", release=False)
+        if not session_id:
+            await self.end_all(COMPLETED, "orchestrator_release", release=False)
+            return
+        session = self.sessions.get(session_id)
+        if session is not None:
+            await self.end_session(session, COMPLETED, "orchestrator_release", release=False)
 
     async def _release_reservation(self, session: StreamSession) -> None:
         if not session.control.headers.get("Livepeer-Session-Control", ""):
@@ -365,20 +453,24 @@ class PipelineWorker:
         except OSError:
             log.exception("could not append usage record to %s", path)
 
+    async def end_all(self, status: str, reason: str, *, release: bool = True) -> None:
+        for session in list(self.sessions.values()):
+            await self.end_session(session, status, reason, release=release)
+
     async def end_session(
         self,
+        current: StreamSession,
         status: str,
         reason: str,
         *,
         release: bool = True,
-        only: StreamSession | None = None,
     ) -> None:
-        """End the active session (or only ``only``, if it is still the active one)."""
+        """End ``current`` if it is still active; idle the backend after the last one."""
         async with self._session_lock:
-            current = self.session
-            if current is None or (only is not None and current is not only):
+            if self.sessions.get(current.session_id) is not current:
                 return
-            self.session = None
+            del self.sessions[current.session_id]
+            self._report()
             current.finish(status)
             for task in current.tasks:
                 task.cancel()
@@ -390,14 +482,15 @@ class PipelineWorker:
             with suppress(Exception):
                 await current.output.close()
             try:
-                await self.backend.scrub()
+                await self.backend.scrub(current.session_id)
             except Exception:
                 log.exception(
                     "resetting customer prompt failed pipeline=%s; weights stay loaded",
                     self.spec.name,
                 )
-            await self.backend.idle()
-            self._idle_since = time.monotonic()
+            if not self.sessions:
+                await self.backend.idle()
+                self._idle_since = time.monotonic()
             record = usage_record(
                 current,
                 reason=reason,
@@ -449,6 +542,8 @@ class PipelineWorker:
         app.router.add_post("/resume", self.handle_resume)
         app.router.add_post("/stop", self.handle_stop)
         app.router.add_post(SHUTDOWN_PATH, self.handle_shutdown)
+        app.router.add_post(EVICT_PATH, self.handle_evict)
+        app.router.add_post(ADVERTISE_PATH, self.handle_advertise)
         return app
 
     def status_payload(self) -> dict[str, Any]:
@@ -460,9 +555,10 @@ class PipelineWorker:
             "last_load_s": round(self.last_load_s, 1) if self.last_load_s is not None else None,
             "model_loaded": self.state == "ready",
             "policy": self.spec.policy,
+            "advertised_status": self.advertised_status,
             "capacity": self.spec.capacity,
-            "capacity_used": 1 if self.session else 0,
-            "session": self.session.session_id if self.session else None,
+            "capacity_used": len(self.sessions),
+            "sessions": sorted(self.sessions),
             "error": self.error,
             "pipeline": self.pipeline_info(),
             "params": schema_json(self.spec.backend, self.spec.options.get("params")),
@@ -486,6 +582,27 @@ class PipelineWorker:
         self.stop(EXIT_SHUTDOWN)
         return web.json_response({"ok": True})
 
+    async def handle_evict(self, request: web.Request) -> web.Response:
+        """Exit to free GPU memory for another pipeline, unless a session holds it."""
+        token = request.headers.get(SHUTDOWN_HEADER, "")
+        if not hmac.compare_digest(token, self.config.shutdown_token):
+            raise web.HTTPNotFound()
+        if self._session_lock.locked() or self.sessions or self.state == "loading":
+            return web.json_response({"ok": False, "reason": "busy"}, status=409)
+        log.info("pipeline=%s evicted to free its gpu slot", self.spec.name)
+        self.stop(EXIT_EVICTED)
+        return web.json_response({"ok": True})
+
+    async def handle_advertise(self, request: web.Request) -> web.Response:
+        token = request.headers.get(SHUTDOWN_HEADER, "")
+        if not hmac.compare_digest(token, self.config.shutdown_token):
+            raise web.HTTPNotFound()
+        status = (await read_json_object(request)).get("status")
+        if status not in (STATUS_READY, STATUS_BUSY):
+            raise ApiError(400, "invalid_status", "status must be ready or busy", "status")
+        await self.advertise(status)
+        return web.json_response({"ok": True, "status": self.advertised_status})
+
     def _effective_params(self, request: SessionRequest, current: dict[str, Any]) -> dict[str, Any]:
         if request.preset is not None:
             return self.backend.defaults() | self.spec.presets[request.preset] | request.params
@@ -493,7 +610,8 @@ class PipelineWorker:
 
     def _own_session(self, request: web.Request) -> StreamSession:
         session_id = session_id_from(request)
-        if self.session is None or self.session.session_id != session_id:
+        session = self.sessions.get(session_id)
+        if session is None:
             if session_id in self.ended:
                 raise ApiError(
                     409,
@@ -502,7 +620,7 @@ class PipelineWorker:
                     session_status=self.ended[session_id]["status"],
                 )
             raise ApiError(404, "session_not_found", "no active session with this id")
-        return self.session
+        return session
 
     async def handle_stream(self, request: web.Request) -> web.Response:
         async with self._session_lock:
@@ -510,10 +628,18 @@ class PipelineWorker:
 
     async def _start_session(self, request: web.Request) -> web.Response:
         session_id = session_id_from(request)
-        if self.session is not None:
-            if self.session.session_id != session_id:
-                raise ApiError(409, "session_conflict", "runner already has an active session")
-            return web.json_response(self.session.to_json())
+        if self.stopped.done():
+            raise ApiError(503, "runner_unavailable", "pipeline is unloading", compute="cold")
+        existing = self.sessions.get(session_id)
+        if existing is not None:
+            return web.json_response(existing.to_json())
+        if len(self.sessions) >= self.spec.capacity:
+            raise ApiError(
+                409,
+                "session_conflict",
+                f"runner already has {len(self.sessions)} active sessions "
+                f"(capacity {self.spec.capacity})",
+            )
         if session_id in self.ended:
             raise ApiError(
                 409,
@@ -540,6 +666,9 @@ class PipelineWorker:
         started = time.monotonic()
         try:
             await self.ensure_loaded()
+        except SlotUnavailable as exc:
+            log.warning("pipeline=%s not loaded: %s", self.spec.name, exc)
+            raise ApiError(503, "capacity_unavailable", str(exc), compute=compute) from exc
         except Exception as exc:
             self.stop(EXIT_ERROR)
             raise ApiError(
@@ -547,9 +676,10 @@ class PipelineWorker:
             ) from exc
 
         params = self._effective_params(session_request, self.backend.defaults())
-        self.backend.reset()
+        if not self.sessions:
+            self.backend.reset()
         try:
-            await self.backend.apply(params)
+            await self.backend.apply(params, session_id)
         except Exception as exc:
             log.exception("applying session params failed pipeline=%s", self.spec.name)
             raise ApiError(500, "pipeline_error", "could not apply session params") from exc
@@ -580,7 +710,7 @@ class PipelineWorker:
         frame_ready = asyncio.Event()
         output = self._media_output(
             by_name["in"].get("internal_url") or by_name["in"]["url"],
-            on_frame=lambda decoded: self._on_frame(decoded, latest, frame_ready),
+            on_frame=lambda decoded: self._on_frame(session_id, decoded, latest, frame_ready),
             max_segments=2,
         )
         session = StreamSession(
@@ -598,7 +728,8 @@ class PipelineWorker:
             fallback=session_request.fallback,
             frame_ready=frame_ready,
         )
-        self.session = session
+        self.sessions[session_id] = session
+        self._report()
         processor = asyncio.create_task(self._process_latest(session, latest, frame_ready))
         session.tasks = [processor, asyncio.create_task(self._watch_session(session))]
         processor.add_done_callback(lambda task: self._on_processor_done(session, task))
@@ -650,8 +781,14 @@ class PipelineWorker:
                 fallback=session.fallback or "default",
             )
 
-    async def _on_frame(self, decoded, latest: list[av.VideoFrame], frame_ready: asyncio.Event):
-        session = self.session
+    async def _on_frame(
+        self,
+        session_id: str,
+        decoded,
+        latest: list[av.VideoFrame],
+        frame_ready: asyncio.Event,
+    ):
+        session = self.sessions.get(session_id)
         if decoded.kind != "video" or session is None:
             return
         frame = decoded.frame
@@ -679,7 +816,7 @@ class PipelineWorker:
         """
         deadline = time.monotonic() + INPUT_DRAIN_S
         while time.monotonic() < deadline:
-            if self.session is not session:
+            if self.sessions.get(session.session_id) is not session:
                 return
             if session.processor_idle.is_set() and not session.frame_ready.is_set():
                 await asyncio.sleep(0.05)
@@ -687,7 +824,7 @@ class PipelineWorker:
                     break
             else:
                 await asyncio.sleep(0.05)
-        await self.end_session(COMPLETED, "input_ended", only=session)
+        await self.end_session(session, COMPLETED, "input_ended")
 
     async def _process_latest(
         self, session: StreamSession, latest: list[av.VideoFrame], frame_ready: asyncio.Event
@@ -702,7 +839,7 @@ class PipelineWorker:
                 continue
             session.inflight_since = time.monotonic()
             try:
-                outs = await self.backend.process(frames)
+                outs = await self.backend.process(frames, session.session_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -734,7 +871,7 @@ class PipelineWorker:
         log.error(
             "ALERT session %s pipeline loop crashed: %r", session.session_id, task.exception()
         )
-        self._spawn_background(self.end_session(FAILED, "pipeline_crashed", only=session))
+        self._spawn_background(self.end_session(session, FAILED, "pipeline_crashed"))
 
     async def _watch_session(self, session: StreamSession) -> None:
         requested = session.request.idle_timeout_s
@@ -749,7 +886,7 @@ class PipelineWorker:
                 session.last_input_mono = time.monotonic()
                 continue
             if timeout and time.monotonic() - session.last_input_mono >= timeout:
-                self._spawn_background(self.end_session(EXPIRED, "no_input", only=session))
+                self._spawn_background(self.end_session(session, EXPIRED, "no_input"))
                 return
 
     async def handle_update(self, request: web.Request) -> web.Response:
@@ -758,7 +895,7 @@ class PipelineWorker:
             await read_json_object(request), self.spec, start=False
         )
         params = self._effective_params(session_request, session.params)
-        await self.backend.apply(params)
+        await self.backend.apply(params, session.session_id)
         session.params = params
         if session_request.preset is not None:
             session.preset = session_request.preset
@@ -789,8 +926,9 @@ class PipelineWorker:
     async def handle_stop(self, request: web.Request) -> web.Response:
         session_id = session_id_from(request)
         reason = parse_reason(await read_json_object(request))
-        if self.session is not None and self.session.session_id == session_id:
-            await self.end_session(STOPPED, reason)
+        session = self.sessions.get(session_id)
+        if session is not None:
+            await self.end_session(session, STOPPED, reason)
             return web.json_response(self.ended[session_id] | {"already_stopped": False})
         if session_id in self.ended:
             return web.json_response(self.ended[session_id] | {"already_stopped": True})
@@ -798,14 +936,20 @@ class PipelineWorker:
 
     async def handle_session(self, request: web.Request) -> web.Response:
         session_id = session_id_from(request)
-        if self.session is not None and self.session.session_id == session_id:
-            return web.json_response(self.session.to_json())
+        session = self.sessions.get(session_id)
+        if session is not None:
+            return web.json_response(session.to_json())
         if session_id in self.ended:
             return web.json_response(self.ended[session_id])
         raise ApiError(404, "session_not_found", "no session with this id")
 
-    async def handle_stats(self, _request: web.Request) -> web.Response:
-        session = self.session
+    async def handle_stats(self, request: web.Request) -> web.Response:
+        """Stats for the caller's session, or the only active one without a session header."""
+        session_id = request.headers.get("Livepeer-Session-Id", "").strip()
+        if session_id:
+            session = self.sessions.get(session_id)
+        else:
+            session = next(iter(self.sessions.values())) if len(self.sessions) == 1 else None
         if session is None:
             return web.json_response(self.status_payload())
         in_stats = session.output.get_stats()
