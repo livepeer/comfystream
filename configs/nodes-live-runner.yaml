@@ -1,0 +1,15 @@
+nodes:
+  # Minimal live-runner set: persistent stream tensors come from the
+  # comfystream package itself; batch jobs only need ComfyUI-fal-API.
+  # Skip TensorRT / vision / effects packs for faster base builds.
+  comfyui-stream-pack:
+    name: "ComfyUI Stream Pack"
+    url: "https://github.com/livepeer/ComfyUI-Stream-Pack"
+    branch: "main"
+    type: "utility"
+
+  comfyui-fal-api:
+    name: "ComfyUI fal API"
+    url: "https://github.com/gokayfem/ComfyUI-fal-API.git"
+    branch: "main"
+    type: "utility"

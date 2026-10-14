@@ -1,0 +1,65 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-sonilo-v2m",
+    "capability": "sonilo-v2m",
+    "endpoint_id": "sonilo/v1.1/video-to-music",
+    "queue_app_id": "sonilo/v1.1"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "duration": {
+        "type": "number"
+      },
+      "num_samples": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "prompt_influence": {
+        "type": "number"
+      },
+      "start_offset": {
+        "type": "number"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "sonilo/v1.1/video-to-music",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.009"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "ef01b074fdb9160aeafdfe1e6f0118757fae5d6c3c45fe0a38331e8ef9cbf5e8"
+  }
+}

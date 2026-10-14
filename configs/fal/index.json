@@ -1,0 +1,882 @@
+{
+  "app_namespace": "comfystream/fal",
+  "format": "livepeer.fal.route-index.v1",
+  "routes": [
+    {
+      "app_id": "comfystream/fal-flux-schnell",
+      "capability": "flux-schnell",
+      "endpoint_id": "fal-ai/flux/schnell",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/flux",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-2-pro",
+      "capability": "flux-2-pro",
+      "endpoint_id": "fal-ai/flux-2-pro",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/flux-2-pro",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-2-edit",
+      "capability": "flux-2-edit",
+      "endpoint_id": "fal-ai/flux-2/edit",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/flux-2",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-gpt-image-2",
+      "capability": "gpt-image-2",
+      "endpoint_id": "openai/gpt-image-2",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "openai/gpt-image-2",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-gpt-image-2-edit",
+      "capability": "gpt-image-2-edit",
+      "endpoint_id": "openai/gpt-image-2/edit",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "openai/gpt-image-2",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-grok-image-2",
+      "capability": "grok-image-2",
+      "endpoint_id": "xai/grok-imagine-image/v2.0/text-to-image",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "xai/grok-imagine-image",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-grok-image-2-edit",
+      "capability": "grok-image-2-edit",
+      "endpoint_id": "xai/grok-imagine-image/v2.0/edit",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "xai/grok-imagine-image",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedream-5-pro",
+      "capability": "seedream-5-pro",
+      "endpoint_id": "bytedance/seedream/v5/pro/text-to-image",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedream",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedream-5-pro-edit",
+      "capability": "seedream-5-pro-edit",
+      "endpoint_id": "bytedance/seedream/v5/pro/edit",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedream",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ideogram-v4",
+      "capability": "ideogram-v4",
+      "endpoint_id": "ideogram/v4",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "ideogram/v4",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-recraft-v4",
+      "capability": "recraft-v4",
+      "endpoint_id": "fal-ai/recraft/v4/pro/text-to-image",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/recraft",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-bg-remove",
+      "capability": "bg-remove",
+      "endpoint_id": "fal-ai/birefnet",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/birefnet",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-fill",
+      "capability": "flux-fill",
+      "endpoint_id": "fal-ai/flux-pro/v1/fill",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/flux-pro",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-erase",
+      "capability": "flux-erase",
+      "endpoint_id": "fal-ai/flux-pro/v1/erase",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/flux-pro",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-topaz-image-upscale",
+      "capability": "topaz-image-upscale",
+      "endpoint_id": "topaz/upscale/image/precision",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "topaz/upscale",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-3-t2v",
+      "capability": "flux-3-t2v",
+      "endpoint_id": "blackforestlabs/flux-3/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "blackforestlabs/flux-3",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-3-i2v",
+      "capability": "flux-3-i2v",
+      "endpoint_id": "blackforestlabs/flux-3/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "blackforestlabs/flux-3",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-3-transition",
+      "capability": "flux-3-transition",
+      "endpoint_id": "blackforestlabs/flux-3/first-last-frame-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "blackforestlabs/flux-3",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-3-keyframes",
+      "capability": "flux-3-keyframes",
+      "endpoint_id": "blackforestlabs/flux-3/keyframes-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "blackforestlabs/flux-3",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-3-extend",
+      "capability": "flux-3-extend",
+      "endpoint_id": "blackforestlabs/flux-3/extend-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "blackforestlabs/flux-3",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ltx-25-t2v-pro",
+      "capability": "ltx-25-t2v-pro",
+      "endpoint_id": "lightricks/ltx-2.5/text-to-video/pro",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "lightricks/ltx-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ltx-25-t2v-fast",
+      "capability": "ltx-25-t2v-fast",
+      "endpoint_id": "lightricks/ltx-2.5/text-to-video/fast",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "lightricks/ltx-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ltx-25-i2v-pro",
+      "capability": "ltx-25-i2v-pro",
+      "endpoint_id": "lightricks/ltx-2.5/image-to-video/pro",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "lightricks/ltx-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ltx-25-i2v-fast",
+      "capability": "ltx-25-i2v-fast",
+      "endpoint_id": "lightricks/ltx-2.5/image-to-video/fast",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "lightricks/ltx-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ltx-25-a2v-pro",
+      "capability": "ltx-25-a2v-pro",
+      "endpoint_id": "lightricks/ltx-2.5/audio-to-video/pro",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "lightricks/ltx-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ray-32-t2v",
+      "capability": "ray-32-t2v",
+      "endpoint_id": "luma/agent/ray/v3.2/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "luma/agent",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ray-32-i2v",
+      "capability": "ray-32-i2v",
+      "endpoint_id": "luma/agent/ray/v3.2/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "luma/agent",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ray-32-v2v",
+      "capability": "ray-32-v2v",
+      "endpoint_id": "luma/agent/ray/v3.2/video-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "luma/agent",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ray-32-reframe",
+      "capability": "ray-32-reframe",
+      "endpoint_id": "luma/agent/ray/v3.2/reframe",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "luma/agent",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-minimax-h3-max-t2v",
+      "capability": "minimax-h3-max-t2v",
+      "endpoint_id": "minimax/h3-max/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "minimax/h3-max",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-minimax-h3-max-i2v",
+      "capability": "minimax-h3-max-i2v",
+      "endpoint_id": "minimax/h3-max/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "minimax/h3-max",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-minimax-h3-max-ref2v",
+      "capability": "minimax-h3-max-ref2v",
+      "endpoint_id": "minimax/h3-max/reference-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "minimax/h3-max",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedance-20-t2v",
+      "capability": "seedance-20-t2v",
+      "endpoint_id": "bytedance/seedance-2.0/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedance-2.0",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedance-20-i2v",
+      "capability": "seedance-20-i2v",
+      "endpoint_id": "bytedance/seedance-2.0/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedance-2.0",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedance-20-ref2v",
+      "capability": "seedance-20-ref2v",
+      "endpoint_id": "bytedance/seedance-2.0/reference-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedance-2.0",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedance-25-t2v",
+      "capability": "seedance-25-t2v",
+      "endpoint_id": "bytedance/seedance-2.5/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedance-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedance-25-i2v",
+      "capability": "seedance-25-i2v",
+      "endpoint_id": "bytedance/seedance-2.5/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedance-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-seedance-25-ref2v",
+      "capability": "seedance-25-ref2v",
+      "endpoint_id": "bytedance/seedance-2.5/reference-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "bytedance/seedance-2.5",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-grok-imagine-video-15-t2v",
+      "capability": "grok-imagine-video-15-t2v",
+      "endpoint_id": "xai/grok-imagine-video/v1.5/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "xai/grok-imagine-video",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-grok-imagine-video-15-i2v",
+      "capability": "grok-imagine-video-15-i2v",
+      "endpoint_id": "xai/grok-imagine-video/v1.5/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "xai/grok-imagine-video",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-grok-imagine-video-15-ref2v",
+      "capability": "grok-imagine-video-15-ref2v",
+      "endpoint_id": "xai/grok-imagine-video/v1.5/reference-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "xai/grok-imagine-video",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-veo-31-t2v",
+      "capability": "veo-31-t2v",
+      "endpoint_id": "fal-ai/veo3.1",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/veo3.1",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-veo-31-i2v",
+      "capability": "veo-31-i2v",
+      "endpoint_id": "fal-ai/veo3.1/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/veo3.1",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-veo-31-transition",
+      "capability": "veo-31-transition",
+      "endpoint_id": "fal-ai/veo3.1/first-last-frame-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/veo3.1",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-kling-v3-pro-t2v",
+      "capability": "kling-v3-pro-t2v",
+      "endpoint_id": "fal-ai/kling-video/v3/pro/text-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/kling-video",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-kling-v3-pro-i2v",
+      "capability": "kling-v3-pro-i2v",
+      "endpoint_id": "fal-ai/kling-video/v3/pro/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/kling-video",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-kling-o3-ref2v",
+      "capability": "kling-o3-ref2v",
+      "endpoint_id": "fal-ai/kling-video/o3/standard/reference-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/kling-video",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-bernini-r-edit",
+      "capability": "bernini-r-edit",
+      "endpoint_id": "fal-ai/bernini-r/edit-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/bernini-r",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-void-inpaint",
+      "capability": "void-inpaint",
+      "endpoint_id": "fal-ai/void-video-inpainting",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/void-video-inpainting",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-pixelcut-video-bg-remove",
+      "capability": "pixelcut-video-bg-remove",
+      "endpoint_id": "Pixelcut/video-background-removal",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "Pixelcut/video-background-removal",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-talking-head",
+      "capability": "talking-head",
+      "endpoint_id": "fal-ai/bytedance/omnihuman/v1.5",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/bytedance",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-sync-lipsync-v3",
+      "capability": "sync-lipsync-v3",
+      "endpoint_id": "fal-ai/sync-lipsync/v3/image-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/sync-lipsync",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-mmaudio-v2-video-soundtrack",
+      "capability": "mmaudio-v2-video-soundtrack",
+      "endpoint_id": "fal-ai/mmaudio-v2",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/mmaudio-v2",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-nemotron-asr",
+      "capability": "nemotron-asr",
+      "endpoint_id": "nvidia/nemotron-asr-multilingual/asr",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "nvidia/nemotron-asr-multilingual",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-whisper-transcribe",
+      "capability": "whisper-transcribe",
+      "endpoint_id": "fal-ai/whisper",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/whisper",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-gemini-tts",
+      "capability": "gemini-tts",
+      "endpoint_id": "fal-ai/gemini-3.1-flash-tts",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/gemini-3.1-flash-tts",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-minimax-music-3",
+      "capability": "minimax-music-3",
+      "endpoint_id": "minimax/music-3",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "minimax/music-3",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-mirelo-sfx",
+      "capability": "mirelo-sfx",
+      "endpoint_id": "Mirelo-AI/sfx1.6/text-to-audio",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "Mirelo-AI/sfx1.6",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-sonilo-v2m",
+      "capability": "sonilo-v2m",
+      "endpoint_id": "sonilo/v1.1/video-to-music",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "sonilo/v1.1",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-marlin-video",
+      "capability": "marlin-video",
+      "endpoint_id": "fal-ai/marlin",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/marlin",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-tripo-h31-t3d",
+      "capability": "tripo-h31-t3d",
+      "endpoint_id": "tripo3d/h3.1/text-to-3d",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "tripo3d/h3.1",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-meshy-v7-i3d",
+      "capability": "meshy-v7-i3d",
+      "endpoint_id": "meshy/v7/image-to-3d",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "meshy/v7",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-compose",
+      "capability": "ffmpeg-compose",
+      "endpoint_id": "fal-ai/ffmpeg-api/compose",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-merge-videos",
+      "capability": "ffmpeg-merge-videos",
+      "endpoint_id": "fal-ai/ffmpeg-api/merge-videos",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-merge-audio-video",
+      "capability": "ffmpeg-merge-audio-video",
+      "endpoint_id": "fal-ai/ffmpeg-api/merge-audio-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-trim-video",
+      "capability": "ffmpeg-trim-video",
+      "endpoint_id": "fal-ai/workflow-utilities/trim-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/workflow-utilities",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-scale-video",
+      "capability": "ffmpeg-scale-video",
+      "endpoint_id": "fal-ai/workflow-utilities/scale-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/workflow-utilities",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-flux-video-upscale",
+      "capability": "flux-video-upscale",
+      "endpoint_id": "blackforestlabs/flux-video-upscale",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "blackforestlabs/flux-video-upscale",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-extract-frame",
+      "capability": "ffmpeg-extract-frame",
+      "endpoint_id": "fal-ai/ffmpeg-api/extract-frame",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-images-to-video",
+      "capability": "ffmpeg-images-to-video",
+      "endpoint_id": "fal-ai/ffmpeg-api/images-to-video",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-metadata",
+      "capability": "ffmpeg-metadata",
+      "endpoint_id": "fal-ai/ffmpeg-api/metadata",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-ffmpeg-loudnorm",
+      "capability": "ffmpeg-loudnorm",
+      "endpoint_id": "fal-ai/ffmpeg-api/loudnorm",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "fal-ai/ffmpeg-api",
+      "transport_profile": "fal_queue_blocking_v1"
+    },
+    {
+      "app_id": "comfystream/fal-subtitles-veed",
+      "capability": "subtitles-veed",
+      "endpoint_id": "veed/subtitles",
+      "input_policy": {
+        "caller_authorization": "drop",
+        "endpoint_selection": "pinned",
+        "request_body": "provider_native_json"
+      },
+      "queue_app_id": "veed/subtitles",
+      "transport_profile": "fal_queue_blocking_v1"
+    }
+  ]
+}

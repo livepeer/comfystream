@@ -1,0 +1,11 @@
+{
+  "1": {
+    "inputs": {
+      "operation": "trim"
+    },
+    "class_type": "VideoContainerEdit",
+    "_meta": {
+      "title": "Trim"
+    }
+  }
+}

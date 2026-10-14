@@ -26,7 +26,7 @@ NODE_TYPES = {
     "audio_output": {"SaveAudioTensor"},
     # Text nodes
     "text_input": set(),  # No text input nodes currently
-    "text_output": {"SaveTextTensor"},
+    "text_output": {"SaveTextTensor", "SaveFalResult"},
 }
 
 # Flatten all input and output node types for easier checking
@@ -150,3 +150,170 @@ def detect_prompt_modalities(prompts: Union[Dict[Any, Any], List[Dict[Any, Any]]
             modalities.add(modality)
 
     return modalities
+
+
+class CapabilityModality(TypedDict):
+    """Batch capability I/O derived from a fal endpoint schema, not Comfy nodes."""
+
+    image: ModalityIO
+    video: ModalityIO
+    audio: ModalityIO
+    text: ModalityIO
+    mesh: ModalityIO
+
+
+_IMAGE_KEYS = {
+    "image",
+    "images",
+    "image_url",
+    "image_urls",
+    "start_image_url",
+    "end_image_url",
+    "mask_url",
+    "mask_image_url",
+    "thumbnail",
+    "texture_image_url",
+}
+_VIDEO_KEYS = {
+    "video",
+    "videos",
+    "video_url",
+    "video_urls",
+}
+_AUDIO_KEYS = {
+    "audio",
+    "audio_url",
+    "audio_file",
+    "audio_path",
+}
+_TEXT_KEYS = {
+    "text",
+    "prompt",
+    "transcription",
+    "caption",
+    "subtitles",
+}
+_MESH_KEYS = {
+    "model_glb",
+    "model_urls",
+    "glb",
+    "mesh",
+    "model_obj",
+    "model_fbx",
+}
+
+
+def create_empty_capability_modality() -> CapabilityModality:
+    return {
+        "image": {"input": False, "output": False},
+        "video": {"input": False, "output": False},
+        "audio": {"input": False, "output": False},
+        "text": {"input": False, "output": False},
+        "mesh": {"input": False, "output": False},
+    }
+
+
+def _schema_components(schema_document: Dict[str, Any]) -> Dict[str, Any]:
+    components = schema_document.get("components")
+    if not isinstance(components, dict):
+        return {}
+    schemas = components.get("schemas")
+    return schemas if isinstance(schemas, dict) else {}
+
+
+def _resolve_schema(schema: Any, components: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(schema, dict):
+        return {}
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+        name = ref.rsplit("/", 1)[-1]
+        resolved = components.get(name)
+        if isinstance(resolved, dict):
+            return resolved
+    return schema
+
+
+def _property_names(schema: Any, components: Dict[str, Any], depth: int = 0) -> Set[str]:
+    if depth > 4 or not isinstance(schema, dict):
+        return set()
+    resolved = _resolve_schema(schema, components)
+    names: Set[str] = set()
+    properties = resolved.get("properties")
+    if isinstance(properties, dict):
+        for key, spec in properties.items():
+            if isinstance(key, str):
+                names.add(key)
+                names.update(_property_names(spec, components, depth + 1))
+    items = resolved.get("items")
+    if isinstance(items, dict):
+        names.update(_property_names(items, components, depth + 1))
+    for option_key in ("anyOf", "oneOf", "allOf"):
+        options = resolved.get(option_key)
+        if isinstance(options, list):
+            for option in options:
+                names.update(_property_names(option, components, depth + 1))
+    return names
+
+
+def _match_keys(names: Set[str], needles: Set[str]) -> bool:
+    lowered = {name.lower() for name in names}
+    if lowered & needles:
+        return True
+    for name in lowered:
+        for needle in needles:
+            if needle in name:
+                return True
+    return False
+
+
+def _endpoint_hints(endpoint_id: str) -> CapabilityModality:
+    result = create_empty_capability_modality()
+    lowered = endpoint_id.lower()
+    if any(token in lowered for token in ("image-to-video", "/i2v", "-i2v", "text-to-video", "/t2v", "-t2v", "video-to-video", "/v2v", "-v2v", "image-to-video")):
+        result["video"]["output"] = True
+    if any(token in lowered for token in ("text-to-image", "image-to-image", "/edit", "flux", "ideogram", "recraft", "seedream", "grok-imagine-image", "gpt-image")):
+        if "video" not in lowered:
+            result["image"]["output"] = True
+    if any(token in lowered for token in ("whisper", "asr", "transcribe")):
+        result["audio"]["input"] = True
+        result["text"]["output"] = True
+    if any(token in lowered for token in ("tts", "music", "sfx", "audio")):
+        result["audio"]["output"] = True
+    if any(token in lowered for token in ("3d", "tripo", "meshy")):
+        result["mesh"]["output"] = True
+    return result
+
+
+def detect_capability_modality(
+    schema_document: Dict[str, Any],
+    endpoint_id: str = "",
+) -> CapabilityModality:
+    """Detect image/video/audio/text/3d I/O from a fal endpoint schema document."""
+
+    result = create_empty_capability_modality()
+    if not isinstance(schema_document, dict):
+        return result
+
+    components = _schema_components(schema_document)
+    input_names = _property_names(schema_document.get("input_schema"), components)
+    output_names = _property_names(schema_document.get("output_schema"), components)
+
+    pairs = (
+        ("image", _IMAGE_KEYS),
+        ("video", _VIDEO_KEYS),
+        ("audio", _AUDIO_KEYS),
+        ("text", _TEXT_KEYS),
+        ("mesh", _MESH_KEYS),
+    )
+    for modality, keys in pairs:
+        if _match_keys(input_names, keys):
+            result[modality]["input"] = True
+        if _match_keys(output_names, keys):
+            result[modality]["output"] = True
+
+    hints = _endpoint_hints(endpoint_id or str(schema_document.get("endpoint_id") or ""))
+    for modality, directions in hints.items():
+        for direction, enabled in directions.items():
+            result[modality][direction] = result[modality][direction] or enabled
+    return result
+

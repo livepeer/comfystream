@@ -1,0 +1,71 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-ffmpeg-scale-video",
+    "capability": "ffmpeg-scale-video",
+    "endpoint_id": "fal-ai/workflow-utilities/scale-video",
+    "queue_app_id": "fal-ai/workflow-utilities"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "codec": {
+        "type": "string"
+      },
+      "crf": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      },
+      "mode": {
+        "type": "string"
+      },
+      "pad_color": {
+        "type": "string"
+      },
+      "preset": {
+        "type": "string"
+      },
+      "video_url": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/workflow-utilities/scale-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "compute seconds",
+    "unit_price": "0.001"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "bff043dca8cd9f4b47e8af42b299936b07e764c8f7b3c4eea32e15f10a0570fc"
+  }
+}

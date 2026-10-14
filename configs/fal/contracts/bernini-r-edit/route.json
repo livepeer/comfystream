@@ -1,0 +1,78 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-bernini-r-edit",
+    "capability": "bernini-r-edit",
+    "endpoint_id": "fal-ai/bernini-r/edit-video",
+    "queue_app_id": "fal-ai/bernini-r"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "acceleration": {
+        "type": "string"
+      },
+      "enable_prompt_expansion": {
+        "type": "boolean"
+      },
+      "frames_per_second": {
+        "type": "integer"
+      },
+      "max_image_size": {
+        "type": "integer"
+      },
+      "negative_prompt": {
+        "type": "string"
+      },
+      "num_frames": {
+        "type": "integer"
+      },
+      "num_inference_steps": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "seed": {
+        "type": "integer"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "prompt",
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "fal-ai/bernini-r/edit-video",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.08"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "50ce57522a18a92cd0b22f8fcf10a58217761294a69ca3df7af4a73e1ac32b87"
+  }
+}

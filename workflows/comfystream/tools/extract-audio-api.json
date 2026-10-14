@@ -1,0 +1,11 @@
+{
+  "1": {
+    "inputs": {
+      "operation": "extract-audio"
+    },
+    "class_type": "VideoContainerEdit",
+    "_meta": {
+      "title": "Extract Audio"
+    }
+  }
+}

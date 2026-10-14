@@ -1,0 +1,11 @@
+{
+  "1": {
+    "inputs": {
+      "operation": "gif"
+    },
+    "class_type": "VideoContainerEdit",
+    "_meta": {
+      "title": "GIF"
+    }
+  }
+}

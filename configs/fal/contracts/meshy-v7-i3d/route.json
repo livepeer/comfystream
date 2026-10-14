@@ -1,0 +1,101 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-meshy-v7-i3d",
+    "capability": "meshy-v7-i3d",
+    "endpoint_id": "meshy/v7/image-to-3d",
+    "queue_app_id": "meshy/v7"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "animation_action_id": {
+        "type": "integer"
+      },
+      "enable_animation": {
+        "type": "boolean"
+      },
+      "enable_pbr": {
+        "type": "boolean"
+      },
+      "enable_rigging": {
+        "type": "boolean"
+      },
+      "enable_safety_checker": {
+        "type": "boolean"
+      },
+      "image_url": {
+        "type": "string"
+      },
+      "is_a_t_pose": {
+        "type": "boolean"
+      },
+      "model_type": {
+        "type": "string"
+      },
+      "pose_mode": {
+        "type": "string"
+      },
+      "rigging_height_meters": {
+        "type": "number"
+      },
+      "should_remesh": {
+        "type": "boolean"
+      },
+      "should_texture": {
+        "type": "boolean"
+      },
+      "symmetry_mode": {
+        "type": "string"
+      },
+      "target_polycount": {
+        "type": "integer"
+      },
+      "texture_image_url": {
+        "type": "string"
+      },
+      "texture_prompt": {
+        "type": "string"
+      },
+      "topology": {
+        "type": "string"
+      },
+      "ultra_mode": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "image_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "meshy/v7/image-to-3d",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "generations",
+    "unit_price": "0.8"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "d3f05ecfc5b7f58760d46a65c393617ab0f4c17e8989ef7ea834109f52d7964c"
+  }
+}

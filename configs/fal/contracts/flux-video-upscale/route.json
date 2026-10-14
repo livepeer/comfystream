@@ -1,0 +1,62 @@
+{
+  "credential": {
+    "authorization_scheme": "Key",
+    "environment_variable": "FAL_KEY",
+    "owner": "operator"
+  },
+  "format": "livepeer.fal.runner-route.v1",
+  "identity": {
+    "app_id": "comfystream/fal-flux-video-upscale",
+    "capability": "flux-video-upscale",
+    "endpoint_id": "blackforestlabs/flux-video-upscale",
+    "queue_app_id": "blackforestlabs/flux-video-upscale"
+  },
+  "input_policy": {
+    "caller_authorization": "drop",
+    "endpoint_selection": "pinned",
+    "request_body": "provider_native_json"
+  },
+  "inputs": {
+    "fields": {
+      "creativity": {
+        "type": "integer"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "safety_tolerance": {
+        "type": "integer"
+      },
+      "upscale_factor": {
+        "type": "number"
+      },
+      "video_url": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "video_url"
+    ]
+  },
+  "pricing": {
+    "currency": "usd",
+    "endpoint_id": "blackforestlabs/flux-video-upscale",
+    "fetched_at": "2026-09-09T18:03:31Z",
+    "provider": "fal",
+    "unit": "seconds",
+    "unit_price": "0.075"
+  },
+  "runner": {
+    "mode": "single-shot",
+    "routes": {
+      "execute": "./",
+      "health": "./health",
+      "schema": "./schema"
+    },
+    "transport_profile": "fal_queue_blocking_v1"
+  },
+  "schema": {
+    "path": "./schema.json",
+    "sha256": "caf4c7410c6cd52c7f9a9af7cac11373370b05c0b3d107b349ed2205b1096f31"
+  }
+}

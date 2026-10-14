@@ -12,9 +12,10 @@ ARG CONDA_VERSION \
 ENV DEBIAN_FRONTEND=noninteractive \
     TensorRT_ROOT=/opt/TensorRT-10.12.0.36 \
     CONDA_VERSION="${CONDA_VERSION}" \
-    PATH="/workspace/miniconda3/bin:${PATH}" \
+    PATH="/workspace/miniconda3/envs/comfystream/bin:/workspace/miniconda3/bin:${PATH}" \
     PYTHON_VERSION="${PYTHON_VERSION}" \
-    LD_LIBRARY_PATH="/workspace/miniconda3/envs/comfystream/lib:${LD_LIBRARY_PATH}"
+    LD_LIBRARY_PATH="/workspace/miniconda3/envs/comfystream/lib:${LD_LIBRARY_PATH}" \
+    PKG_CONFIG_PATH="/workspace/miniconda3/envs/comfystream/lib/pkgconfig"
 
 # System dependencies
 RUN apt update && apt install -yqq --no-install-recommends \
@@ -24,7 +25,8 @@ RUN apt update && apt install -yqq --no-install-recommends \
     protobuf-compiler libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev \
     libffi-dev libgirepository1.0-dev pkg-config libgflags-dev \
     libgoogle-glog-dev libjpeg-dev libavcodec-dev libavformat-dev \
-    libavutil-dev libswscale-dev \
+    libavutil-dev libswscale-dev libavdevice-dev libavfilter-dev \
+    libswresample-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 #enable opengl support with nvidia gpu
@@ -43,7 +45,7 @@ RUN mkdir -p /workspace/comfystream && \
     eval "$(/workspace/miniconda3/bin/conda shell.bash hook)" && \
     /workspace/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
     /workspace/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
-    conda create -n comfystream python="${PYTHON_VERSION}" ffmpeg=6 -c conda-forge -y && \
+    conda create -n comfystream python="${PYTHON_VERSION}" "ffmpeg=7" pkg-config -c conda-forge -y && \
     rm /tmp/miniconda.sh && echo 'export LD_LIBRARY_PATH=/workspace/miniconda3/envs/comfystream/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
 
 RUN conda run -n comfystream --no-capture-output pip install --upgrade pip && \
