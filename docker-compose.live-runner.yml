@@ -21,7 +21,8 @@
 #   COMFYSTREAM_BASE_IMAGE=comfystream-base:live-runner \
 #     docker compose -f docker-compose.live-runner.yml up -d --build
 #
-# Provide FAL_KEY in the environment or a sibling .env file.
+# Provide FAL_KEY via a sibling .env, FAL_KEY in the shell, or the previous
+# fleet file (default /opt/fal-adapter/.env). Do not bake the key into images.
 
 services:
   comfystream-live-runner:
@@ -41,7 +42,8 @@ services:
       - CUDA_VISIBLE_DEVICES=${COMFYSTREAM_GPU_UUID:-GPU-745244ef-3615-57bd-458f-299fe2289f5a}
       - COMFYUI_CWD=/workspace/ComfyUI
       - PYTHONUNBUFFERED=1
-      - FAL_KEY=${FAL_KEY}
+      - FAL_KEY=${FAL_KEY:-}
+      - FAL_KEY_FILE=${FAL_KEY_FILE:-/run/secrets/fal.env}
       - COMFYSTREAM_FAL_CATALOG=/workspace/comfystream/configs/fal
       - COMFYSTREAM_REALTIME_CONFIG=${COMFYSTREAM_REALTIME_CONFIG:-/workspace/comfystream/configs/realtime.yaml}
       # One JSON line per ended realtime session (room/venue attribution, durations, cost).
@@ -52,6 +54,8 @@ services:
       - ${COMFYSTREAM_STORAGE_DIR:-/livepeer/ai/data}:/app/storage
       # FLUX.2-klein-4B HF cache (~15 GB) from the former flux-klein container.
       - ${FLUX_KLEIN_MODELS_DIR:-/livepeer/ai/runner-app-examples/flux-klein/models}:/workspace/flux-klein/models
+      # Operator fal key from the previous fleet env file (600 root:root; container reads it).
+      - ${FAL_KEY_HOST_FILE:-/opt/fal-adapter/.env}:/run/secrets/fal.env:ro
     command:
       - --live-runner
       - --host=0.0.0.0

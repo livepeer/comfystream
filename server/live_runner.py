@@ -46,6 +46,7 @@ from PIL import Image
 
 from comfystream.batch_pipeline import BatchPipeline
 from comfystream.capabilities.catalog import catalog_root, load_catalog
+from comfystream.capabilities.fal_key import resolve_and_apply_fal_key
 from comfystream.capabilities.receipts import response_headers
 from comfystream.modalities import WorkflowModality
 from comfystream.pipeline import Pipeline
@@ -203,7 +204,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fal-key",
         default=os.environ.get("FAL_KEY", ""),
-        help="Operator fal API key (never accepted from callers).",
+        help=(
+            "Operator fal API key (never accepted from callers). "
+            "Also loaded from FAL_KEY, FAL_KEY_FILE, or ComfyUI-fal-API/config.ini."
+        ),
     )
     parser.add_argument(
         "--realtime-config",
@@ -797,6 +801,10 @@ def main() -> None:
     args = _parse_args()
     if not args.workspace:
         raise SystemExit("--workspace / COMFYUI_CWD is required")
+    args.fal_key, fal_key_source = resolve_and_apply_fal_key(
+        explicit=args.fal_key,
+        workspace=args.workspace,
+    )
 
     batch_catalog = {}
     if not args.skip_batch:
@@ -805,8 +813,13 @@ def main() -> None:
             catalog_dir,
             default_overrides={"capacity": args.batch_capacity},
         )
-        if not args.fal_key:
-            log.warning("FAL_KEY is empty; fal batch jobs will fail until it is set")
+        if args.fal_key:
+            log.info("FAL_KEY loaded from %s", fal_key_source)
+        else:
+            log.warning(
+                "FAL_KEY is empty; fal batch jobs will fail until it is set "
+                "(environment, FAL_KEY_FILE, or config.ini)"
+            )
     client_max_size = max(
         (item.max_request_bytes for item in batch_catalog.values()),
         default=1024 * 1024,

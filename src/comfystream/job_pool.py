@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import get_context
 from typing import Any, Callable
 
+from comfystream.capabilities.fal_key import apply_fal_key
 from comfystream.capabilities.receipts import error_payload
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,7 @@ class PoolSaturatedError(RuntimeError):
 def _worker_init(client_kwargs: dict[str, Any], fal_key: str) -> None:
     global _WORKER_CLIENT, _WORKER_LOOP
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    if fal_key:
-        os.environ["FAL_KEY"] = fal_key
+    apply_fal_key(fal_key, workspace=client_kwargs.get("cwd"))
     os.environ.setdefault("FAL_CACHE_ENABLED", "false")
 
     import asyncio as _asyncio
