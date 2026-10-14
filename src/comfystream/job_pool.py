@@ -56,6 +56,10 @@ class JobPool:
         client_kwargs: dict[str, Any] | None = None,
         execute_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         max_tasks_per_child: int | None = None,
+        initializer: Callable[..., None] | None = None,
+        initargs: tuple[Any, ...] | None = None,
+        pool_worker: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        timeout_message: str | None = None,
     ):
         if max_workers <= 0:
             raise ValueError("max_workers must be positive")
@@ -65,6 +69,12 @@ class JobPool:
         self._client_kwargs = client_kwargs or {}
         self._execute_fn = execute_fn
         self._max_tasks_per_child = max_tasks_per_child
+        self._initializer = initializer
+        self._initargs = initargs
+        self._pool_worker = pool_worker
+        self._timeout_message = timeout_message or (
+            "adapter deadline exceeded; fal may still complete the request"
+        )
         self._executor: ProcessPoolExecutor | None = None
         self._semaphore = asyncio.Semaphore(max_workers)
         self._waiting = 0
@@ -79,8 +89,12 @@ class JobPool:
         pool_kwargs: dict[str, Any] = {
             "max_workers": self.max_workers,
             "mp_context": ctx,
-            "initializer": _worker_init,
-            "initargs": (self._client_kwargs, self._fal_key),
+            "initializer": self._initializer or _worker_init,
+            "initargs": (
+                self._initargs
+                if self._initargs is not None
+                else (self._client_kwargs, self._fal_key)
+            ),
         }
         if self._max_tasks_per_child:
             pool_kwargs["max_tasks_per_child"] = self._max_tasks_per_child
@@ -121,7 +135,8 @@ class JobPool:
         else:
             if self._executor is None:
                 raise RuntimeError("JobPool.start() was not called")
-            future = loop.run_in_executor(self._executor, _worker_execute, job)
+            worker = self._pool_worker or _worker_execute
+            future = loop.run_in_executor(self._executor, worker, job)
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
@@ -131,10 +146,10 @@ class JobPool:
                 job.get("endpoint_id"),
             )
             return error_payload(
-                endpoint_id=str(job.get("endpoint_id") or ""),
+                endpoint_id=str(job.get("endpoint_id") or job.get("tool") or ""),
                 schema_sha256=str(job.get("schema_sha256") or ""),
                 stage="timeout",
                 status=504,
-                message="adapter deadline exceeded; fal may still complete the request",
+                message=self._timeout_message,
                 request_id=None,
             )

@@ -6,7 +6,9 @@ with ImportContext("comfy", "comfy_extras", order=[SITE_PACKAGES, MAIN_PY]):
     from .audio_utils import *
     from .tensor_utils import *
     from .video_stream_utils import *
+from . import api, audio_utils, tensor_utils, video_stream_utils, video_tools, web
 from .api import *
+from .video_tools import *
 from .web import *
 
 # Collect all NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS from submodules
@@ -14,7 +16,7 @@ NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 # Import and update mappings from submodules
-for module in [audio_utils, tensor_utils, video_stream_utils, api, web]:
+for module in [audio_utils, tensor_utils, video_stream_utils, video_tools, api, web]:
     if hasattr(module, "NODE_CLASS_MAPPINGS"):
         NODE_CLASS_MAPPINGS.update(module.NODE_CLASS_MAPPINGS)
     if hasattr(module, "NODE_DISPLAY_NAME_MAPPINGS"):

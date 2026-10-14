@@ -1,0 +1,29 @@
+{
+  "1": {
+    "inputs": {},
+    "class_type": "LoadVideoFrame",
+    "_meta": {
+      "title": "Load Video Frame"
+    }
+  },
+  "2": {
+    "inputs": {
+      "images": ["1", 0],
+      "rotation": 0,
+      "flip": "none"
+    },
+    "class_type": "RotateFlipImage",
+    "_meta": {
+      "title": "Rotate Or Flip Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "images": ["2", 0]
+    },
+    "class_type": "SaveVideoFrame",
+    "_meta": {
+      "title": "Save Video Frame"
+    }
+  }
+}

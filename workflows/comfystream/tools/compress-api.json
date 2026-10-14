@@ -1,0 +1,11 @@
+{
+  "1": {
+    "inputs": {
+      "operation": "compress"
+    },
+    "class_type": "VideoContainerEdit",
+    "_meta": {
+      "title": "Compress"
+    }
+  }
+}
